@@ -2,7 +2,12 @@
 import os
 import sys
 import logging
+import warnings
 from pathlib import Path
+
+# Suppress third-party deprecation warnings (e.g. NumPy 2.5 shape assignment in sounddevice)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", message=".*Setting the shape on a NumPy array has been deprecated.*")
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
