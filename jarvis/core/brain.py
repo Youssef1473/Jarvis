@@ -14,6 +14,7 @@ import jarvis.skills.dev_shell
 import jarvis.skills.productivity
 import jarvis.skills.calendar_manager
 import jarvis.skills.browser_agent
+import jarvis.skills.email_manager
 from jarvis.vision.screen_capture import ScreenPerception
 from jarvis.core.memory import MemoryManager
 from jarvis.core.safety import SafetyGate

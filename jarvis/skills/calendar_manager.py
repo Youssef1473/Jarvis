@@ -93,11 +93,22 @@ def morning_protocol(city: str = "") -> str:
     else:
         task_summary = "All pending action items are up to date."
 
+    # 4. Email check (if configured)
+    email_section = ""
+    try:
+        from jarvis.skills.email_manager import check_unread_emails
+        email_info = check_unread_emails()
+        if "Neither Gmail nor Outlook" not in email_info:
+            email_section = f"\nInbox Telemetry: {email_info}"
+    except Exception:
+        pass
+
     briefing = (
         f"Good morning, Sir. Today is {greeting_time}.\n"
         f"Atmospheric conditions in {target_city}: {weather_info}\n"
         f"Agenda: {schedule_summary}\n"
-        f"Action Items: {task_summary}\n"
+        f"Action Items: {task_summary}"
+        f"{email_section}\n"
         f"All core systems and telemetry remain at optimal efficiency. Standing by for your instructions."
     )
     return briefing
