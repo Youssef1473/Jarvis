@@ -22,3 +22,4 @@ pystray>=0.19.5
 # Web, Productivity & Extensibility
 duckduckgo-search>=6.0.0
 mcp>=1.0.0
+playwright>=1.40.0

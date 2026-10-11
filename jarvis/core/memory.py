@@ -57,6 +57,18 @@ class MemoryManager:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # Calendar Events
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS calendar_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    start_time TEXT NOT NULL,
+                    end_time TEXT,
+                    location TEXT,
+                    is_cancelled BOOLEAN DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             conn.commit()
 
     # Fact & Preference Management
@@ -119,6 +131,39 @@ class MemoryManager:
             if cursor.rowcount > 0:
                 return f"Task #{task_id} marked as completed."
             return f"Task #{task_id} not found."
+
+    # Calendar Events
+    def add_calendar_event(self, title: str, start_time: str, end_time: Optional[str] = None, location: Optional[str] = None) -> str:
+        """Adds a calendar event."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO calendar_events (title, start_time, end_time, location, is_cancelled)
+                VALUES (?, ?, ?, ?, 0)
+            """, (title.strip(), start_time.strip(), end_time, location))
+            conn.commit()
+            event_id = cursor.lastrowid
+        return f"Event #{event_id} scheduled: '{title}' at {start_time}" + (f" ({location})" if location else "") + "."
+
+    def get_calendar_events(self, include_cancelled: bool = False) -> List[Dict[str, Any]]:
+        """Retrieves active calendar events."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            query = "SELECT id, title, start_time, end_time, location FROM calendar_events WHERE is_cancelled = 0 ORDER BY start_time"
+            if include_cancelled:
+                query = "SELECT id, title, start_time, end_time, location, is_cancelled FROM calendar_events ORDER BY start_time"
+            cursor.execute(query)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def cancel_calendar_event(self, event_id: int) -> str:
+        """Marks a calendar event as cancelled."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE calendar_events SET is_cancelled = 1 WHERE id = ?", (event_id,))
+            conn.commit()
+            if cursor.rowcount > 0:
+                return f"Event #{event_id} has been cancelled, Sir."
+            return f"Event #{event_id} was not found."
 
     # Interaction History
     def log_interaction(self, user_input: str, jarvis_reply: str, tool_calls: Optional[str] = None):
