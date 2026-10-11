@@ -127,22 +127,61 @@ class JarvisOrchestrator:
         if self.tts.is_speaking:
             self.tts.stop()
 
-        logger.info("Wake word detected! Listening for command...")
+        logger.info("Wake word detected! Listening with dynamic VAD auto-cutoff...")
         self.hud.set_state("listening")
         self.sfx.play_wake()
 
-        def record_and_process():
+        def record_and_process_vad():
             try:
-                duration = 4.0
-                recorded = sd.rec(int(duration * self.sample_rate), samplerate=self.sample_rate, channels=1, dtype="float32")
-                sd.wait()
-                audio_array = recorded.flatten()
-                self._process_audio(audio_array)
+                from openwakeword.vad import VAD
+                vad = VAD()
+                captured_chunks = []
+                block_size = 1280
+                sample_rate = self.sample_rate
+
+                speech_started = False
+                silence_chunk_count = 0
+                max_chunks = int(7.0 * sample_rate / block_size)
+                initial_timeout_chunks = int(2.5 * sample_rate / block_size)
+
+                with sd.InputStream(samplerate=sample_rate, channels=1, dtype="float32", blocksize=block_size) as stream:
+                    for chunk_idx in range(max_chunks):
+                        if self._is_recording:
+                            break
+
+                        data, _ = stream.read(block_size)
+                        captured_chunks.append(data.copy())
+
+                        # Convert float32 to int16 PCM for VAD scoring
+                        data_int16 = (data[:, 0] * 32767).astype(np.int16)
+                        vad_score = vad.predict(data_int16)
+
+                        if vad_score >= 0.35:
+                            speech_started = True
+                            silence_chunk_count = 0
+                        elif speech_started:
+                            if vad_score < 0.28:
+                                silence_chunk_count += 1
+                                # 7 silent chunks * 80ms = ~560ms of silence -> auto-cutoff!
+                                if silence_chunk_count >= 7:
+                                    logger.info(f"VAD auto-cutoff triggered (speech concluded at {chunk_idx * 0.08:.1f}s).")
+                                    break
+                        else:
+                            if chunk_idx >= initial_timeout_chunks:
+                                logger.info("VAD: no speech detected after wake word.")
+                                break
+
+                if captured_chunks:
+                    audio_array = np.concatenate(captured_chunks, axis=0).flatten()
+                    self._process_audio(audio_array)
+                else:
+                    self.hud.set_state("idle")
+
             except Exception as e:
-                logger.error(f"Wake word capture error: {e}")
+                logger.error(f"VAD recording error: {e}")
                 self.hud.set_state("idle")
 
-        threading.Thread(target=record_and_process, daemon=True).start()
+        threading.Thread(target=record_and_process_vad, daemon=True).start()
 
     def _process_audio(self, audio_array: np.ndarray):
         """Transcribes audio, sends to brain, and delivers spoken output."""
@@ -188,13 +227,20 @@ class JarvisOrchestrator:
 
         self.hud.set_state("thinking")
         self.sfx.play_think()
-        reply = self.brain.process_query(query)
+
+        # Start streaming pipelined speech session
+        self.hud.set_state("speaking")
+        self.tts.start_streaming_session()
+
+        def queue_speech(sentence: str):
+            self.tts.queue_sentence(sentence)
+
+        reply = self.brain.process_query(query, sentence_callback=queue_speech)
         print(f"[Jarvis]: {reply}\n")
         self.sfx.play_done()
 
-        # Update HUD to speaking state during TTS
-        self.hud.set_state("speaking")
-        asyncio.run(self.tts.speak(reply))
+        # Complete playback of remaining queued audio
+        self.tts.finish_streaming_session()
         self.hud.set_state("idle")
 
         # Check if shutdown tool was invoked during LLM reasoning

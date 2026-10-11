@@ -99,9 +99,10 @@ Capabilities:
         triggers = ["screen", "look at this", "look here", "what do you see", "error on my screen", "read my screen", "screenshot"]
         return any(t in q for t in triggers)
 
-    def process_query(self, user_text: str) -> str:
+    def process_query(self, user_text: str, sentence_callback: Any = None) -> str:
         """
         Processes a user utterance with automatic model failover on 503 / 429 errors.
+        Dispatches sentences to sentence_callback in real time if provided.
         """
         if not self.client:
             api_key = os.getenv("GEMINI_API_KEY", "").strip()
@@ -155,6 +156,16 @@ Capabilities:
 
                 reply_text = response.text.strip() if response.text else "At your service, Sir."
                 self.memory.log_interaction(user_text, reply_text)
+
+                # Dispatch sentences to callback for pipelined audio playback
+                if sentence_callback and reply_text:
+                    import re
+                    sentences = re.split(r"(?<=[.!?])\s+", reply_text)
+                    for s in sentences:
+                        clean_s = s.strip()
+                        if clean_s:
+                            sentence_callback(clean_s)
+
                 return reply_text
 
             except Exception as e:

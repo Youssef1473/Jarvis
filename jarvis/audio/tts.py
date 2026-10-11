@@ -110,6 +110,55 @@ class TextToSpeech:
             self._is_speaking = False
             pythoncom.CoUninitialize()
 
+    def start_streaming_session(self):
+        """Initializes a SAPI streaming session for sentence-by-sentence pipelining."""
+        import pythoncom
+        self._stop_event.clear()
+        self._is_speaking = True
+        try:
+            pythoncom.CoInitialize()
+            self._sapi = win32com.client.Dispatch("SAPI.SpVoice")
+            self._sapi.Rate = self.sapi_rate
+            if self.sapi_voice:
+                for i in range(self._sapi.GetVoices().Count):
+                    v = self._sapi.GetVoices().Item(i)
+                    if self.sapi_voice.lower() in v.GetDescription().lower():
+                        self._sapi.Voice = v
+                        break
+        except Exception as e:
+            logger.error(f"Failed to start streaming SAPI session: {e}")
+
+    def queue_sentence(self, sentence: str):
+        """Enqueues and immediately begins speaking a sentence in real time."""
+        text = sentence.strip()
+        if not text or self._stop_event.is_set():
+            return
+        if self._sapi:
+            try:
+                self._sapi.Speak(text, 1)
+            except Exception as e:
+                logger.error(f"SAPI queue error: {e}")
+
+    def finish_streaming_session(self):
+        """Waits for all queued sentences to complete playback or until interrupted."""
+        import pythoncom
+        if self._sapi:
+            try:
+                while not self._stop_event.is_set():
+                    if self._sapi.WaitUntilDone(100):
+                        break
+                if self._stop_event.is_set():
+                    self._sapi.Speak("", 2)
+            except Exception:
+                pass
+            finally:
+                self._is_speaking = False
+                self._sapi = None
+                try:
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
+
     async def speak(self, text: str):
         """Synthesizes and speaks text using Edge-TTS with instant SAPI5 fallback."""
         if not text or not text.strip():
