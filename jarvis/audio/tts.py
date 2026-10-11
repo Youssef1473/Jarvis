@@ -73,15 +73,23 @@ class TextToSpeech:
                 pass
 
             if os.path.exists(self.kokoro_model_path) and os.path.exists(self.kokoro_voices_path):
+                from jarvis.audio.stt import _setup_nvidia_dll_paths
+                _setup_nvidia_dll_paths()
                 import onnxruntime as rt
                 from kokoro_onnx import Kokoro
                 t0 = time.time()
                 opts = rt.SessionOptions()
                 opts.intra_op_num_threads = self.cpu_threads
                 opts.inter_op_num_threads = 2
+                opts.log_severity_level = 3
                 opts.graph_optimization_level = rt.GraphOptimizationLevel.ORT_ENABLE_ALL
                 available = rt.get_available_providers()
-                providers = ["DmlExecutionProvider", "CPUExecutionProvider"] if "DmlExecutionProvider" in available else ["CPUExecutionProvider"]
+                providers = []
+                if "CUDAExecutionProvider" in available:
+                    providers.append("CUDAExecutionProvider")
+                elif "DmlExecutionProvider" in available:
+                    providers.append("DmlExecutionProvider")
+                providers.append("CPUExecutionProvider")
                 sess = rt.InferenceSession(self.kokoro_model_path, sess_options=opts, providers=providers)
                 self._kokoro = Kokoro.from_session(sess, self.kokoro_voices_path)
                 active_prov = sess.get_providers()[0] if hasattr(sess, "get_providers") else providers[0]
