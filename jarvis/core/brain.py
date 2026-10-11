@@ -231,9 +231,13 @@ Capabilities:
             msg = response.choices[0].message
 
             had_tool_call = False
+            tool_iterations = 0
+            max_tool_iterations = 3
+
             # Handle tool calls loop
-            while msg.tool_calls:
+            while msg.tool_calls and tool_iterations < max_tool_iterations:
                 had_tool_call = True
+                tool_iterations += 1
                 self.openai_messages.append(msg)
                 for tool_call in msg.tool_calls:
                     fn_name = tool_call.function.name
@@ -263,6 +267,7 @@ Capabilities:
                     tools=None,
                     temperature=self.temperature,
                 )
+                msg = response.choices[0].message
             # Fallback for inline pseudo-XML tool calls (e.g. Qwen formatting)
             if not msg.tool_calls and msg.content and "<tool_call>" in msg.content:
                 fn_match = re.search(r'<function=([a-zA-Z0-9_]+)>', msg.content)
@@ -343,7 +348,9 @@ Capabilities:
 
                 response = self.gemini_chat.send_message(contents)
 
-                while response.function_calls:
+                gemini_tool_iterations = 0
+                while response.function_calls and gemini_tool_iterations < 3:
+                    gemini_tool_iterations += 1
                     tool_responses = []
                     for call in response.function_calls:
                         tool_name = call.name
