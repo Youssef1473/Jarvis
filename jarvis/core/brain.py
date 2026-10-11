@@ -1,6 +1,10 @@
-"""Jarvis brain orchestration using Google Gemini with dynamic model failover, tools, and vision."""
+"""Jarvis brain orchestration supporting xAI Grok and Google Gemini with dynamic model failover, tools, and vision."""
+import base64
+import json
 import logging
 import os
+import re
+import time
 from typing import Dict, Any, List, Optional
 from google import genai
 from google.genai import types
@@ -24,7 +28,7 @@ logger = logging.getLogger("Jarvis.Brain")
 
 
 class JarvisBrain:
-    """Powers reasoning, tool use, memory retrieval, and vision analysis with automatic model failover."""
+    """Powers reasoning, tool use, memory retrieval, and vision analysis across Grok (xAI) and Gemini."""
 
     BASE_SYSTEM_PROMPT = """You are JARVIS (Just A Rather Very Intelligent System), the personal AI assistant created for Sir.
 
@@ -40,11 +44,11 @@ Voice & Audio Optimization:
 - Deliver the core answer or action taken first, then offer further assistance if appropriate.
 
 Capabilities:
-- You have direct access to tools for controlling Windows, launching apps, adjusting volume, searching the web, checking weather, running PowerShell commands, reading files, managing tasks, and remembering user facts.
+- You have direct access to tools for controlling Windows, launching apps, adjusting volume, searching the web, checking weather, checking emails, running PowerShell commands, reading files, managing tasks, and remembering user facts.
 - When Sir asks what is on his screen or asks you to look at something, an image of his screen will be attached for you to analyze.
 """
 
-    CANDIDATE_MODELS = [
+    GEMINI_CANDIDATE_MODELS = [
         "gemini-3.1-flash-lite",
         "gemini-3.5-flash-lite",
         "gemini-3.7-flash",
@@ -55,18 +59,30 @@ Capabilities:
         self.config = config
         self.memory = memory_manager
         self.safety = safety_gate
-        configured_model = config.get("llm", {}).get("model", "gemini-3.1-flash-lite")
-        
-        # Build candidate list with configured model first
-        self.model_candidates = [configured_model] + [m for m in self.CANDIDATE_MODELS if m != configured_model]
-        self.current_model_idx = 0
-        self.model_name = self.model_candidates[self.current_model_idx]
         self.temperature = config.get("llm", {}).get("temperature", 0.6)
         
-        api_key = os.getenv("GEMINI_API_KEY", "").strip()
-        self.client = genai.Client(api_key=api_key) if api_key else None
-        self.chat = None
-        self._init_chat()
+        # Provider selection: "grok" or "gemini"
+        self.provider = config.get("llm", {}).get("provider", "gemini").lower()
+
+        # Grok (xAI) state
+        self.grok_client = None
+        self.grok_model = config.get("llm", {}).get("grok_model", "grok-2-latest")
+        self.grok_messages: List[Dict[str, Any]] = []
+
+        # Gemini state
+        configured_gemini_model = config.get("llm", {}).get("model", "gemini-3.1-flash-lite")
+        self.gemini_candidates = [configured_gemini_model] + [m for m in self.GEMINI_CANDIDATE_MODELS if m != configured_gemini_model]
+        self.gemini_model_idx = 0
+        self.gemini_model = self.gemini_candidates[self.gemini_model_idx]
+        self.gemini_client = None
+        self.gemini_chat = None
+
+        # Initialize requested provider
+        if self.provider == "grok":
+            if not self._init_grok():
+                self._init_gemini()
+        else:
+            self._init_gemini()
 
     def _get_system_instruction(self) -> str:
         """Assembles system prompt with dynamically injected memory."""
@@ -74,28 +90,53 @@ Capabilities:
         prompt = f"{self.BASE_SYSTEM_PROMPT}\n\nStored Facts & Profile for Sir:\n{memory_summary}\n"
         return prompt
 
-    def _init_chat(self, model_name: str | None = None):
-        """Initializes client and tool bindings."""
-        if not self.client:
-            logger.warning("No GEMINI_API_KEY provided. LLM calls will fail until configured.")
+    def _init_grok(self) -> bool:
+        """Initializes OpenAI client configured for xAI Grok API."""
+        api_key = os.getenv("GROK_API_KEY", "").strip() or os.getenv("XAI_API_KEY", "").strip()
+        if not api_key:
+            logger.info("GROK_API_KEY not configured. Defaulting to Gemini.")
+            self.provider = "gemini"
+            return False
+
+        try:
+            from openai import OpenAI
+            self.grok_client = OpenAI(
+                api_key=api_key,
+                base_url="https://api.x.ai/v1"
+            )
+            self.grok_messages = [
+                {"role": "system", "content": self._get_system_instruction()}
+            ]
+            logger.info(f"Jarvis Grok link initialized with model: {self.grok_model}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to initialize Grok client: {e}. Defaulting to Gemini.")
+            self.provider = "gemini"
+            return False
+
+    def _init_gemini(self, model_name: str | None = None):
+        """Initializes Google Gemini client and chat session."""
+        api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        if not api_key:
+            logger.warning("No GEMINI_API_KEY provided. Gemini LLM calls will fail until configured.")
             return
 
+        self.gemini_client = genai.Client(api_key=api_key)
         if model_name:
-            self.model_name = model_name
+            self.gemini_model = model_name
 
         all_tools = list(SkillRegistry.get_all_tools().values())
         system_instruction = self._get_system_instruction()
 
-        # Start multi-turn chat session with function calling
-        self.chat = self.client.chats.create(
-            model=self.model_name,
+        self.gemini_chat = self.gemini_client.chats.create(
+            model=self.gemini_model,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=self.temperature,
                 tools=all_tools,
             )
         )
-        logger.info(f"Jarvis chat session initialized with model: {self.model_name}")
+        logger.info(f"Jarvis Gemini session initialized with model: {self.gemini_model}")
 
     def should_capture_screen(self, query: str) -> bool:
         """Determines if the prompt requests looking at the screen."""
@@ -104,37 +145,124 @@ Capabilities:
         return any(t in q for t in triggers)
 
     def process_query(self, user_text: str, sentence_callback: Any = None) -> str:
-        """
-        Processes a user utterance with automatic model failover on 503 / 429 errors.
-        Dispatches sentences to sentence_callback in real time if provided.
-        """
-        if not self.client:
+        """Routes query to selected provider (Grok or Gemini) with automatic failover."""
+        if self.provider == "grok" and self.grok_client:
+            return self._process_grok_query(user_text, sentence_callback)
+        return self._process_gemini_query(user_text, sentence_callback)
+
+    def _process_grok_query(self, user_text: str, sentence_callback: Any = None) -> str:
+        """Processes user input using xAI Grok with function calling and screen vision."""
+        logger.info(f"Routing query to Grok ({self.grok_model})...")
+        
+        # Prepare user payload with vision if requested
+        if self.should_capture_screen(user_text):
+            img_bytes = ScreenPerception.capture_screen_bytes(max_width=1600)
+            if img_bytes:
+                b64 = base64.b64encode(img_bytes).decode("utf-8")
+                user_msg = {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": user_text},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+                    ]
+                }
+            else:
+                user_msg = {"role": "user", "content": user_text}
+        else:
+            user_msg = {"role": "user", "content": user_text}
+
+        self.grok_messages.append(user_msg)
+        tools = SkillRegistry.get_openai_tools()
+
+        try:
+            response = self.grok_client.chat.completions.create(
+                model=self.grok_model,
+                messages=self.grok_messages,
+                tools=tools if tools else None,
+                temperature=self.temperature,
+            )
+            msg = response.choices[0].message
+
+            # Handle tool calls loop
+            while msg.tool_calls:
+                self.grok_messages.append(msg)
+                for tool_call in msg.tool_calls:
+                    fn_name = tool_call.function.name
+                    try:
+                        fn_args = json.loads(tool_call.function.arguments or "{}")
+                    except Exception:
+                        fn_args = {}
+
+                    logger.info(f"Grok Tool call: {fn_name}({fn_args})")
+                    is_safe, warning = self.safety.check_tool_call(fn_name, fn_args)
+                    if not is_safe:
+                        tool_result = f"Action halted: {warning}"
+                    else:
+                        tool_result = SkillRegistry.execute(fn_name, **fn_args)
+
+                    logger.info(f"Grok Tool result: {tool_result}")
+                    self.grok_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": str(tool_result),
+                    })
+
+                response = self.grok_client.chat.completions.create(
+                    model=self.grok_model,
+                    messages=self.grok_messages,
+                    tools=tools if tools else None,
+                    temperature=self.temperature,
+                )
+                msg = response.choices[0].message
+
+            reply_text = msg.content.strip() if msg.content else "At your service, Sir."
+            self.grok_messages.append({"role": "assistant", "content": reply_text})
+            self.memory.log_interaction(user_text, reply_text)
+
+            # Bound memory window
+            if len(self.grok_messages) > 25:
+                self.grok_messages = [self.grok_messages[0]] + self.grok_messages[-20:]
+
+            # Dispatch sentences for pipelined streaming TTS
+            if sentence_callback and reply_text:
+                sentences = re.split(r"(?<=[.!?])\s+", reply_text)
+                for s in sentences:
+                    clean_s = s.strip()
+                    if clean_s:
+                        sentence_callback(clean_s)
+
+            return reply_text
+
+        except Exception as e:
+            logger.warning(f"Grok request failed: {e}. Seamlessly falling back to Gemini...")
+            return self._process_gemini_query(user_text, sentence_callback)
+
+    def _process_gemini_query(self, user_text: str, sentence_callback: Any = None) -> str:
+        """Processes user input using Google Gemini with dynamic candidate failover."""
+        if not self.gemini_client:
             api_key = os.getenv("GEMINI_API_KEY", "").strip()
             if api_key:
-                self.client = genai.Client(api_key=api_key)
-                self._init_chat()
+                self.gemini_client = genai.Client(api_key=api_key)
+                self._init_gemini()
             else:
-                return "My apologies, Sir. My cognitive link requires a GEMINI_API_KEY in the environment or .env file."
+                return "My apologies, Sir. My cognitive link requires an API key in the environment or .env file."
 
-        attempts = len(self.model_candidates)
+        attempts = len(self.gemini_candidates)
         for attempt in range(attempts):
-            active_model = self.model_candidates[self.current_model_idx]
-            if not self.chat or self.model_name != active_model:
-                self._init_chat(active_model)
+            active_model = self.gemini_candidates[self.gemini_model_idx]
+            if not self.gemini_chat or self.gemini_model != active_model:
+                self._init_gemini(active_model)
 
             try:
                 contents = [user_text]
 
-                # Attach screen if requested
                 if self.should_capture_screen(user_text):
                     screenshot = ScreenPerception.capture_screen()
                     if screenshot:
                         contents.append(screenshot)
 
-                # Send message to chat session
-                response = self.chat.send_message(contents)
+                response = self.gemini_chat.send_message(contents)
 
-                # Handle tool calls loop
                 while response.function_calls:
                     tool_responses = []
                     for call in response.function_calls:
@@ -142,7 +270,6 @@ Capabilities:
                         tool_args = dict(call.args) if call.args else {}
                         logger.info(f"Tool call: {tool_name}({tool_args})")
 
-                        # Safety gate validation
                         is_safe, warning = self.safety.check_tool_call(tool_name, tool_args)
                         if not is_safe:
                             tool_result = f"Action halted: {warning}"
@@ -155,15 +282,12 @@ Capabilities:
                             response={"result": str(tool_result)}
                         ))
 
-                    # Send function results back to model
-                    response = self.chat.send_message(tool_responses)
+                    response = self.gemini_chat.send_message(tool_responses)
 
                 reply_text = response.text.strip() if response.text else "At your service, Sir."
                 self.memory.log_interaction(user_text, reply_text)
 
-                # Dispatch sentences to callback for pipelined audio playback
                 if sentence_callback and reply_text:
-                    import re
                     sentences = re.split(r"(?<=[.!?])\s+", reply_text)
                     for s in sentences:
                         clean_s = s.strip()
@@ -174,19 +298,17 @@ Capabilities:
 
             except Exception as e:
                 err_str = str(e)
-                # Check for transient capacity / demand errors (503 UNAVAILABLE, 429 RESOURCE_EXHAUSTED)
                 if ("503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str or "429" in err_str) and attempt < attempts - 1:
-                    import time
                     time.sleep(0.5)
-                    next_idx = (self.current_model_idx + 1) % len(self.model_candidates)
-                    next_model = self.model_candidates[next_idx]
+                    next_idx = (self.gemini_model_idx + 1) % len(self.gemini_candidates)
+                    next_model = self.gemini_candidates[next_idx]
                     logger.warning(f"Model '{active_model}' is busy (503/429). Seamlessly switching cognitive link to '{next_model}'...")
-                    self.current_model_idx = next_idx
-                    self.model_name = next_model
-                    self._init_chat(next_model)
+                    self.gemini_model_idx = next_idx
+                    self.gemini_model = next_model
+                    self._init_gemini(next_model)
                     continue
 
-                logger.error(f"Error in JarvisBrain processing: {e}")
+                logger.error(f"Error in Gemini processing: {e}")
                 if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
                     return "My apologies, Sir. My neural uplink is currently experiencing high network congestion. Please give me a brief moment."
                 return "I encountered a slight anomaly in my cognitive circuits, Sir. Please try again in a moment."

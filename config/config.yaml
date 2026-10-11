@@ -3,7 +3,9 @@
 # ==============================================================================
 
 llm:
-  model: "gemini-3.1-flash-lite"
+  provider: "gemini"              # Primary LLM provider: "gemini" or "grok"
+  model: "gemini-3.1-flash-lite"  # Active Gemini model
+  grok_model: "grok-2-latest"     # Active Grok model ("grok-2-latest", "grok-2-vision-1212")
   temperature: 0.6
   max_output_tokens: 1024
 

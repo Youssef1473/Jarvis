@@ -34,3 +34,9 @@ def get_gemini_api_key() -> str:
     """Retrieves Google Gemini API key from environment."""
     key = os.getenv("GEMINI_API_KEY", "").strip()
     return key
+
+
+def get_grok_api_key() -> str:
+    """Retrieves xAI Grok API key from environment."""
+    key = os.getenv("GROK_API_KEY", "").strip() or os.getenv("XAI_API_KEY", "").strip()
+    return key
