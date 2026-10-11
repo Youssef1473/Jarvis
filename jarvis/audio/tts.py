@@ -86,12 +86,7 @@ class TextToSpeech:
                 available = rt.get_available_providers()
                 providers = []
                 if "CUDAExecutionProvider" in available:
-                    cuda_opts = {
-                        "device_id": 0,
-                        "arena_extend_strategy": "kSameAsRequested",
-                        "gpu_mem_limit": 512 * 1024 * 1024,  # Cap VRAM allocation to 512MB
-                    }
-                    providers.append(("CUDAExecutionProvider", cuda_opts))
+                    providers.append("CUDAExecutionProvider")
                 elif "DmlExecutionProvider" in available:
                     providers.append("DmlExecutionProvider")
                 providers.append("CPUExecutionProvider")
