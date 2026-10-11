@@ -38,6 +38,18 @@ class JarvisOrchestrator:
         self.hud = JarvisHUD()
         self.heartbeat = JarvisHeartbeat(self, config)
 
+        # Web-Powered Holographic HUD Server
+        ui_cfg = config.get("ui", {})
+        if ui_cfg.get("enabled", True):
+            from jarvis.ui.server import JarvisUIService
+            self.ui_service = JarvisUIService(
+                orchestrator=self,
+                host=ui_cfg.get("host", "127.0.0.1"),
+                port=int(ui_cfg.get("port", 20129)),
+            )
+        else:
+            self.ui_service = None
+
         # Mute state
         self._is_muted = False
 
@@ -62,6 +74,12 @@ class JarvisOrchestrator:
 
         self._running = False
 
+    def set_state(self, new_state: str):
+        """Unified state switcher notifying both desktop Tkinter HUD and Web Holographic HUD."""
+        self.hud.set_state(new_state)
+        if getattr(self, "ui_service", None):
+            self.ui_service.broadcast_state(new_state)
+
     def is_muted(self) -> bool:
         """Returns True if voice listening is currently muted."""
         return self._is_muted
@@ -69,12 +87,15 @@ class JarvisOrchestrator:
     def toggle_mute(self) -> bool:
         """Toggles audio sensing mute state. Returns new muted status."""
         self._is_muted = not self._is_muted
+        if getattr(self, "ui_service", None):
+            self.ui_service.broadcast_telemetry({"is_muted": self._is_muted})
+
         if self._is_muted:
             logger.info("Jarvis audio sensors MUTED.")
             if self.tts.is_speaking:
                 self.tts.stop()
             self.wake_detector.stop()
-            self.hud.set_state("idle")
+            self.set_state("idle")
         else:
             logger.info("Jarvis audio sensors UNMUTED.")
             self.wake_detector.start()
@@ -85,7 +106,7 @@ class JarvisOrchestrator:
         """Barge-in hook: interrupts speech if user starts typing or presses a key."""
         if self.tts.is_speaking:
             self.tts.stop()
-            self.hud.set_state("idle")
+            self.set_state("idle")
 
     def _audio_record_callback(self, indata, frames, time_info, status):
         """Accumulates microphone audio during push-to-talk."""
@@ -113,14 +134,14 @@ class JarvisOrchestrator:
                 time.sleep(0.20)
                 if self._is_recording:
                     logger.info("PTT held (mouse): Listening...")
-                    self.hud.set_state("listening")
+                    self.set_state("listening")
                     self.sfx.play_wake()
 
             threading.Thread(target=_delayed_cue, daemon=True).start()
         else:
             # Dedicated keyboard key (e.g. Fin / End): immediate activation
             logger.info("PTT pressed (Fin / End): Listening...")
-            self.hud.set_state("listening")
+            self.set_state("listening")
             self.sfx.play_wake()
 
         try:
@@ -134,7 +155,7 @@ class JarvisOrchestrator:
         except Exception as e:
             logger.error(f"Failed to start audio recording stream: {e}")
             self._is_recording = False
-            self.hud.set_state("idle")
+            self.set_state("idle")
 
     def _on_ptt_release(self):
         """Called immediately when user releases PTT trigger."""
@@ -155,16 +176,16 @@ class JarvisOrchestrator:
         # Filter out accidental mouse taps (< 220ms) if using mouse button
         is_mouse = getattr(self.hotkey_listener, "mouse_target_btn", None) is not None
         if is_mouse and press_duration < 0.22:
-            self.hud.set_state("idle")
+            self.set_state("idle")
             return
 
         logger.info(f"PTT released (held {press_duration:.2f}s): Processing speech...")
-        self.hud.set_state("thinking")
+        self.set_state("thinking")
 
         with self._lock:
             if not self._recorded_frames:
                 logger.info("No audio captured.")
-                self.hud.set_state("idle")
+                self.set_state("idle")
                 return
             audio_array = np.concatenate(self._recorded_frames, axis=0).flatten()
 
@@ -179,7 +200,7 @@ class JarvisOrchestrator:
             self.tts.stop()
 
         logger.info("Wake word detected! Listening with dynamic VAD auto-cutoff...")
-        self.hud.set_state("listening")
+        self.set_state("listening")
         self.sfx.play_wake()
 
         def record_and_process_vad():
@@ -226,22 +247,22 @@ class JarvisOrchestrator:
                     audio_array = np.concatenate(captured_chunks, axis=0).flatten()
                     self._process_audio(audio_array)
                 else:
-                    self.hud.set_state("idle")
+                    self.set_state("idle")
 
             except Exception as e:
                 logger.error(f"VAD recording error: {e}")
-                self.hud.set_state("idle")
+                self.set_state("idle")
 
         threading.Thread(target=record_and_process_vad, daemon=True).start()
 
     def _process_audio(self, audio_array: np.ndarray):
         """Transcribes audio, sends to brain, and delivers spoken output."""
-        self.hud.set_state("thinking")
+        self.set_state("thinking")
         self.sfx.play_think()
         text = self.stt.transcribe(audio_array, sample_rate=self.sample_rate)
         if not text or len(text.strip()) < 2:
             logger.info("Audio was unintelligible or empty.")
-            self.hud.set_state("idle")
+            self.set_state("idle")
             return
 
         print(f"\n[Sir]: {text}")
@@ -262,25 +283,31 @@ class JarvisOrchestrator:
 
     def handle_command(self, query: str):
         """Processes a text query, executes tools, and speaks the reply."""
+        # Broadcast prompt to Holographic HUD
+        if getattr(self, "ui_service", None):
+            self.ui_service.broadcast_message("user", query)
+
         # Immediate direct shutdown handling
         if self.is_shutdown_command(query):
             farewell = "Powering down systems. Goodbye, Sir."
             print(f"[Jarvis]: {farewell}\n")
+            if getattr(self, "ui_service", None):
+                self.ui_service.broadcast_message("jarvis", farewell)
             self.sfx.play_done()
-            self.hud.set_state("speaking")
+            self.set_state("speaking")
             asyncio.run(self.tts.speak(farewell))
-            self.hud.set_state("idle")
+            self.set_state("idle")
             self.stop()
             import os
             time.sleep(0.3)
             os._exit(0)
             return
 
-        self.hud.set_state("thinking")
+        self.set_state("thinking")
         self.sfx.play_think()
 
         # Start streaming pipelined speech session
-        self.hud.set_state("speaking")
+        self.set_state("speaking")
         self.tts.start_streaming_session()
 
         def queue_speech(sentence: str):
@@ -289,9 +316,13 @@ class JarvisOrchestrator:
         reply = self.brain.process_query(query, sentence_callback=queue_speech)
         print(f"[Jarvis]: {reply}\n")
 
+        # Broadcast response to Holographic HUD
+        if getattr(self, "ui_service", None):
+            self.ui_service.broadcast_message("jarvis", reply)
+
         # Complete playback of remaining queued audio
         self.tts.finish_streaming_session()
-        self.hud.set_state("idle")
+        self.set_state("idle")
         self.sfx.play_done()
 
         # Check if shutdown tool was invoked during LLM reasoning
@@ -303,9 +334,21 @@ class JarvisOrchestrator:
             os._exit(0)
 
     def start(self):
-        """Starts all background listeners and the HUD overlay."""
+        """Starts all background listeners, Web HUD, and the desktop overlay."""
         self._running = True
-        logger.info("Starting Jarvis HUD Holographic Overlay...")
+
+        # Launch Web Holographic HUD Server
+        if getattr(self, "ui_service", None):
+            logger.info("Starting Jarvis Holographic Web HUD Server...")
+            self.ui_service.start()
+            if self.config.get("ui", {}).get("auto_open", False):
+                try:
+                    import webbrowser
+                    webbrowser.open(f"http://{self.ui_service.host}:{self.ui_service.port}")
+                except Exception:
+                    pass
+
+        logger.info("Starting Jarvis HUD Desktop Overlay...")
         self.hud.start()
 
         logger.info("Starting Jarvis Hotkey Listener (Hold ALT to talk)...")
@@ -318,8 +361,10 @@ class JarvisOrchestrator:
         self.heartbeat.start()
 
         self.sfx.play_done()
+        hud_url = f"http://{self.ui_service.host}:{self.ui_service.port}" if self.ui_service else "Disabled"
         print("\n" + "=" * 60)
         print(" JARVIS 2.0 ONLINE & OPERATIONAL")
+        print(f"  - Holographic Web HUD active at {hud_url}")
         print("  - Floating Arc-Reactor HUD active (Drag to move)")
         print("  - Hold Fin (End) key to talk (Push-to-Talk)")
         print("  - Say 'Hey Jarvis' to wake via voice")
@@ -329,9 +374,9 @@ class JarvisOrchestrator:
         print("=" * 60 + "\n")
 
         # Spoken welcome greeting on launch
-        self.hud.set_state("speaking")
+        self.set_state("speaking")
         asyncio.run(self.tts.speak("Jarvis systems operational. All sub-systems online, Sir."))
-        self.hud.set_state("idle")
+        self.set_state("idle")
 
     def run_interactive_loop(self):
         """Main execution loop for voice and console interaction."""
@@ -363,6 +408,8 @@ class JarvisOrchestrator:
     def stop(self):
         """Stops all running listeners and cleanup."""
         self._running = False
+        if getattr(self, "ui_service", None):
+            self.ui_service.stop()
         self.heartbeat.stop()
         self.hotkey_listener.stop()
         self.wake_detector.stop()

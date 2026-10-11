@@ -156,6 +156,33 @@ def get_battery_status() -> str:
     return "Unable to read battery status."
 
 
+def get_raw_battery_info() -> dict:
+    """Returns raw battery dictionary for UI telemetry."""
+    import ctypes
+    from ctypes import wintypes
+
+    class SYSTEM_POWER_STATUS(ctypes.Structure):
+        _fields_ = [
+            ("ACLineStatus", wintypes.BYTE),
+            ("BatteryFlag", wintypes.BYTE),
+            ("BatteryLifePercent", wintypes.BYTE),
+            ("SystemStatusFlag", wintypes.BYTE),
+            ("BatteryLifeTime", wintypes.DWORD),
+            ("BatteryFullLifeTime", wintypes.DWORD),
+        ]
+
+    sps = SYSTEM_POWER_STATUS()
+    if ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(sps)):
+        pct = sps.BatteryLifePercent
+        is_charging = sps.ACLineStatus == 1
+        return {
+            "percent": 100 if pct == 255 else int(pct),
+            "charging": bool(is_charging),
+            "has_battery": pct != 255,
+        }
+    return {"percent": 100, "charging": True, "has_battery": False}
+
+
 _shutdown_requested = False
 
 

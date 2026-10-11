@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JARVIS 2.0 // Holographic HUD Interface</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800;900&family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #050811;
+      --panel-bg: rgba(8, 14, 26, 0.78);
+      --panel-border: rgba(0, 240, 255, 0.28);
+      --holo-cyan: #00f0ff;
+      --holo-blue: #00b4d8;
+      --holo-amber: #ffaa00;
+      --holo-emerald: #00e199;
+      --holo-crimson: #ff3366;
+      --text-main: #e2f1f8;
+      --text-dim: #7a92a3;
+      --glow-cyan: 0 0 15px rgba(0, 240, 255, 0.45);
+      --glow-amber: 0 0 18px rgba(255, 170, 0, 0.55);
+      --glow-emerald: 0 0 18px rgba(0, 225, 153, 0.55);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(circle at 50% 50%, rgba(0, 180, 216, 0.08) 0%, transparent 70%),
+        linear-gradient(rgba(0, 240, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 240, 255, 0.03) 1px, transparent 1px);
+      background-size: 100% 100%, 36px 36px, 36px 36px;
+      color: var(--text-main);
+      font-family: 'Rajdhani', 'Segoe UI', sans-serif;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    /* Scanline effect */
+    body::after {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%);
+      background-size: 100% 4px;
+      z-index: 100;
+      pointer-events: none;
+      opacity: 0.45;
+    }
+
+    /* Header Bar */
+    header {
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 28px;
+      border-bottom: 1px solid var(--panel-border);
+      background: rgba(5, 9, 18, 0.85);
+      backdrop-filter: blur(12px);
+      z-index: 10;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .brand-logo {
+      width: 28px;
+      height: 28px;
+      border: 2px solid var(--holo-cyan);
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      box-shadow: var(--glow-cyan);
+    }
+
+    .brand-logo-inner {
+      width: 10px;
+      height: 10px;
+      background: var(--holo-cyan);
+      border-radius: 50%;
+    }
+
+    .brand-title {
+      font-family: 'Orbitron', sans-serif;
+      font-weight: 800;
+      font-size: 1.15rem;
+      letter-spacing: 2px;
+      color: var(--holo-cyan);
+      text-shadow: var(--glow-cyan);
+    }
+
+    .brand-sub {
+      font-size: 0.82rem;
+      letter-spacing: 1.5px;
+      color: var(--text-dim);
+      border-left: 1px solid var(--panel-border);
+      padding-left: 12px;
+      margin-left: 6px;
+    }
+
+    .header-pills {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+    }
+
+    .pill {
+      background: rgba(0, 240, 255, 0.08);
+      border: 1px solid var(--panel-border);
+      padding: 6px 14px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      letter-spacing: 1px;
+    }
+
+    .pill-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--holo-emerald);
+      box-shadow: 0 0 8px var(--holo-emerald);
+    }
+
+    /* Main Grid Layout */
+    main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 310px 1fr 390px;
+      grid-template-rows: 1fr 90px;
+      gap: 18px;
+      padding: 18px 24px;
+      overflow: hidden;
+      z-index: 10;
+    }
+
+    /* Card Panels */
+    .hud-card {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      backdrop-filter: blur(14px);
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+    }
+
+    .hud-card::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; width: 14px; height: 14px;
+      border-top: 2px solid var(--holo-cyan);
+      border-left: 2px solid var(--holo-cyan);
+    }
+
+    .hud-card::after {
+      content: "";
+      position: absolute;
+      bottom: 0; right: 0; width: 14px; height: 14px;
+      border-bottom: 2px solid var(--holo-cyan);
+      border-right: 2px solid var(--holo-cyan);
+    }
+
+    .card-header {
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--panel-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.82rem;
+      letter-spacing: 1.5px;
+      color: var(--holo-cyan);
+      background: rgba(0, 240, 255, 0.04);
+    }
+
+    .card-body {
+      flex: 1;
+      padding: 16px;
+      overflow-y: auto;
+    }
+
+    /* Telemetry Panel */
+    .telemetry-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px dashed rgba(0, 240, 255, 0.12);
+      font-size: 0.95rem;
+    }
+
+    .telemetry-row:last-child {
+      border-bottom: none;
+    }
+
+    .telemetry-label {
+      color: var(--text-dim);
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+
+    .telemetry-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 600;
+      color: var(--holo-cyan);
+    }
+
+    .meter-bar-container {
+      width: 100%;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 4px;
+      margin-top: 6px;
+      overflow: hidden;
+      border: 1px solid rgba(0, 240, 255, 0.2);
+    }
+
+    .meter-bar {
+      height: 100%;
+      background: linear-gradient(90deg, var(--holo-blue), var(--holo-cyan));
+      width: 0%;
+      transition: width 0.4s ease;
+      box-shadow: 0 0 8px var(--holo-cyan);
+    }
+
+    /* Center Stage (Arc Reactor Core) */
+    .center-stage {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    #reactorCanvas {
+      width: 100%;
+      height: 100%;
+      max-width: 480px;
+      max-height: 480px;
+    }
+
+    .status-hud-box {
+      margin-top: -15px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-badge {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.05rem;
+      font-weight: 800;
+      letter-spacing: 3px;
+      color: var(--holo-cyan);
+      text-shadow: var(--glow-cyan);
+      padding: 6px 18px;
+      border: 1px solid var(--panel-border);
+      border-radius: 4px;
+      background: rgba(0, 240, 255, 0.06);
+      transition: all 0.3s ease;
+    }
+
+    .sub-status {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      letter-spacing: 1px;
+    }
+
+    /* Mission Log / Chat */
+    .chat-container {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      height: 100%;
+    }
+
+    .chat-bubble {
+      padding: 10px 14px;
+      border-radius: 4px;
+      font-size: 0.92rem;
+      line-height: 1.45;
+      animation: fadeIn 0.3s ease-out;
+      border-left: 3px solid;
+      background: rgba(255, 255, 255, 0.03);
+      user-select: text;
+    }
+
+    .chat-user {
+      border-left-color: var(--holo-amber);
+      background: rgba(255, 170, 0, 0.05);
+    }
+
+    .chat-jarvis {
+      border-left-color: var(--holo-cyan);
+      background: rgba(0, 240, 255, 0.05);
+    }
+
+    .bubble-author {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.72rem;
+      letter-spacing: 1px;
+      margin-bottom: 4px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .bubble-author.user { color: var(--holo-amber); }
+    .bubble-author.jarvis { color: var(--holo-cyan); }
+
+    .bubble-text {
+      color: var(--text-main);
+      word-break: break-word;
+    }
+
+    /* Bottom Command Deck */
+    .command-deck {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 0 16px;
+    }
+
+    .quick-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn-action {
+      background: rgba(0, 240, 255, 0.08);
+      border: 1px solid var(--panel-border);
+      color: var(--holo-cyan);
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.75rem;
+      letter-spacing: 1px;
+      padding: 12px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-action:hover {
+      background: rgba(0, 240, 255, 0.22);
+      box-shadow: var(--glow-cyan);
+      border-color: var(--holo-cyan);
+      transform: translateY(-1px);
+    }
+
+    .btn-action:active {
+      transform: translateY(1px);
+    }
+
+    .btn-action.muted {
+      border-color: var(--holo-crimson);
+      color: var(--holo-crimson);
+      background: rgba(255, 51, 102, 0.1);
+    }
+
+    .input-wrapper {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      background: rgba(4, 8, 16, 0.85);
+      border: 1px solid var(--panel-border);
+      border-radius: 4px;
+      padding: 4px 6px;
+      box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.6);
+      transition: border-color 0.2s ease;
+    }
+
+    .input-wrapper:focus-within {
+      border-color: var(--holo-cyan);
+      box-shadow: var(--glow-cyan), inset 0 2px 8px rgba(0, 0, 0, 0.6);
+    }
+
+    .cmd-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--holo-cyan);
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 1.15rem;
+      font-weight: 600;
+      letter-spacing: 1px;
+      padding: 8px 14px;
+    }
+
+    .cmd-input::placeholder {
+      color: rgba(122, 146, 163, 0.5);
+      font-weight: 500;
+    }
+
+    .btn-transmit {
+      background: linear-gradient(135deg, rgba(0, 240, 255, 0.25), rgba(0, 180, 216, 0.45));
+      border: 1px solid var(--holo-cyan);
+      color: #ffffff;
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      padding: 10px 22px;
+      border-radius: 3px;
+      cursor: pointer;
+      box-shadow: var(--glow-cyan);
+      transition: all 0.2s ease;
+    }
+
+    .btn-transmit:hover {
+      background: linear-gradient(135deg, rgba(0, 240, 255, 0.45), rgba(0, 180, 216, 0.7));
+      transform: translateY(-1px);
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Scrollbars */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.2); }
+    ::-webkit-scrollbar-thumb { background: rgba(0, 240, 255, 0.3); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--holo-cyan); }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="brand">
+      <div class="brand-logo"><div class="brand-logo-inner"></div></div>
+      <div class="brand-title">J.A.R.V.I.S. // 2.0</div>
+      <div class="brand-sub">STARK INDUSTRIES COGNITIVE CORE</div>
+    </div>
+    <div class="header-pills">
+      <div class="pill">
+        <div class="pill-dot" id="socketStatusDot"></div>
+        <span id="socketStatusText">NEURAL LINK ACTIVE</span>
+      </div>
+      <div class="pill">
+        <span>COST:</span>
+        <span style="color: var(--holo-emerald); font-weight: bold;">$0.00 / FREE</span>
+      </div>
+      <div class="pill">
+        <span id="clockDisplay">00:00:00</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Grid -->
+  <main>
+    <!-- Left: Telemetry Panel -->
+    <section class="hud-card">
+      <div class="card-header">
+        <span>HARDWARE & TELEMETRY</span>
+        <span style="color: var(--text-dim);">[SYS-01]</span>
+      </div>
+      <div class="card-body">
+        <div class="telemetry-row">
+          <span class="telemetry-label">HOST OS</span>
+          <span class="telemetry-val" id="osVal">WINDOWS 11 64-BIT</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">GPU ACCELERATION</span>
+          <span class="telemetry-val" id="gpuVal">RTX 3050 (CUDA FP16)</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">CPU PLATFORM</span>
+          <span class="telemetry-val">INTEL CORE i5-12500H</span>
+        </div>
+        <div class="telemetry-row" style="flex-direction: column; align-items: flex-start; gap: 4px;">
+          <div style="display: flex; justify-content: space-between; width: 100%;">
+            <span class="telemetry-label">SYSTEM BATTERY</span>
+            <span class="telemetry-val" id="batteryVal">-- %</span>
+          </div>
+          <div class="meter-bar-container">
+            <div class="meter-bar" id="batteryMeter"></div>
+          </div>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">ACTIVE LLM TIER</span>
+          <span class="telemetry-val" id="modelTierVal" style="color: var(--holo-amber);">GROQ LPU FAST TIER</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">ACTIVE MODEL</span>
+          <span class="telemetry-val" id="activeModelVal" style="font-size: 0.8rem;">qwen3.8-27b</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">TTS ENGINE</span>
+          <span class="telemetry-val" style="color: var(--holo-emerald);">KOKORO-82M (OFFLINE)</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">DYNAMIC MEMORY</span>
+          <span class="telemetry-val" id="memoryCountVal">TIER 2 (ACTIVE)</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Center: Arc Reactor Stage -->
+    <section class="center-stage">
+      <canvas id="reactorCanvas" width="480" height="480"></canvas>
+      <div class="status-hud-box">
+        <div class="status-badge" id="statusBadge">STANDBY // ONLINE</div>
+        <div class="sub-status" id="subStatus">VOICE SENSORS ARMED // HOLD FIN KEY OR SAY "HEY JARVIS"</div>
+      </div>
+    </section>
+
+    <!-- Right: Mission Dialogue Feed -->
+    <section class="hud-card">
+      <div class="card-header">
+        <span>LIVE MISSION LOG</span>
+        <span style="color: var(--text-dim);" id="msgCount">[00 MSGS]</span>
+      </div>
+      <div class="card-body">
+        <div class="chat-container" id="chatContainer">
+          <div class="chat-bubble chat-jarvis">
+            <div class="bubble-author jarvis">
+              <span>JARVIS</span>
+              <span>BOOT</span>
+            </div>
+            <div class="bubble-text">Jarvis systems operational. All sub-systems online and standing by, Sir.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Bottom: Command Deck -->
+    <footer class="hud-card command-deck">
+      <div class="quick-actions">
+        <button class="btn-action" id="btnMute" onclick="toggleMute()">
+          <span id="muteIcon">🎙️</span> <span id="muteText">MUTE VOX</span>
+        </button>
+        <button class="btn-action" onclick="sendQuickCommand('Look at my screen and tell me what you see')">
+          <span>👁️</span> SCREEN VISION
+        </button>
+        <button class="btn-action" onclick="sendQuickCommand('System status check')">
+          <span>⚡</span> STATUS CHECK
+        </button>
+        <button class="btn-action" onclick="sendQuickCommand('Set volume to 50 percent')">
+          <span>🔊</span> VOL 50%
+        </button>
+      </div>
+
+      <div class="input-wrapper">
+        <input 
+          type="text" 
+          id="cmdInput" 
+          class="cmd-input" 
+          placeholder="Transmit instruction or voice query to Jarvis..." 
+          autocomplete="off"
+          onkeydown="if(event.key === 'Enter') transmitCommand()"
+        >
+        <button class="btn-transmit" onclick="transmitCommand()">TRANSMIT ↵</button>
+      </div>
+    </footer>
+  </main>
+
+  <!-- Interactive HUD Script -->
+  <script>
+    // System & Animation State
+    let currentState = "idle";
+    let pulseAngle = 0;
+    let turbineAngle1 = 0;
+    let turbineAngle2 = 0;
+    let turbineAngle3 = 0;
+    let audioReactiveLevel = 0.0;
+    let isMuted = false;
+    let ws = null;
+
+    // Clock display
+    function updateClock() {
+      const now = new Date();
+      document.getElementById('clockDisplay').textContent = now.toLocaleTimeString('en-GB');
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // Canvas Setup
+    const canvas = document.getElementById('reactorCanvas');
+    const ctx = canvas.getContext('2d');
+    const size = 480;
+    const center = size / 2;
+
+    function renderArcReactor() {
+      ctx.clearRect(0, 0, size, center * 2);
+
+      // Determine state colors and dynamics
+      let coreColor = "#00f0ff";
+      let glowColor = "rgba(0, 240, 255, 0.6)";
+      let speedMult = 1.0;
+
+      if (isMuted) {
+        coreColor = "#ff3366";
+        glowColor = "rgba(255, 51, 102, 0.6)";
+        speedMult = 0.2;
+      } else if (currentState === "listening") {
+        coreColor = "#00f0ff";
+        glowColor = "rgba(0, 240, 255, 0.9)";
+        speedMult = 2.2;
+      } else if (currentState === "thinking") {
+        coreColor = "#ffaa00";
+        glowColor = "rgba(255, 170, 0, 0.85)";
+        speedMult = 4.0;
+      } else if (currentState === "speaking") {
+        coreColor = "#00e199";
+        glowColor = "rgba(0, 225, 153, 0.85)";
+        speedMult = 2.0;
+      } else { // idle
+        coreColor = "#00b4d8";
+        glowColor = "rgba(0, 180, 216, 0.4)";
+        speedMult = 0.6;
+      }
+
+      // Dynamic rotation increments
+      turbineAngle1 += 0.008 * speedMult;
+      turbineAngle2 -= 0.014 * speedMult;
+      turbineAngle3 += 0.022 * speedMult;
+      pulseAngle += 0.04;
+
+      const dynamicRadiusMod = 1.0 + (0.05 * Math.sin(pulseAngle)) + (audioReactiveLevel * 0.12);
+
+      // 1. Outermost Ambient Ring
+      ctx.beginPath();
+      ctx.arc(center, center, 190 * dynamicRadiusMod, 0, 2 * Math.PI);
+      ctx.strokeStyle = "rgba(0, 240, 255, 0.12)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // 2. Audio-Reactive Equalizer Frequency Ring (36 radial notches)
+      const numNotches = 36;
+      for (let i = 0; i < numNotches; i++) {
+        const notchAngle = (i * 2 * Math.PI / numNotches) + turbineAngle1;
+        const baseLen = 8;
+        const waveLen = (currentState === "speaking" || currentState === "listening")
+          ? baseLen + (Math.sin(pulseAngle * 2 + i) * 6) + (audioReactiveLevel * 14)
+          : baseLen;
+        const r1 = 175 * dynamicRadiusMod;
+        const r2 = r1 + waveLen;
+
+        const x1 = center + r1 * Math.cos(notchAngle);
+        const y1 = center + r1 * Math.sin(notchAngle);
+        const x2 = center + r2 * Math.cos(notchAngle);
+        const y2 = center + r2 * Math.sin(notchAngle);
+
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.strokeStyle = glowColor;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      // 3. Middle Turbine Ring 1 (6 Segmented Arcs)
+      const numArcs1 = 6;
+      for (let i = 0; i < numArcs1; i++) {
+        const start = turbineAngle2 + (i * 2 * Math.PI / numArcs1);
+        const end = start + (Math.PI / 5);
+        ctx.beginPath();
+        ctx.arc(center, center, 142 * dynamicRadiusMod, start, end);
+        ctx.strokeStyle = coreColor;
+        ctx.lineWidth = 4;
+        ctx.shadowColor = coreColor;
+        ctx.shadowBlur = 12;
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+      }
+
+      // 4. Inner Turbine Ring 2 (Counter-Rotating Arcs)
+      const numArcs2 = 4;
+      for (let i = 0; i < numArcs2; i++) {
+        const start = turbineAngle3 + (i * 2 * Math.PI / numArcs2);
+        const end = start + (Math.PI / 3);
+        ctx.beginPath();
+        ctx.arc(center, center, 98 * dynamicRadiusMod, start, end);
+        ctx.strokeStyle = glowColor;
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+
+      // 5. Central Reactor Core Housing
+      ctx.beginPath();
+      ctx.arc(center, center, 62 * dynamicRadiusMod, 0, 2 * Math.PI);
+      ctx.strokeStyle = coreColor;
+      ctx.lineWidth = 2;
+      ctx.shadowColor = coreColor;
+      ctx.shadowBlur = 18;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // 6. Glowing Inner Reactor Core Fill
+      const grad = ctx.createRadialGradient(center, center, 0, center, center, 56 * dynamicRadiusMod);
+      grad.addColorStop(0, "#ffffff");
+      grad.addColorStop(0.3, coreColor);
+      grad.addColorStop(1.0, "rgba(0, 0, 0, 0.4)");
+
+      ctx.beginPath();
+      ctx.arc(center, center, 54 * dynamicRadiusMod, 0, 2 * Math.PI);
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // 7. Core Radial Rays
+      const numRays = 8;
+      for (let i = 0; i < numRays; i++) {
+        const rayAngle = (i * 2 * Math.PI / numRays) + turbineAngle1;
+        const rx = center + 50 * Math.cos(rayAngle);
+        const ry = center + 50 * Math.sin(rayAngle);
+        ctx.beginPath();
+        ctx.moveTo(center, center);
+        ctx.lineTo(rx, ry);
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.6)";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+
+      // 8. Center Arc Core Dot
+      ctx.beginPath();
+      ctx.arc(center, center, 14, 0, 2 * Math.PI);
+      ctx.fillStyle = "#ffffff";
+      ctx.shadowColor = coreColor;
+      ctx.shadowBlur = 24;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      requestAnimationFrame(renderArcReactor);
+    }
+    requestAnimationFrame(renderArcReactor);
+
+    // WebSocket Management
+    function initWebSocket() {
+      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = `${proto}//${window.location.host}/ws`;
+      
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        document.getElementById('socketStatusDot').style.background = "var(--holo-emerald)";
+        document.getElementById('socketStatusDot').style.boxShadow = "0 0 8px var(--holo-emerald)";
+        document.getElementById('socketStatusText').textContent = "NEURAL LINK ACTIVE";
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          handleServerMessage(data);
+        } catch (e) {
+          console.error("Malformed WS payload:", e);
+        }
+      };
+
+      ws.onclose = () => {
+        document.getElementById('socketStatusDot').style.background = "var(--holo-crimson)";
+        document.getElementById('socketStatusDot').style.boxShadow = "0 0 8px var(--holo-crimson)";
+        document.getElementById('socketStatusText').textContent = "DISCONNECTED // RECONNECTING";
+        setTimeout(initWebSocket, 2000);
+      };
+
+      ws.onerror = (err) => {
+        console.warn("WebSocket error:", err);
+      };
+    }
+
+    function handleServerMessage(data) {
+      if (data.type === "state") {
+        updateHUDState(data.state);
+      } else if (data.type === "telemetry") {
+        updateTelemetry(data);
+      } else if (data.type === "chat") {
+        appendChatMessage(data.sender, data.text, data.timestamp);
+      } else if (data.type === "audio_level") {
+        audioReactiveLevel = data.level || 0.0;
+      }
+    }
+
+    function updateHUDState(state) {
+      currentState = state;
+      const badge = document.getElementById('statusBadge');
+      const sub = document.getElementById('subStatus');
+
+      if (isMuted) {
+        badge.textContent = "MUTED // SENSORS OFFLINE";
+        badge.style.color = "var(--holo-crimson)";
+        badge.style.borderColor = "var(--holo-crimson)";
+        badge.style.textShadow = "0 0 15px rgba(255, 51, 102, 0.6)";
+        sub.textContent = "MICROPHONE MUTED // CLICK UNMUTE TO RESTORE VOICE";
+        return;
+      }
+
+      if (state === "listening") {
+        badge.textContent = "LISTENING // VOX ACTIVE";
+        badge.style.color = "var(--holo-cyan)";
+        badge.style.borderColor = "var(--holo-cyan)";
+        badge.style.textShadow = "var(--glow-cyan)";
+        sub.textContent = "RECORDING SPEECH // VOICE ACTIVITY DETECTOR ARMED";
+      } else if (state === "thinking") {
+        badge.textContent = "PROCESSING // NEURAL LPU";
+        badge.style.color = "var(--holo-amber)";
+        badge.style.borderColor = "var(--holo-amber)";
+        badge.style.textShadow = "var(--glow-amber)";
+        sub.textContent = "EXECUTING COGNITIVE REASONING & TOOL ROUTING";
+      } else if (state === "speaking") {
+        badge.textContent = "SPEAKING // VOCAL HARMONICS";
+        badge.style.color = "var(--holo-emerald)";
+        badge.style.borderColor = "var(--holo-emerald)";
+        badge.style.textShadow = "var(--glow-emerald)";
+        sub.textContent = "SYNTHESIZING & STREAMING VIA KOKORO-82M NEURAL VOICE";
+      } else { // idle
+        badge.textContent = "STANDBY // ONLINE";
+        badge.style.color = "var(--holo-cyan)";
+        badge.style.borderColor = "var(--panel-border)";
+        badge.style.textShadow = "var(--glow-cyan)";
+        sub.textContent = "HOLD FIN KEY OR SAY 'HEY JARVIS' TO ACTIVATE";
+      }
+    }
+
+    function updateTelemetry(data) {
+      if (data.battery !== undefined) {
+        const bText = `${data.battery}% ${data.charging ? '⚡ CHARGING' : ''}`;
+        document.getElementById('batteryVal').textContent = bText;
+        document.getElementById('batteryMeter').style.width = `${data.battery}%`;
+      }
+      if (data.model) {
+        document.getElementById('activeModelVal').textContent = data.model;
+      }
+      if (data.tier) {
+        document.getElementById('modelTierVal').textContent = `${data.tier.toUpperCase()} TIER`;
+      }
+      if (data.gpu) {
+        document.getElementById('gpuVal').textContent = data.gpu;
+      }
+      if (data.is_muted !== undefined) {
+        isMuted = data.is_muted;
+        const btnMute = document.getElementById('btnMute');
+        const muteText = document.getElementById('muteText');
+        if (isMuted) {
+          btnMute.classList.add('muted');
+          muteText.textContent = "UNMUTE VOX";
+        } else {
+          btnMute.classList.remove('muted');
+          muteText.textContent = "MUTE VOX";
+        }
+        updateHUDState(currentState);
+      }
+    }
+
+    let messageCount = 1;
+    function appendChatMessage(sender, text, timeStr) {
+      const container = document.getElementById('chatContainer');
+      const bubble = document.createElement('div');
+      bubble.className = `chat-bubble chat-${sender.toLowerCase()}`;
+
+      const now = timeStr || new Date().toLocaleTimeString('en-GB');
+      const authorClass = sender.toLowerCase() === 'user' ? 'user' : 'jarvis';
+      const authorName = sender.toLowerCase() === 'user' ? 'SIR' : 'JARVIS';
+
+      bubble.innerHTML = `
+        <div class="bubble-author ${authorClass}">
+          <span>${authorName}</span>
+          <span>${now}</span>
+        </div>
+        <div class="bubble-text">${escapeHtml(text)}</div>
+      `;
+
+      container.appendChild(bubble);
+      container.scrollTop = container.scrollHeight;
+
+      messageCount++;
+      document.getElementById('msgCount').textContent = `[${String(messageCount).padStart(2, '0')} MSGS]`;
+    }
+
+    function escapeHtml(string) {
+      return String(string)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function transmitCommand() {
+      const input = document.getElementById('cmdInput');
+      const query = input.value.trim();
+      if (!query) return;
+
+      appendChatMessage('user', query);
+      input.value = '';
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'command', text: query }));
+      } else {
+        // Fallback to REST endpoint
+        fetch('/api/command', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command: query })
+        })
+        .then(res => res.json())
+        .then(data => {
+          if (data.reply) appendChatMessage('jarvis', data.reply);
+        })
+        .catch(err => console.error("REST transmit error:", err));
+      }
+    }
+
+    function sendQuickCommand(cmd) {
+      document.getElementById('cmdInput').value = cmd;
+      transmitCommand();
+    }
+
+    function toggleMute() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'action', action: 'toggle_mute' }));
+      } else {
+        fetch('/api/mute', { method: 'POST' });
+      }
+    }
+
+    // Auto-fetch initial telemetry
+    function fetchInitialTelemetry() {
+      fetch('/api/status')
+        .then(res => res.json())
+        .then(data => updateTelemetry(data))
+        .catch(err => console.log("Initial telemetry poll:", err));
+    }
+
+    window.addEventListener('load', () => {
+      initWebSocket();
+      fetchInitialTelemetry();
+    });
+  </script>
+</body>
+</html>

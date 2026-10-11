@@ -157,6 +157,14 @@ class SystemTrayApp:
         except Exception:
             pass
 
+    def _open_web_hud(self, icon, item):
+        """Opens the Holographic Web HUD in default browser."""
+        try:
+            import webbrowser
+            webbrowser.open("http://127.0.0.1:20129")
+        except Exception:
+            pass
+
     def _open_omniroute_dashboard(self, icon, item):
         """Opens the OmniRoute AI Gateway Web Dashboard."""
         try:
@@ -254,6 +262,7 @@ class SystemTrayApp:
                 checked=lambda item: not is_console_visible()
             ),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Open Holographic HUD Interface", self._open_web_hud),
             pystray.MenuItem("Open OmniRoute Gateway Dashboard", self._open_omniroute_dashboard),
             pystray.MenuItem("Deliver Morning Standup Briefing", self._trigger_morning_briefing),
             pystray.MenuItem("View Memory Knowledge Base", self._view_memory),

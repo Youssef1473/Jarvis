@@ -73,3 +73,9 @@ heartbeat:
   battery_alerts: true
   ergonomic_reminders: true
   email_notifications: true
+
+ui:
+  enabled: true                   # Holographic Web HUD interface
+  host: "127.0.0.1"
+  port: 20129
+  auto_open: false                # Automatically launch browser on startup
