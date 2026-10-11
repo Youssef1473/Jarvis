@@ -1,4 +1,4 @@
-"""Jarvis brain orchestration using Google Gemini 2.0 Flash with tools and vision."""
+"""Jarvis brain orchestration using Google Gemini with dynamic model failover, tools, and vision."""
 import logging
 import os
 from typing import Dict, Any, List, Optional
@@ -20,7 +20,7 @@ logger = logging.getLogger("Jarvis.Brain")
 
 
 class JarvisBrain:
-    """Powers reasoning, tool use, memory retrieval, and vision analysis."""
+    """Powers reasoning, tool use, memory retrieval, and vision analysis with automatic model failover."""
 
     BASE_SYSTEM_PROMPT = """You are JARVIS (Just A Rather Very Intelligent System), the personal AI assistant created for Sir.
 
@@ -40,11 +40,23 @@ Capabilities:
 - When Sir asks what is on his screen or asks you to look at something, an image of his screen will be attached for you to analyze.
 """
 
+    CANDIDATE_MODELS = [
+        "gemini-3.8-flash",
+        "gemini-3.5-flash",
+        "gemini-flash-latest",
+        "gemini-3.1-flash-lite",
+    ]
+
     def __init__(self, config: Dict[str, Any], memory_manager: MemoryManager, safety_gate: SafetyGate):
         self.config = config
         self.memory = memory_manager
         self.safety = safety_gate
-        self.model_name = config.get("llm", {}).get("model", "gemini-3.8-flash")
+        configured_model = config.get("llm", {}).get("model", "gemini-3.8-flash")
+        
+        # Build candidate list with configured model first
+        self.model_candidates = [configured_model] + [m for m in self.CANDIDATE_MODELS if m != configured_model]
+        self.current_model_idx = 0
+        self.model_name = self.model_candidates[self.current_model_idx]
         self.temperature = config.get("llm", {}).get("temperature", 0.6)
         
         api_key = os.getenv("GEMINI_API_KEY", "").strip()
@@ -58,11 +70,14 @@ Capabilities:
         prompt = f"{self.BASE_SYSTEM_PROMPT}\n\nStored Facts & Profile for Sir:\n{memory_summary}\n"
         return prompt
 
-    def _init_chat(self):
+    def _init_chat(self, model_name: str | None = None):
         """Initializes client and tool bindings."""
         if not self.client:
             logger.warning("No GEMINI_API_KEY provided. LLM calls will fail until configured.")
             return
+
+        if model_name:
+            self.model_name = model_name
 
         all_tools = list(SkillRegistry.get_all_tools().values())
         system_instruction = self._get_system_instruction()
@@ -76,7 +91,7 @@ Capabilities:
                 tools=all_tools,
             )
         )
-        logger.info("Jarvis chat session initialized with Gemini 2.0 Flash.")
+        logger.info(f"Jarvis chat session initialized with model: {self.model_name}")
 
     def should_capture_screen(self, query: str) -> bool:
         """Determines if the prompt requests looking at the screen."""
@@ -86,10 +101,9 @@ Capabilities:
 
     def process_query(self, user_text: str) -> str:
         """
-        Processes a user utterance, handles tool calls, attaches screen if needed,
-        and returns the final text response.
+        Processes a user utterance with automatic model failover on 503 / 429 errors.
         """
-        if not self.client or not self.chat:
+        if not self.client:
             api_key = os.getenv("GEMINI_API_KEY", "").strip()
             if api_key:
                 self.client = genai.Client(api_key=api_key)
@@ -97,48 +111,65 @@ Capabilities:
             else:
                 return "My apologies, Sir. My cognitive link requires a GEMINI_API_KEY in the environment or .env file."
 
-        try:
-            contents = [user_text]
+        attempts = len(self.model_candidates)
+        for attempt in range(attempts):
+            active_model = self.model_candidates[self.current_model_idx]
+            if not self.chat or self.model_name != active_model:
+                self._init_chat(active_model)
 
-            # If user asks about the screen, attach screen capture
-            if self.should_capture_screen(user_text):
-                screenshot = ScreenPerception.capture_screen()
-                if screenshot:
-                    contents.append(screenshot)
+            try:
+                contents = [user_text]
 
-            # Send message to chat session
-            response = self.chat.send_message(contents)
+                # Attach screen if requested
+                if self.should_capture_screen(user_text):
+                    screenshot = ScreenPerception.capture_screen()
+                    if screenshot:
+                        contents.append(screenshot)
 
-            # Check for function calls loop
-            while response.function_calls:
-                tool_responses = []
-                for call in response.function_calls:
-                    tool_name = call.name
-                    tool_args = dict(call.args) if call.args else {}
-                    logger.info(f"Tool call: {tool_name}({tool_args})")
+                # Send message to chat session
+                response = self.chat.send_message(contents)
 
-                    # Check safety gate
-                    is_safe, warning = self.safety.check_tool_call(tool_name, tool_args)
-                    if not is_safe:
-                        tool_result = f"Action halted: {warning}"
-                    else:
-                        tool_result = SkillRegistry.execute(tool_name, **tool_args)
+                # Handle tool calls loop
+                while response.function_calls:
+                    tool_responses = []
+                    for call in response.function_calls:
+                        tool_name = call.name
+                        tool_args = dict(call.args) if call.args else {}
+                        logger.info(f"Tool call: {tool_name}({tool_args})")
 
-                    logger.info(f"Tool result: {tool_result}")
-                    tool_responses.append(types.Part.from_function_response(
-                        name=tool_name,
-                        response={"result": str(tool_result)}
-                    ))
+                        # Safety gate validation
+                        is_safe, warning = self.safety.check_tool_call(tool_name, tool_args)
+                        if not is_safe:
+                            tool_result = f"Action halted: {warning}"
+                        else:
+                            tool_result = SkillRegistry.execute(tool_name, **tool_args)
 
-                # Send function results back to Gemini
-                response = self.chat.send_message(tool_responses)
+                        logger.info(f"Tool result: {tool_result}")
+                        tool_responses.append(types.Part.from_function_response(
+                            name=tool_name,
+                            response={"result": str(tool_result)}
+                        ))
 
-            reply_text = response.text.strip() if response.text else "At your service, Sir."
+                    # Send function results back to model
+                    response = self.chat.send_message(tool_responses)
 
-            # Log interaction in SQLite
-            self.memory.log_interaction(user_text, reply_text)
-            return reply_text
+                reply_text = response.text.strip() if response.text else "At your service, Sir."
+                self.memory.log_interaction(user_text, reply_text)
+                return reply_text
 
-        except Exception as e:
-            logger.error(f"Error in JarvisBrain processing: {e}")
-            return f"I encountered a slight anomaly in my cognitive circuits, Sir: {e}"
+            except Exception as e:
+                err_str = str(e)
+                # Check for transient capacity / demand errors (503 UNAVAILABLE, 429 RESOURCE_EXHAUSTED)
+                if ("503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str or "429" in err_str) and attempt < attempts - 1:
+                    next_idx = (self.current_model_idx + 1) % len(self.model_candidates)
+                    next_model = self.model_candidates[next_idx]
+                    logger.warning(f"Model '{active_model}' is busy (503/429). Seamlessly switching cognitive link to '{next_model}'...")
+                    self.current_model_idx = next_idx
+                    self.model_name = next_model
+                    self._init_chat(next_model)
+                    continue
+
+                logger.error(f"Error in JarvisBrain processing: {e}")
+                return f"I encountered a slight anomaly in my cognitive circuits, Sir: {e}"
+
+        return "My cognitive systems are temporarily congested, Sir. Please try again in a few moments."

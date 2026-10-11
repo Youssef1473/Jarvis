@@ -23,6 +23,7 @@ class TextToSpeech:
         self.pitch = tts_cfg.get("pitch", "+0Hz")
         self._is_speaking = False
         self._stop_event = threading.Event()
+        self._use_local_sapi_only = False
 
         # Initialize local SAPI5 fallback voice
         self._sapi = None
@@ -104,6 +105,12 @@ class TextToSpeech:
         self._stop_event.clear()
         self._is_speaking = True
 
+        # Fast path if Edge-TTS already failed this session
+        if self._use_local_sapi_only:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._speak_local_sapi, text)
+            return
+
         # Attempt Edge-TTS first
         try:
             mp3_bytes = await self._synthesize_edge_audio(text)
@@ -126,8 +133,8 @@ class TextToSpeech:
                 sd.stop()
 
         except Exception as e:
-            logger.warning(f"Edge-TTS failed ({e}). Falling back to local Windows SAPI5 voice.")
-            # Run local SAPI in threadpool so it doesn't block async loop
+            logger.warning(f"Edge-TTS failed ({e}). Defaulting to local Windows SAPI5 voice for this session.")
+            self._use_local_sapi_only = True
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self._speak_local_sapi, text)
         finally:
