@@ -38,6 +38,14 @@ Your Persona & Demeanor:
 - Calm, composed, dry British wit, courteous, impeccably competent.
 - You are not a generic corporate assistant; you are Sir's trusted confidant and technical butler.
 
+Sir's Core Working Profile (Tier 1):
+- Full Name: Youssef Chamroukhi (Address him as "Sir" or "Youssef" naturally)
+- Environment: Windows 11 64-bit, PowerShell, Visual Studio Code
+- Hardware: NVIDIA GeForce RTX 3050 Laptop GPU (4 GB VRAM, CUDA acceleration), Intel Core i5-12500H
+- Primary Workspace: C:\\Users\\Youssef\\Projects\\Jarvis_2.0
+- Primary Email: youssef.chamroukhi12@gmail.com
+- Architectural Principle: Voice-first, 100% $0 API cost, low latency, clean engineering.
+
 Voice & Audio Optimization:
 - You speak aloud via Text-to-Speech.
 - Keep your answers CONCISE, conversational, and direct. Avoid reading out raw URLs, long markdown tables, or massive code walls.
@@ -85,9 +93,13 @@ Capabilities:
             self._init_gemini()
 
     def _get_system_instruction(self) -> str:
-        """Assembles system prompt with dynamically injected memory."""
+        """Assembles system prompt with dynamically injected Tier 2 memory."""
         memory_summary = self.memory.get_context_summary()
-        prompt = f"{self.BASE_SYSTEM_PROMPT}\n\nStored Facts & Profile for Sir:\n{memory_summary}\n"
+        prompt = (
+            f"{self.BASE_SYSTEM_PROMPT}\n\n"
+            f"Sir's Stored Knowledge, Preferences & Habits (Tier 2 Dynamic Memory):\n"
+            f"{memory_summary}\n"
+        )
         return prompt
 
     def _init_openai_compatible(self) -> bool:
@@ -247,6 +259,7 @@ Capabilities:
             reply_text = msg.content.strip() if msg.content else "At your service, Sir."
             self.openai_messages.append({"role": "assistant", "content": reply_text})
             self.memory.log_interaction(user_text, reply_text)
+            self.memory.auto_learn_from_interaction(user_text, reply_text)
 
             # Bound memory window
             if len(self.openai_messages) > 25:
@@ -313,6 +326,7 @@ Capabilities:
 
                 reply_text = response.text.strip() if response.text else "At your service, Sir."
                 self.memory.log_interaction(user_text, reply_text)
+                self.memory.auto_learn_from_interaction(user_text, reply_text)
 
                 if sentence_callback and reply_text:
                     sentences = [s.strip() for s in re.split(r"(?<!\d)(?<=[.!?])(?!\d)\s+", reply_text) if s.strip()]

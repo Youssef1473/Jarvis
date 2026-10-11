@@ -1,15 +1,19 @@
-"""Long-term persistent memory management using SQLite for Jarvis 2.0."""
-import sqlite3
-from pathlib import Path
-from typing import Dict, Any, List, Optional
+"""Long-term persistent memory management and adaptive self-learning for Jarvis 2.0."""
 import datetime
+import json
 import logging
+import os
+from pathlib import Path
+import re
+import sqlite3
+import threading
+from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger("Jarvis.Memory")
 
 
 class MemoryManager:
-    """Stores user preferences, facts, tasks, and conversation history in SQLite."""
+    """Stores user preferences, facts, tasks, and conversation history in SQLite with adaptive learning."""
 
     def __init__(self, config: Dict[str, Any]):
         base_dir = Path(config.get("_base_dir", "."))
@@ -19,7 +23,7 @@ class MemoryManager:
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -83,7 +87,7 @@ class MemoryManager:
                     value = excluded.value,
                     category = excluded.category,
                     updated_at = CURRENT_TIMESTAMP
-            """, (category, key.lower().strip(), value.strip()))
+            """, (category.lower().strip(), key.lower().strip(), value.strip()))
             conn.commit()
         return f"Remembered: '{key}' is '{value}'."
 
@@ -94,6 +98,18 @@ class MemoryManager:
             cursor.execute("SELECT value FROM facts WHERE key = ?", (key.lower().strip(),))
             row = cursor.fetchone()
             return row["value"] if row else None
+
+    def search_facts(self, query: str) -> List[Dict[str, str]]:
+        """Searches remembered facts matching a query keyword."""
+        q = f"%{query.lower().strip()}%"
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT category, key, value FROM facts
+                WHERE key LIKE ? OR value LIKE ? OR category LIKE ?
+                ORDER BY category, key
+            """, (q, q, q))
+            return [dict(row) for row in cursor.fetchall()]
 
     def get_all_facts(self) -> List[Dict[str, str]]:
         """Retrieves all stored facts."""
@@ -165,7 +181,7 @@ class MemoryManager:
                 return f"Event #{event_id} has been cancelled, Sir."
             return f"Event #{event_id} was not found."
 
-    # Interaction History
+    # Interaction History & Autonomous Self-Learning
     def log_interaction(self, user_input: str, jarvis_reply: str, tool_calls: Optional[str] = None):
         """Logs a conversation turn."""
         with self._get_connection() as conn:
@@ -176,10 +192,73 @@ class MemoryManager:
             """, (user_input, jarvis_reply, tool_calls or ""))
             conn.commit()
 
+    def auto_learn_from_interaction(self, user_text: str, reply_text: str, groq_api_key: Optional[str] = None):
+        """Asynchronously analyzes user utterances to extract and persist persistent preferences, facts, and habits."""
+        cleaned = user_text.strip().lower()
+        # Fast filter for greetings, one-word queries, and short commands
+        if len(cleaned) < 14 or cleaned in ("hey jarvis", "exit", "quit", "goodbye", "help", "who are you"):
+            return
+
+        def _extract():
+            api_key = groq_api_key or os.getenv("GROQ_API_KEY", "").strip()
+            if not api_key:
+                return
+
+            try:
+                from openai import OpenAI
+                client = OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
+                system_prompt = (
+                    "You are an ambient background memory extractor for Sir's personal assistant JARVIS. "
+                    "Analyze the user's utterance and determine if Sir revealed any permanent personal facts, "
+                    "preferences, habits, routine details, projects, or behavioral rules about himself. "
+                    "If so, output a JSON array of objects with keys: 'category' (identity|preference|habit|project|general), "
+                    "'key' (snake_case, concise), 'value' (clear description). "
+                    "If no persistent personal facts about Sir were shared (e.g. routine queries, system commands, transient questions), "
+                    "output ONLY an empty array: []\n"
+                    "Output valid JSON without markdown fences."
+                )
+
+                res = client.chat.completions.create(
+                    model="qwen/qwen3.8-27b",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": f"User statement: '{user_text}'"}
+                    ],
+                    max_tokens=200,
+                    temperature=0.0
+                )
+
+                content = res.choices[0].message.content.strip()
+                if content.startswith("```"):
+                    content = re.sub(r"^```(?:json)?\n?", "", content)
+                    content = re.sub(r"\n?```$", "", content)
+
+                items = json.loads(content)
+                if isinstance(items, list):
+                    for item in items:
+                        key = item.get("key", "").strip()
+                        val = item.get("value", "").strip()
+                        cat = item.get("category", "general").strip()
+                        if key and val:
+                            self.remember_fact(key, val, cat)
+                            logger.info(f"Learned new fact about Sir: [{cat}] {key} -> {val}")
+            except Exception as e:
+                logger.debug(f"Memory extraction notice: {e}")
+
+        threading.Thread(target=_extract, daemon=True).start()
+
     def get_context_summary(self) -> str:
-        """Generates a brief summary of remembered facts for the LLM prompt."""
+        """Generates a structured, categorized summary of remembered facts for the LLM prompt."""
         facts = self.get_all_facts()
         if not facts:
             return "No prior facts recorded."
-        lines = [f"- {f['key']}: {f['value']}" for f in facts]
-        return "\n".join(lines)
+
+        by_cat = {}
+        for f in facts:
+            cat = f.get("category", "general").capitalize()
+            by_cat.setdefault(cat, []).append(f"{f['key'].replace('_', ' ').capitalize()}: {f['value']}")
+
+        sections = []
+        for cat, items in sorted(by_cat.items()):
+            sections.append(f"[{cat}]\n" + "\n".join(f"• {item}" for item in items))
+        return "\n\n".join(sections)
