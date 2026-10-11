@@ -1,5 +1,6 @@
-"""Web search and live intelligence tools (100% free, zero API keys required)."""
+import warnings
 import requests
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="duckduckgo_search")
 from duckduckgo_search import DDGS
 from jarvis.skills.base import SkillRegistry
 

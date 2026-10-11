@@ -46,16 +46,16 @@ Capabilities:
 
     CANDIDATE_MODELS = [
         "gemini-3.1-flash-lite",
-        "gemini-3.5-flash",
-        "gemini-flash-latest",
-        "gemini-3.8-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.7-flash",
+        "gemini-3.1-flash-lite-preview",
     ]
 
     def __init__(self, config: Dict[str, Any], memory_manager: MemoryManager, safety_gate: SafetyGate):
         self.config = config
         self.memory = memory_manager
         self.safety = safety_gate
-        configured_model = config.get("llm", {}).get("model", "gemini-3.8-flash")
+        configured_model = config.get("llm", {}).get("model", "gemini-3.1-flash-lite")
         
         # Build candidate list with configured model first
         self.model_candidates = [configured_model] + [m for m in self.CANDIDATE_MODELS if m != configured_model]
@@ -176,6 +176,8 @@ Capabilities:
                 err_str = str(e)
                 # Check for transient capacity / demand errors (503 UNAVAILABLE, 429 RESOURCE_EXHAUSTED)
                 if ("503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str or "429" in err_str) and attempt < attempts - 1:
+                    import time
+                    time.sleep(0.5)
                     next_idx = (self.current_model_idx + 1) % len(self.model_candidates)
                     next_model = self.model_candidates[next_idx]
                     logger.warning(f"Model '{active_model}' is busy (503/429). Seamlessly switching cognitive link to '{next_model}'...")
@@ -185,6 +187,8 @@ Capabilities:
                     continue
 
                 logger.error(f"Error in JarvisBrain processing: {e}")
-                return f"I encountered a slight anomaly in my cognitive circuits, Sir: {e}"
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    return "My apologies, Sir. My neural uplink is currently experiencing high network congestion. Please give me a brief moment."
+                return "I encountered a slight anomaly in my cognitive circuits, Sir. Please try again in a moment."
 
         return "My cognitive systems are temporarily congested, Sir. Please try again in a few moments."
