@@ -94,13 +94,16 @@ class TextToSpeech:
                         break
             # Flag 1 = SVSFlagsAsync
             sapi.Speak(text, 1)
-            # Wait while SAPI is speaking
-            while sapi.Status.RunningState == 2 and not self._stop_event.is_set():
-                import time
-                time.sleep(0.05)
+            # Wait while SAPI is speaking until complete or interrupted
+            while not self._stop_event.is_set():
+                if sapi.WaitUntilDone(100):
+                    break
 
             if self._stop_event.is_set():
-                sapi.Speak("", 2)
+                try:
+                    sapi.Speak("", 2)  # Purge remaining speech
+                except Exception:
+                    pass
         except Exception as e:
             logger.error(f"SAPI5 speech error: {e}")
         finally:

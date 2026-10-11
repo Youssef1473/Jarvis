@@ -192,6 +192,11 @@ class JarvisOrchestrator:
         print("  - Press Ctrl+C or type 'exit' to quit")
         print("=" * 60 + "\n")
 
+        # Spoken welcome greeting on launch
+        self.hud.set_state("speaking")
+        asyncio.run(self.tts.speak("Jarvis systems operational. All sub-systems online, Sir."))
+        self.hud.set_state("idle")
+
     def run_interactive_loop(self):
         """Console input loop for text typing alongside voice."""
         self.start()
