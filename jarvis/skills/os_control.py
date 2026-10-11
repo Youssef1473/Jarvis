@@ -61,36 +61,84 @@ def _send_vk(vk_code: int):
 
 @SkillRegistry.register(
     name="adjust_volume",
-    description="Adjusts system volume: 'up', 'down', 'mute', or 'set' to a target percentage (0-100)."
+    description="Adjusts Windows master volume to an exact percentage (0-100), increases/decreases, or toggles mute."
 )
-def adjust_volume(action: str, steps: int = 5, percent: int = -1) -> str:
-    """Adjusts Windows master volume using native Win32 key events."""
-    action = action.lower().strip()
+def adjust_volume(action: str = "set", percent: int = -1, steps: int = 5) -> str:
+    """Adjusts Windows master volume with 100% precision using Core Audio API (pycaw)."""
+    action_str = str(action or "").lower().strip()
+
+    # Extract any numeric percentage from percent or action parameters
+    target_pct = None
+    if percent is not None:
+        try:
+            p_val = int(percent)
+            if p_val >= 0:
+                target_pct = p_val
+        except (ValueError, TypeError):
+            pass
+
+    if target_pct is None:
+        num_match = re.search(r'\b(\d{1,3})\b', action_str)
+        if num_match:
+            target_pct = int(num_match.group(1))
+
+    # Core Audio endpoint control (pycaw) - sub-millisecond exact hardware precision
+    try:
+        from pycaw.pycaw import AudioUtilities
+        spk = AudioUtilities.GetSpeakers()
+
+        if target_pct is not None or "set" in action_str:
+            target = max(0, min(100, target_pct if target_pct is not None else int(steps)))
+            spk.volume_percent = float(target)
+            return f"Master volume set to {target}%, Sir."
+
+        elif any(k in action_str for k in ("up", "louder", "increase", "higher")):
+            curr = float(spk.volume_percent or 50.0)
+            target = max(0, min(100, int(round(curr + (int(steps) * 2)))))
+            spk.volume_percent = float(target)
+            return f"Volume increased to {target}%, Sir."
+
+        elif any(k in action_str for k in ("down", "quieter", "decrease", "lower")):
+            curr = float(spk.volume_percent or 50.0)
+            target = max(0, min(100, int(round(curr - (int(steps) * 2)))))
+            spk.volume_percent = float(target)
+            return f"Volume decreased to {target}%, Sir."
+
+        elif any(k in action_str for k in ("mute", "unmute", "toggle")):
+            curr_mute = spk.EndpointVolume.GetMute()
+            new_mute = 0 if curr_mute else 1
+            spk.EndpointVolume.SetMute(new_mute, None)
+            return "Volume unmuted, Sir." if curr_mute else "Volume muted, Sir."
+
+    except Exception as e:
+        logger.warning(f"pycaw volume adjustment error: {e}. Falling back to Win32 keybd_event.")
+
+    # Win32 virtual key fallback if pycaw encounters an issue
     VK_VOLUME_MUTE = 0xAD
     VK_VOLUME_DOWN = 0xAE
     VK_VOLUME_UP = 0xAF
 
-    if action == "set" or percent >= 0:
-        target = max(0, min(100, percent if percent >= 0 else steps))
-        # Zero out master volume, then step up (each volumeup step is 2%)
+    if target_pct is not None or "set" in action_str:
+        target = max(0, min(100, target_pct if target_pct is not None else 50))
         for _ in range(50):
             _send_vk(VK_VOLUME_DOWN)
         up_steps = int(round(target / 2.0))
         for _ in range(up_steps):
             _send_vk(VK_VOLUME_UP)
         return f"Volume set to {target}%, Sir."
-    elif action == "up":
-        for _ in range(steps):
+    elif "up" in action_str:
+        for _ in range(int(steps)):
             _send_vk(VK_VOLUME_UP)
-        return f"Volume increased by {steps * 2}%."
-    elif action == "down":
-        for _ in range(steps):
+        return "Volume increased."
+    elif "down" in action_str:
+        for _ in range(int(steps)):
             _send_vk(VK_VOLUME_DOWN)
-        return f"Volume decreased by {steps * 2}%."
-    elif action in ("mute", "unmute", "toggle"):
+        return "Volume decreased."
+    elif "mute" in action_str:
         _send_vk(VK_VOLUME_MUTE)
         return "Volume mute toggled."
-    return f"Unknown volume action '{action}'. Use 'up', 'down', 'mute', or 'set'."
+
+    return f"Unknown volume action '{action}'. Use 'set' (0-100), 'up', 'down', or 'mute'."
 
 
 @SkillRegistry.register(

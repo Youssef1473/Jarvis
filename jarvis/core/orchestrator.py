@@ -287,11 +287,6 @@ class JarvisOrchestrator:
         if getattr(self, "ui_service", None):
             self.ui_service.broadcast_message("user", query)
 
-        # Barge-in: immediately stop any previous speech so new commands never wait
-        if self.tts.is_speaking:
-            logger.info("New command received while speaking. Interrupting previous speech...")
-            self.tts.stop()
-
         # Immediate direct shutdown handling
         if self.is_shutdown_command(query):
             farewell = "Powering down systems. Goodbye, Sir."
