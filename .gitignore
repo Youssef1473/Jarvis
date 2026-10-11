@@ -1,0 +1,26 @@
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment variables & secrets
+.env
+
+# Data & database
+data/*.db
+data/test_memory.db
+
+# Models cache
+*.onnx
+*.tflite
+models/
+.cache/
+
+# Audio scratch
+test.mp3
+test.wav

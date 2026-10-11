@@ -1,0 +1,45 @@
+# ==============================================================================
+# Jarvis 2.0 Configuration
+# ==============================================================================
+
+llm:
+  model: "gemini-2.0-flash"
+  temperature: 0.6
+  max_output_tokens: 1024
+
+audio:
+  sample_rate: 16000
+  channels: 1
+  wake_word: "hey jarvis"
+  wake_word_threshold: 0.55
+  ptt_key: "alt"                  # Hold ALT to speak, release to send
+  silence_threshold_seconds: 1.2  # Silence duration to conclude utterance
+
+stt:
+  model_size: "small"             # "tiny", "base", "small", "medium"
+  device: "cuda"                  # "cuda" with RTX 3050, or "cpu" fallback
+  compute_type: "float16"         # "float16" for GPU, "int8" for CPU
+  language: "en"
+
+tts:
+  voice: "en-GB-RyanNeural"       # Polished British male (Jarvis)
+  rate: "+10%"                    # Snappy speech delivery
+  volume: "+0%"
+  pitch: "+0Hz"
+
+sounds:
+  enabled: true
+  dir: "data/sounds"
+  wake: "data/sounds/wake.wav"
+  think: "data/sounds/think.wav"
+  done: "data/sounds/done.wav"
+  alert: "data/sounds/alert.wav"
+
+safety:
+  confirm_destructive: true       # Prompt voice confirmation for dangerous actions
+
+memory:
+  db_path: "data/jarvis_memory.db"
+
+mcp:
+  config_path: "config/mcp_servers.json"
