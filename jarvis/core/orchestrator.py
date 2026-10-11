@@ -49,6 +49,7 @@ class JarvisOrchestrator:
 
         # Listeners
         self.hotkey_listener = HotkeyListener(
+            config=config,
             on_press_callback=self._on_ptt_press,
             on_release_callback=self._on_ptt_release,
             on_any_key_callback=self._on_key_activity,
@@ -93,20 +94,27 @@ class JarvisOrchestrator:
                 self._recorded_frames.append(indata.copy())
 
     def _on_ptt_press(self):
-        """Called immediately when user holds ALT."""
+        """Called immediately when user presses PTT trigger (MB2 or configured key)."""
         if self._is_muted:
             return
 
         if self.tts.is_speaking:
             self.tts.stop()
 
-        logger.info("ALT pressed: Listening...")
-        self.hud.set_state("listening")
-        self.sfx.play_wake()
-
         with self._lock:
             self._recorded_frames = []
             self._is_recording = True
+            self._ptt_press_time = time.time()
+
+        # Non-blocking delayed cue: chime and show HUD only if held >= 200ms
+        def _delayed_cue():
+            time.sleep(0.20)
+            if self._is_recording:
+                logger.info("PTT held (MB2): Listening...")
+                self.hud.set_state("listening")
+                self.sfx.play_wake()
+
+        threading.Thread(target=_delayed_cue, daemon=True).start()
 
         try:
             self._record_stream = sd.InputStream(
@@ -122,12 +130,11 @@ class JarvisOrchestrator:
             self.hud.set_state("idle")
 
     def _on_ptt_release(self):
-        """Called immediately when user releases ALT."""
+        """Called immediately when user releases PTT trigger."""
         if not self._is_recording:
             return
 
-        logger.info("ALT released: Processing speech...")
-        self.hud.set_state("thinking")
+        press_duration = time.time() - getattr(self, "_ptt_press_time", 0.0)
         self._is_recording = False
 
         if self._record_stream:
@@ -137,6 +144,14 @@ class JarvisOrchestrator:
             except Exception:
                 pass
             self._record_stream = None
+
+        # Filter out normal right-click taps (< 220ms) so Windows context menus function normally
+        if press_duration < 0.22:
+            self.hud.set_state("idle")
+            return
+
+        logger.info(f"PTT released (held {press_duration:.2f}s): Processing speech...")
+        self.hud.set_state("thinking")
 
         with self._lock:
             if not self._recorded_frames:
@@ -298,7 +313,7 @@ class JarvisOrchestrator:
         print("\n" + "=" * 60)
         print(" JARVIS 2.0 ONLINE & OPERATIONAL")
         print("  - Floating Arc-Reactor HUD active (Drag to move)")
-        print("  - Hold ALT to talk (Push-to-Talk)")
+        print("  - Hold MB2 (Right Click) to talk (Push-to-Talk)")
         print("  - Say 'Hey Jarvis' to wake via voice")
         print("  - Ambient Proactive Heartbeat active (Briefings & Alerts)")
         print("  - Type directly below and press Enter to chat")

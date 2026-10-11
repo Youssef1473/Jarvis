@@ -15,7 +15,8 @@ audio:
   channels: 1
   wake_word: "hey jarvis"
   wake_word_threshold: 0.55
-  ptt_key: "alt"                  # Hold ALT to speak, release to send
+  ptt_trigger: "mb2"              # Hold MB2 (Right Click) to speak, release to send
+  ptt_key: "mb2"                  # Backward compatibility alias
   silence_threshold_seconds: 1.2  # Silence duration to conclude utterance
 
 stt:
