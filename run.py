@@ -9,6 +9,13 @@ from pathlib import Path
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", message=".*Setting the shape on a NumPy array has been deprecated.*")
 
+# Laptop Thermal Profile: prevent OpenMP, BLAS & MKL threads from spin-waiting at 100% CPU
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+os.environ.setdefault("MKL_NUM_THREADS", "2")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
+os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
+os.environ.setdefault("KMP_BLOCKTIME", "0")
+
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -61,6 +68,14 @@ def check_api_key():
 
 def main():
     setup_logging()
+
+    # Laptop Thermal Profile: Tune process priority so Windows schedules background tasks on E-cores
+    try:
+        import psutil
+        psutil.Process().nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+        logging.getLogger("Jarvis").info("Laptop Thermal Profile: Priority tuned to BELOW_NORMAL (E-core affinity).")
+    except Exception as e:
+        pass
 
     # Check for stealth mode flags (--stealth, --background, -b, -s)
     is_stealth = any(arg in sys.argv for arg in ("--stealth", "--background", "-b", "-s"))

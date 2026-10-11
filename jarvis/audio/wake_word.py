@@ -22,6 +22,7 @@ class WakeWordDetector:
         self.wake_word = audio_cfg.get("wake_word", "hey jarvis")
         self.threshold = float(audio_cfg.get("wake_word_threshold", 0.55))
         self.energy_threshold = float(audio_cfg.get("wake_word_energy_threshold", 0.0035))
+        self.energy_threshold_sq = self.energy_threshold * self.energy_threshold
         self.sample_rate = audio_cfg.get("sample_rate", 16000)
         self.on_wake_callback = on_wake_callback
         self.is_speaking_callback = is_speaking_callback
@@ -75,10 +76,11 @@ class WakeWordDetector:
 
         # indata is float32 [-1.0, 1.0], chunk has 1280 samples (80ms at 16kHz)
         raw_float = indata[:, 0]
-        rms_energy = float(np.sqrt(np.mean(raw_float ** 2)))
+        # Zero-allocation mean squared energy via BLAS dot product: eliminates np.sqrt and array allocation
+        mean_square_energy = float(np.dot(raw_float, raw_float) / len(raw_float))
 
         # Sub-microsecond energy gate: if room is silent, skip heavy ONNX neural inferences
-        if rms_energy >= self.energy_threshold:
+        if mean_square_energy >= self.energy_threshold_sq:
             # Voice / sound detected: activate predictor and sustain active processing for ~2.0s (25 chunks)
             self._active_chunks_remaining = 25
         elif self._active_chunks_remaining > 0:

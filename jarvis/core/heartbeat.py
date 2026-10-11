@@ -140,7 +140,19 @@ class JarvisHeartbeat:
             except Exception as e:
                 logger.error(f"Heartbeat tick exception: {e}")
 
-            time.sleep(self.tick_interval)
+            # Laptop Thermal Profile: relax timer frequency on battery power to prevent waking CPU cores
+            sleep_duration = self.tick_interval * 2 if self._is_on_battery() else self.tick_interval
+            time.sleep(sleep_duration)
+
+    def _is_on_battery(self) -> bool:
+        """Returns True if workstation is running on battery power (unplugged)."""
+        try:
+            status = SYSTEM_POWER_STATUS()
+            if ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(status)):
+                return status.ACLineStatus == 0
+        except Exception:
+            pass
+        return False
 
     def _check_morning_briefing(self):
         """Delivers autonomous standup briefing if morning and not yet delivered today."""
