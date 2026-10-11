@@ -3,12 +3,16 @@
 # ==============================================================================
 
 llm:
-  provider: "omniroute"           # Primary LLM provider: "omniroute" (gateway to 1200+ models), "groq" (ultra-fast LPU), "gemini", or "grok"
+  provider: "omniroute"           # Primary LLM provider: "omniroute" (gateway to 1200+ models), "groq", "gemini", or "grok"
   omniroute_base_url: "http://127.0.0.1:20128/v1" # Local OmniRoute proxy endpoint
-  omniroute_model: "groq/qwen/qwen3.8-27b"        # Active model in OmniRoute (e.g. groq/qwen/qwen3.8-27b, deepseek, claude, gpt-4o)
+  omniroute_model: "antigravity/claude-sonnet-4-6" # Primary active model (frontier intelligence)
+  omniroute_fallback_models:      # Auto-switching cascade when quota / rate limits are hit:
+    - "antigravity/claude-sonnet-4-6" # Tier 1: Claude Sonnet (Antigravity)
+    - "kr/claude-sonnet-4.5"          # Tier 2: Claude Sonnet (Kiro)
+    - "groq/qwen/qwen3.8-27b"         # Tier 3: Qwen 3.8 (Groq Cloud LPU)
   groq_model: "qwen/qwen3.8-27b"  # Groq Cloud model (instant 300ms inference)
   grok_model: "grok-2-latest"     # xAI Grok model ("grok-2-latest", "grok-2-vision-1212")
-  model: "gemini-3.1-flash-lite"  # Google Gemini model
+  model: "gemini-3.1-flash-lite"  # Google Gemini model (Ultimate fallback)
   temperature: 0.3
   max_output_tokens: 1024
 

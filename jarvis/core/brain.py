@@ -217,8 +217,17 @@ Capabilities:
         return self._process_gemini_query(user_text, sentence_callback)
 
     def _process_openai_compatible_query(self, user_text: str, sentence_callback: Any = None) -> str:
-        """Processes user input using Groq or xAI Grok with function calling and screen vision."""
-        logger.info(f"Routing query to {self.provider.upper()} ({self.openai_model})...")
+        """Processes user input using OmniRoute, Groq, or xAI Grok with function calling and dynamic quota failover."""
+        # Determine model candidates for this turn
+        if self.provider == "omniroute":
+            fallback_list = self.config.get("llm", {}).get("omniroute_fallback_models", [
+                "antigravity/claude-sonnet-4-6",
+                "kr/claude-sonnet-4.5",
+                "groq/qwen/qwen3.8-27b",
+            ])
+            candidate_models = [self.openai_model] + [m for m in fallback_list if m != self.openai_model]
+        else:
+            candidate_models = [self.openai_model]
 
         # Keep system instruction up-to-date with latest dynamic memory facts
         if self.openai_messages and self.openai_messages[0]["role"] == "system":
@@ -244,73 +253,52 @@ Capabilities:
         self.openai_messages.append(user_msg)
         tools = SkillRegistry.get_openai_tools()
 
-        try:
-            response = self.openai_client.chat.completions.create(
-                model=self.openai_model,
-                messages=self.openai_messages,
-                tools=tools if tools else None,
-                temperature=self.temperature,
-            )
-            msg = response.choices[0].message
-
-            had_tool_call = False
-            tool_iterations = 0
-            max_tool_iterations = 3
-
-            # Handle tool calls loop
-            while msg.tool_calls and tool_iterations < max_tool_iterations:
-                had_tool_call = True
-                tool_iterations += 1
-                self.openai_messages.append(msg)
-                for tool_call in msg.tool_calls:
-                    fn_name = tool_call.function.name
-                    try:
-                        fn_args = json.loads(tool_call.function.arguments or "{}")
-                    except Exception:
-                        fn_args = {}
-
-                    logger.info(f"{self.provider.upper()} Tool call: {fn_name}({fn_args})")
-                    is_safe, warning = self.safety.check_tool_call(fn_name, fn_args)
-                    if not is_safe:
-                        tool_result = f"Action halted: {warning}"
-                    else:
-                        tool_result = SkillRegistry.execute(fn_name, **fn_args)
-
-                    logger.info(f"{self.provider.upper()} Tool result: {tool_result}")
-                    self.openai_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": str(tool_result),
-                    })
-
-                # Follow-up conversational response does not need 27 tool schemas, cutting ~2,200 tokens
+        last_error = None
+        for model_candidate in candidate_models:
+            logger.info(f"Routing query to {self.provider.upper()} ({model_candidate})...")
+            try:
                 response = self.openai_client.chat.completions.create(
-                    model=self.openai_model,
+                    model=model_candidate,
                     messages=self.openai_messages,
-                    tools=None,
+                    tools=tools if tools else None,
                     temperature=self.temperature,
                 )
                 msg = response.choices[0].message
-            # Fallback for inline pseudo-XML tool calls (e.g. Qwen formatting)
-            if not msg.tool_calls and msg.content and "<tool_call>" in msg.content:
-                fn_match = re.search(r'<function=([a-zA-Z0-9_]+)>', msg.content)
-                if fn_match:
+
+                # Update active model so subsequent turns stay on the working model
+                self.openai_model = model_candidate
+
+                had_tool_call = False
+                tool_iterations = 0
+                max_tool_iterations = 3
+
+                # Handle tool calls loop
+                while msg.tool_calls and tool_iterations < max_tool_iterations:
                     had_tool_call = True
-                    fn_name = fn_match.group(1)
-                    fn_args = {}
-                    for p_match in re.finditer(r'<parameter=([a-zA-Z0-9_]+)>\s*(.*?)\s*</parameter>', msg.content, re.DOTALL):
-                        fn_args[p_match.group(1)] = p_match.group(2).strip()
-
-                    logger.info(f"{self.provider.upper()} Inline tool call: {fn_name}({fn_args})")
-                    is_safe, warning = self.safety.check_tool_call(fn_name, fn_args)
-                    tool_result = f"Action halted: {warning}" if not is_safe else SkillRegistry.execute(fn_name, **fn_args)
-                    logger.info(f"{self.provider.upper()} Inline tool result: {tool_result}")
-
+                    tool_iterations += 1
                     self.openai_messages.append(msg)
-                    self.openai_messages.append({
-                        "role": "user",
-                        "content": f"[System Tool Result: {tool_result}. Briefly acknowledge to Sir that this was completed.]"
-                    })
+                    for tool_call in msg.tool_calls:
+                        fn_name = tool_call.function.name
+                        try:
+                            fn_args = json.loads(tool_call.function.arguments or "{}")
+                        except Exception:
+                            fn_args = {}
+
+                        logger.info(f"{self.provider.upper()} Tool call: {fn_name}({fn_args})")
+                        is_safe, warning = self.safety.check_tool_call(fn_name, fn_args)
+                        if not is_safe:
+                            tool_result = f"Action halted: {warning}"
+                        else:
+                            tool_result = SkillRegistry.execute(fn_name, **fn_args)
+
+                        logger.info(f"{self.provider.upper()} Tool result: {tool_result}")
+                        self.openai_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": str(tool_result),
+                        })
+
+                    # Follow-up conversational response does not need 27 tool schemas, cutting ~2,200 tokens
                     response = self.openai_client.chat.completions.create(
                         model=self.openai_model,
                         messages=self.openai_messages,
@@ -319,31 +307,71 @@ Capabilities:
                     )
                     msg = response.choices[0].message
 
-            reply_text = msg.content.strip() if msg.content else "At your service, Sir."
-            reply_text = re.sub(r"<tool_call>.*?</tool_call>", "", reply_text, flags=re.DOTALL).strip()
-            if not reply_text:
-                reply_text = "Updated, Sir."
+                # Fallback for inline pseudo-XML tool calls (e.g. Qwen formatting)
+                if not msg.tool_calls and msg.content and "<tool_call>" in msg.content:
+                    fn_match = re.search(r'<function=([a-zA-Z0-9_]+)>', msg.content)
+                    if fn_match:
+                        had_tool_call = True
+                        fn_name = fn_match.group(1)
+                        fn_args = {}
+                        for p_match in re.finditer(r'<parameter=([a-zA-Z0-9_]+)>\s*(.*?)\s*</parameter>', msg.content, re.DOTALL):
+                            fn_args[p_match.group(1)] = p_match.group(2).strip()
 
-            self.openai_messages.append({"role": "assistant", "content": reply_text})
-            self.memory.log_interaction(user_text, reply_text)
-            if not had_tool_call:
-                self.memory.auto_learn_from_interaction(user_text, reply_text)
+                        logger.info(f"{self.provider.upper()} Inline tool call: {fn_name}({fn_args})")
+                        is_safe, warning = self.safety.check_tool_call(fn_name, fn_args)
+                        tool_result = f"Action halted: {warning}" if not is_safe else SkillRegistry.execute(fn_name, **fn_args)
+                        logger.info(f"{self.provider.upper()} Inline tool result: {tool_result}")
 
-            # Bound memory window
-            if len(self.openai_messages) > 25:
-                self.openai_messages = [self.openai_messages[0]] + self.openai_messages[-20:]
+                        self.openai_messages.append(msg)
+                        self.openai_messages.append({
+                            "role": "user",
+                            "content": f"[System Tool Result: {tool_result}. Briefly acknowledge to Sir that this was completed.]"
+                        })
+                        response = self.openai_client.chat.completions.create(
+                            model=self.openai_model,
+                            messages=self.openai_messages,
+                            tools=None,
+                            temperature=self.temperature,
+                        )
+                        msg = response.choices[0].message
 
-            # Dispatch sentences for pipelined streaming TTS
-            if sentence_callback and reply_text:
-                sentences = [s.strip() for s in re.split(r"(?<!\d)(?<=[.!?])(?!\d)\s+", reply_text) if s.strip()]
-                for s in sentences:
-                    sentence_callback(s)
+                reply_text = msg.content.strip() if msg.content else "At your service, Sir."
+                reply_text = re.sub(r"<tool_call>.*?</tool_call>", "", reply_text, flags=re.DOTALL).strip()
+                if not reply_text:
+                    reply_text = "Updated, Sir."
 
-            return reply_text
+                self.openai_messages.append({"role": "assistant", "content": reply_text})
+                self.memory.log_interaction(user_text, reply_text)
+                if not had_tool_call:
+                    self.memory.auto_learn_from_interaction(user_text, reply_text)
 
-        except Exception as e:
-            logger.warning(f"{self.provider.upper()} request failed: {e}. Seamlessly falling back to Gemini...")
-            return self._process_gemini_query(user_text, sentence_callback)
+                # Bound memory window
+                if len(self.openai_messages) > 25:
+                    self.openai_messages = [self.openai_messages[0]] + self.openai_messages[-20:]
+
+                # Dispatch sentences for pipelined streaming TTS
+                if sentence_callback and reply_text:
+                    sentences = [s.strip() for s in re.split(r"(?<!\d)(?<=[.!?])(?!\d)\s+", reply_text) if s.strip()]
+                    for s in sentences:
+                        sentence_callback(s)
+
+                return reply_text
+
+            except Exception as e:
+                last_error = e
+                if model_candidate != candidate_models[-1]:
+                    next_model = candidate_models[candidate_models.index(model_candidate) + 1]
+                    logger.warning(
+                        f"OmniRoute model '{model_candidate}' unavailable or quota limit reached ({e}). "
+                        f"Seamlessly switching to next fallback model: '{next_model}'..."
+                    )
+                    continue
+                else:
+                    logger.warning(f"{self.provider.upper()} request failed on final candidate '{model_candidate}': {e}.")
+                    break
+
+        logger.warning(f"All candidate models exhausted on {self.provider.upper()} (last error: {last_error}). Seamlessly falling back to Gemini Flash...")
+        return self._process_gemini_query(user_text, sentence_callback)
 
     def _process_gemini_query(self, user_text: str, sentence_callback: Any = None) -> str:
         """Processes user input using Google Gemini with dynamic candidate failover."""
