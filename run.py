@@ -30,6 +30,11 @@ def setup_logging():
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("phonemizer").setLevel(logging.ERROR)
+    try:
+        import phonemizer.logger
+        phonemizer.logger.get_logger("quiet")
+    except Exception:
+        pass
 
 
 def check_api_key():

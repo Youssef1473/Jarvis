@@ -61,6 +61,14 @@ class TextToSpeech:
     def _init_kokoro(self):
         """Initializes Kokoro neural engine."""
         try:
+            # Silence phonemizer stderr mismatch warnings
+            try:
+                import phonemizer.logger
+                phonemizer.logger.get_logger("quiet")
+                logging.getLogger("phonemizer").setLevel(logging.ERROR)
+            except Exception:
+                pass
+
             if os.path.exists(self.kokoro_model_path) and os.path.exists(self.kokoro_voices_path):
                 from kokoro_onnx import Kokoro
                 t0 = time.time()
