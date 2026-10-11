@@ -124,16 +124,33 @@ Capabilities:
                 with urllib.request.urlopen(req, timeout=1.5):
                     pass
                 logger.info(f"Jarvis OmniRoute link verified at {base_url}")
-            except Exception as e:
-                logger.warning(f"OmniRoute gateway at {base_url} is not responding ({e}). Seamlessly falling back to Groq Cloud...")
-                if groq_key:
-                    self.provider = "groq"
-                    api_key = groq_key
-                    base_url = "https://api.groq.com/openai/v1"
-                    self.openai_model = self.config.get("llm", {}).get("groq_model", "qwen/qwen3.8-27b")
-                else:
-                    self.provider = "gemini"
-                    return False
+            except Exception:
+                logger.info(f"OmniRoute gateway at {base_url} is offline. Attempting automatic background start...")
+                try:
+                    import subprocess
+                    import time
+                    subprocess.Popen(
+                        ["omniroute", "serve", "--daemon", "--no-open", "--no-tray"],
+                        shell=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                    )
+                    time.sleep(2.0)
+                    req = urllib.request.Request(f"{base_url.rstrip('/')}/models", headers={"Authorization": f"Bearer {api_key}"})
+                    with urllib.request.urlopen(req, timeout=2.0):
+                        pass
+                    logger.info("OmniRoute background daemon auto-started successfully!")
+                except Exception as e:
+                    logger.warning(f"OmniRoute gateway at {base_url} is not responding ({e}). Seamlessly falling back to Groq Cloud...")
+                    if groq_key:
+                        self.provider = "groq"
+                        api_key = groq_key
+                        base_url = "https://api.groq.com/openai/v1"
+                        self.openai_model = self.config.get("llm", {}).get("groq_model", "qwen/qwen3.8-27b")
+                    else:
+                        self.provider = "gemini"
+                        return False
         elif self.provider == "groq" or (groq_key and groq_key.startswith("gsk_")):
             api_key = groq_key
             base_url = "https://api.groq.com/openai/v1"
@@ -216,8 +233,43 @@ Capabilities:
             return self._process_openai_compatible_query(user_text, sentence_callback)
         return self._process_gemini_query(user_text, sentence_callback)
 
+    @staticmethod
+    def _clean_speech_clause(text: str) -> str:
+        """Strips markdown code blocks, links, and inline tags for vocal delivery."""
+        if not text:
+            return ""
+        # Remove code blocks and inline code
+        cleaned = re.sub(r"```[\s\S]*?```", "", text)
+        cleaned = re.sub(r"`[^`]*`", "", cleaned)
+        # Remove inline tool calls or XML
+        cleaned = re.sub(r"<tool_call>[\s\S]*?</tool_call>", "", cleaned)
+        cleaned = re.sub(r"<[^>]+>", "", cleaned)
+        # Remove URLs
+        cleaned = re.sub(r"https?://\S+", "", cleaned)
+        # Remove markdown markers
+        cleaned = re.sub(r"[\*_~#]", "", cleaned)
+        # Normalize whitespace
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned
+
+    @staticmethod
+    def _extract_next_speech_chunk(buffer: str) -> tuple[Optional[str], str]:
+        """Extracts the next natural spoken clause or sentence from the streaming buffer."""
+        # 1. Prefer sentence terminal punctuation (. ! ? or newline)
+        m = re.search(r'(?<!\d)(?<!\b[A-Za-z])[.!?\n]+(?!\d)(\s+|$)', buffer)
+        if m and m.start() >= 2:
+            idx = m.end()
+            return buffer[:idx].strip(), buffer[idx:]
+        # 2. Natural pause clause (, ; :) if buffer exceeds 65 characters
+        if len(buffer) > 65:
+            m_clause = re.search(r'[,;:]\s+', buffer[25:])
+            if m_clause:
+                cut_idx = 25 + m_clause.end()
+                return buffer[:cut_idx].strip(), buffer[cut_idx:]
+        return None, buffer
+
     def _process_openai_compatible_query(self, user_text: str, sentence_callback: Any = None) -> str:
-        """Processes user input using OmniRoute, Groq, or xAI Grok with function calling and dynamic quota failover."""
+        """Processes user input using OmniRoute, Groq, or xAI Grok with real-time streaming TTS and dynamic failover."""
         # Determine model candidates for this turn
         if self.provider == "omniroute":
             fallback_list = self.config.get("llm", {}).get("omniroute_fallback_models", [
@@ -255,32 +307,91 @@ Capabilities:
 
         last_error = None
         for model_candidate in candidate_models:
-            logger.info(f"Routing query to {self.provider.upper()} ({model_candidate})...")
+            logger.info(f"Routing query to {self.provider.upper()} ({model_candidate}) with real-time streaming...")
             try:
-                response = self.openai_client.chat.completions.create(
+                # Update active model
+                self.openai_model = model_candidate
+
+                tool_calls_map = {}
+                full_content_chunks = []
+                text_buffer = ""
+
+                # Step 1: Stream completion from provider
+                stream = self.openai_client.chat.completions.create(
                     model=model_candidate,
                     messages=self.openai_messages,
                     tools=tools if tools else None,
                     temperature=self.temperature,
+                    stream=True,
                 )
-                msg = response.choices[0].message
 
-                # Update active model so subsequent turns stay on the working model
-                self.openai_model = model_candidate
+                for chunk in stream:
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+
+                    # Accumulate streaming tool call deltas
+                    if delta.tool_calls:
+                        for tc in delta.tool_calls:
+                            idx = tc.index
+                            if idx not in tool_calls_map:
+                                tool_calls_map[idx] = {
+                                    "id": tc.id or "",
+                                    "name": tc.function.name or "" if tc.function else "",
+                                    "arguments": tc.function.arguments or "" if tc.function else "",
+                                }
+                            else:
+                                if tc.id:
+                                    tool_calls_map[idx]["id"] += tc.id
+                                if tc.function and tc.function.name:
+                                    tool_calls_map[idx]["name"] += tc.function.name
+                                if tc.function and tc.function.arguments:
+                                    tool_calls_map[idx]["arguments"] += tc.function.arguments
+
+                    # Accumulate text content & stream to TTS immediately if no tool calls are pending
+                    if delta.content:
+                        full_content_chunks.append(delta.content)
+                        if sentence_callback and not tool_calls_map:
+                            text_buffer += delta.content
+                            # Hold speech dispatch if accumulating inline XML tool calls
+                            if "<tool_call" not in text_buffer and "<function=" not in text_buffer:
+                                s_clause, text_buffer = self._extract_next_speech_chunk(text_buffer)
+                                while s_clause:
+                                    clean_clause = self._clean_speech_clause(s_clause)
+                                    if clean_clause:
+                                        sentence_callback(clean_clause)
+                                    s_clause, text_buffer = self._extract_next_speech_chunk(text_buffer)
 
                 had_tool_call = False
                 tool_iterations = 0
                 max_tool_iterations = 3
 
-                # Handle tool calls loop
-                while msg.tool_calls and tool_iterations < max_tool_iterations:
+                # Step 2: Handle tool calls if invoked
+                while tool_calls_map and tool_iterations < max_tool_iterations:
                     had_tool_call = True
                     tool_iterations += 1
-                    self.openai_messages.append(msg)
-                    for tool_call in msg.tool_calls:
-                        fn_name = tool_call.function.name
+
+                    tool_calls_list = []
+                    for idx in sorted(tool_calls_map.keys()):
+                        tc_data = tool_calls_map[idx]
+                        call_id = tc_data["id"] or f"call_{idx}_{int(time.time())}"
+                        tool_calls_list.append({
+                            "id": call_id,
+                            "type": "function",
+                            "function": {"name": tc_data["name"], "arguments": tc_data["arguments"]}
+                        })
+
+                    assistant_msg = {
+                        "role": "assistant",
+                        "content": "".join(full_content_chunks) or None,
+                        "tool_calls": tool_calls_list
+                    }
+                    self.openai_messages.append(assistant_msg)
+
+                    for tc in tool_calls_list:
+                        fn_name = tc["function"]["name"]
                         try:
-                            fn_args = json.loads(tool_call.function.arguments or "{}")
+                            fn_args = json.loads(tc["function"]["arguments"] or "{}")
                         except Exception:
                             fn_args = {}
 
@@ -294,27 +405,48 @@ Capabilities:
                         logger.info(f"{self.provider.upper()} Tool result: {tool_result}")
                         self.openai_messages.append({
                             "role": "tool",
-                            "tool_call_id": tool_call.id,
+                            "tool_call_id": tc["id"],
                             "content": str(tool_result),
                         })
 
-                    # Follow-up conversational response does not need 27 tool schemas, cutting ~2,200 tokens
-                    response = self.openai_client.chat.completions.create(
+                    # Reset buffers for conversational follow-up response
+                    tool_calls_map = {}
+                    full_content_chunks = []
+                    text_buffer = ""
+
+                    # Stream follow-up speech with tools=None
+                    followup_stream = self.openai_client.chat.completions.create(
                         model=self.openai_model,
                         messages=self.openai_messages,
                         tools=None,
                         temperature=self.temperature,
+                        stream=True,
                     )
-                    msg = response.choices[0].message
+
+                    for chunk in followup_stream:
+                        if not chunk.choices:
+                            continue
+                        delta = chunk.choices[0].delta
+                        if delta.content:
+                            full_content_chunks.append(delta.content)
+                            if sentence_callback:
+                                text_buffer += delta.content
+                                s_clause, text_buffer = self._extract_next_speech_chunk(text_buffer)
+                                while s_clause:
+                                    clean_clause = self._clean_speech_clause(s_clause)
+                                    if clean_clause:
+                                        sentence_callback(clean_clause)
+                                    s_clause, text_buffer = self._extract_next_speech_chunk(text_buffer)
 
                 # Fallback for inline pseudo-XML tool calls (e.g. Qwen formatting)
-                if not msg.tool_calls and msg.content and "<tool_call>" in msg.content:
-                    fn_match = re.search(r'<function=([a-zA-Z0-9_]+)>', msg.content)
+                raw_content = "".join(full_content_chunks).strip()
+                if not had_tool_call and "<tool_call>" in raw_content:
+                    fn_match = re.search(r'<function=([a-zA-Z0-9_]+)>', raw_content)
                     if fn_match:
                         had_tool_call = True
                         fn_name = fn_match.group(1)
                         fn_args = {}
-                        for p_match in re.finditer(r'<parameter=([a-zA-Z0-9_]+)>\s*(.*?)\s*</parameter>', msg.content, re.DOTALL):
+                        for p_match in re.finditer(r'<parameter=([a-zA-Z0-9_]+)>\s*(.*?)\s*</parameter>', raw_content, re.DOTALL):
                             fn_args[p_match.group(1)] = p_match.group(2).strip()
 
                         logger.info(f"{self.provider.upper()} Inline tool call: {fn_name}({fn_args})")
@@ -322,20 +454,42 @@ Capabilities:
                         tool_result = f"Action halted: {warning}" if not is_safe else SkillRegistry.execute(fn_name, **fn_args)
                         logger.info(f"{self.provider.upper()} Inline tool result: {tool_result}")
 
-                        self.openai_messages.append(msg)
+                        self.openai_messages.append({"role": "assistant", "content": raw_content})
                         self.openai_messages.append({
                             "role": "user",
                             "content": f"[System Tool Result: {tool_result}. Briefly acknowledge to Sir that this was completed.]"
                         })
-                        response = self.openai_client.chat.completions.create(
+                        followup_stream = self.openai_client.chat.completions.create(
                             model=self.openai_model,
                             messages=self.openai_messages,
                             tools=None,
                             temperature=self.temperature,
+                            stream=True,
                         )
-                        msg = response.choices[0].message
+                        full_content_chunks = []
+                        text_buffer = ""
+                        for chunk in followup_stream:
+                            if not chunk.choices:
+                                continue
+                            delta = chunk.choices[0].delta
+                            if delta.content:
+                                full_content_chunks.append(delta.content)
+                                if sentence_callback:
+                                    text_buffer += delta.content
+                                    s_clause, text_buffer = self._extract_next_speech_chunk(text_buffer)
+                                    while s_clause:
+                                        clean_clause = self._clean_speech_clause(s_clause)
+                                        if clean_clause:
+                                            sentence_callback(clean_clause)
+                                        s_clause, text_buffer = self._extract_next_speech_chunk(text_buffer)
 
-                reply_text = msg.content.strip() if msg.content else "At your service, Sir."
+                # Flush any remaining text in the buffer to TTS
+                if sentence_callback and text_buffer.strip():
+                    clean_clause = self._clean_speech_clause(text_buffer.strip())
+                    if clean_clause:
+                        sentence_callback(clean_clause)
+
+                reply_text = "".join(full_content_chunks).strip() if full_content_chunks else "At your service, Sir."
                 reply_text = re.sub(r"<tool_call>.*?</tool_call>", "", reply_text, flags=re.DOTALL).strip()
                 if not reply_text:
                     reply_text = "Updated, Sir."
@@ -348,12 +502,6 @@ Capabilities:
                 # Bound memory window
                 if len(self.openai_messages) > 25:
                     self.openai_messages = [self.openai_messages[0]] + self.openai_messages[-20:]
-
-                # Dispatch sentences for pipelined streaming TTS
-                if sentence_callback and reply_text:
-                    sentences = [s.strip() for s in re.split(r"(?<!\d)(?<=[.!?])(?!\d)\s+", reply_text) if s.strip()]
-                    for s in sentences:
-                        sentence_callback(s)
 
                 return reply_text
 
