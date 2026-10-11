@@ -22,8 +22,11 @@ stt:
   language: "en"
 
 tts:
-  voice: "en-GB-RyanNeural"       # Polished British male (Jarvis)
-  rate: "+10%"                    # Snappy speech delivery
+  engine: "sapi5"                 # "sapi5" (local, zero-latency, offline) or "edge"
+  sapi_voice: "David"             # "David" (male) or "Zira" (female)
+  sapi_rate: 1                    # SAPI speech rate (-10 to +10)
+  voice: "en-GB-RyanNeural"       # Edge-TTS neural voice (used when engine is "edge")
+  rate: "+10%"
   volume: "+0%"
   pitch: "+0Hz"
 

@@ -17,13 +17,16 @@ class TextToSpeech:
 
     def __init__(self, config: Dict[str, Any]):
         tts_cfg = config.get("tts", {})
+        self.engine = tts_cfg.get("engine", "sapi5")
         self.voice = tts_cfg.get("voice", "en-GB-RyanNeural")
+        self.sapi_voice = tts_cfg.get("sapi_voice", "David")
+        self.sapi_rate = tts_cfg.get("sapi_rate", 1)
         self.rate = tts_cfg.get("rate", "+10%")
         self.volume = tts_cfg.get("volume", "+0%")
         self.pitch = tts_cfg.get("pitch", "+0Hz")
         self._is_speaking = False
         self._stop_event = threading.Event()
-        self._use_local_sapi_only = False
+        self._use_local_sapi_only = (self.engine.lower() == "sapi5")
 
         # Initialize local SAPI5 fallback voice
         self._sapi = None
@@ -81,7 +84,14 @@ class TextToSpeech:
         self._is_speaking = True
         try:
             sapi = win32com.client.Dispatch("SAPI.SpVoice")
-            sapi.Rate = 1
+            sapi.Rate = self.sapi_rate
+            # Match configured voice (e.g. David, Zira)
+            if self.sapi_voice:
+                for i in range(sapi.GetVoices().Count):
+                    v = sapi.GetVoices().Item(i)
+                    if self.sapi_voice.lower() in v.GetDescription().lower():
+                        sapi.Voice = v
+                        break
             # Flag 1 = SVSFlagsAsync
             sapi.Speak(text, 1)
             # Wait while SAPI is speaking
