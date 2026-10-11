@@ -59,6 +59,8 @@ class HotkeyListener:
         "f10": (keyboard.Key.f10,),
         "f11": (keyboard.Key.f11,),
         "f12": (keyboard.Key.f12,),
+        "fin": (keyboard.Key.end,),
+        "end": (keyboard.Key.end,),
     }
 
     def __init__(

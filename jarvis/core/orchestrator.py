@@ -106,15 +106,22 @@ class JarvisOrchestrator:
             self._is_recording = True
             self._ptt_press_time = time.time()
 
-        # Non-blocking delayed cue: chime and show HUD only if held >= 200ms
-        def _delayed_cue():
-            time.sleep(0.20)
-            if self._is_recording:
-                logger.info("PTT held (MB2): Listening...")
-                self.hud.set_state("listening")
-                self.sfx.play_wake()
+        is_mouse = getattr(self.hotkey_listener, "mouse_target_btn", None) is not None
+        if is_mouse:
+            # Non-blocking delayed cue: chime and show HUD only if held >= 200ms
+            def _delayed_cue():
+                time.sleep(0.20)
+                if self._is_recording:
+                    logger.info("PTT held (mouse): Listening...")
+                    self.hud.set_state("listening")
+                    self.sfx.play_wake()
 
-        threading.Thread(target=_delayed_cue, daemon=True).start()
+            threading.Thread(target=_delayed_cue, daemon=True).start()
+        else:
+            # Dedicated keyboard key (e.g. Fin / End): immediate activation
+            logger.info("PTT pressed (Fin / End): Listening...")
+            self.hud.set_state("listening")
+            self.sfx.play_wake()
 
         try:
             self._record_stream = sd.InputStream(
@@ -145,8 +152,9 @@ class JarvisOrchestrator:
                 pass
             self._record_stream = None
 
-        # Filter out normal right-click taps (< 220ms) so Windows context menus function normally
-        if press_duration < 0.22:
+        # Filter out accidental mouse taps (< 220ms) if using mouse button
+        is_mouse = getattr(self.hotkey_listener, "mouse_target_btn", None) is not None
+        if is_mouse and press_duration < 0.22:
             self.hud.set_state("idle")
             return
 
@@ -313,7 +321,7 @@ class JarvisOrchestrator:
         print("\n" + "=" * 60)
         print(" JARVIS 2.0 ONLINE & OPERATIONAL")
         print("  - Floating Arc-Reactor HUD active (Drag to move)")
-        print("  - Hold MB2 (Right Click) to talk (Push-to-Talk)")
+        print("  - Hold Fin (End) key to talk (Push-to-Talk)")
         print("  - Say 'Hey Jarvis' to wake via voice")
         print("  - Ambient Proactive Heartbeat active (Briefings & Alerts)")
         print("  - Type directly below and press Enter to chat")
