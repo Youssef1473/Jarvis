@@ -15,13 +15,14 @@ from jarvis.audio.wake_word import WakeWordDetector
 from jarvis.core.memory import MemoryManager
 from jarvis.core.safety import SafetyGate
 from jarvis.core.brain import JarvisBrain
+from jarvis.core.heartbeat import JarvisHeartbeat
 from jarvis.ui.hud import JarvisHUD
 
 logger = logging.getLogger("Jarvis.Orchestrator")
 
 
 class JarvisOrchestrator:
-    """Coordinates Jarvis's sensory inputs, cognitive loop, speech output, and holographic HUD."""
+    """Coordinates Jarvis's sensory inputs, cognitive loop, speech output, holographic HUD, and proactive heartbeat."""
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -35,6 +36,7 @@ class JarvisOrchestrator:
         self.tts = TextToSpeech(config)
         self.brain = JarvisBrain(config, self.memory, self.safety)
         self.hud = JarvisHUD()
+        self.heartbeat = JarvisHeartbeat(self, config)
 
         # Recording state for Push-to-Talk (ALT)
         self._is_recording = False
@@ -264,12 +266,16 @@ class JarvisOrchestrator:
         logger.info("Starting Wake Word Detector ('Hey Jarvis')...")
         self.wake_detector.start()
 
+        logger.info("Starting Jarvis Proactive Heartbeat Daemon...")
+        self.heartbeat.start()
+
         self.sfx.play_done()
         print("\n" + "=" * 60)
         print(" JARVIS 2.0 ONLINE & OPERATIONAL")
         print("  - Floating Arc-Reactor HUD active (Drag to move)")
         print("  - Hold ALT to talk (Push-to-Talk)")
         print("  - Say 'Hey Jarvis' to wake via voice")
+        print("  - Ambient Proactive Heartbeat active (Briefings & Alerts)")
         print("  - Type directly below and press Enter to chat")
         print("  - Say 'Goodbye Jarvis' or type 'exit' to shut down")
         print("=" * 60 + "\n")
@@ -299,6 +305,7 @@ class JarvisOrchestrator:
     def stop(self):
         """Stops all running listeners and cleanup."""
         self._running = False
+        self.heartbeat.stop()
         self.hotkey_listener.stop()
         self.wake_detector.stop()
         self.tts.stop()

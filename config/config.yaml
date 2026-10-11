@@ -48,3 +48,12 @@ memory:
 
 mcp:
   config_path: "config/mcp_servers.json"
+
+heartbeat:
+  enabled: true
+  tick_interval_seconds: 30
+  auto_morning_briefing: true
+  calendar_alerts: true
+  battery_alerts: true
+  ergonomic_reminders: true
+  email_notifications: true

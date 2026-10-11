@@ -113,12 +113,12 @@ def check_unread_emails(account: str = "all", max_emails: int = 5) -> str:
             try:
                 gmail_msgs = _fetch_unread_imap("imap.gmail.com", gmail_user, gmail_pass, max_emails)
                 if gmail_msgs:
-                    items = [f"• From: {m['from']}\n  Subject: {m['subject']}\n  Preview: {m['snippet'][:120]}..." for m in gmail_msgs]
-                    summaries.append(f"📧 Gmail ({len(gmail_msgs)} unread):\n" + "\n".join(items))
+                    items = [f"- From: {m['from']}\n  Subject: {m['subject']}\n  Preview: {m['snippet'][:120]}..." for m in gmail_msgs]
+                    summaries.append(f"Gmail ({len(gmail_msgs)} unread):\n" + "\n".join(items))
                 else:
-                    summaries.append("📧 Gmail: Inbox is clear, no unread messages.")
+                    summaries.append("Gmail: Inbox is clear, no unread messages.")
             except Exception as e:
-                summaries.append(f"📧 Gmail connection error: {e}")
+                summaries.append(f"Gmail connection error: {e}")
 
     # 2. Outlook
     if account in ("all", "outlook", "microsoft", "hotmail", "office365"):
@@ -131,12 +131,12 @@ def check_unread_emails(account: str = "all", max_emails: int = 5) -> str:
             try:
                 outlook_msgs = _fetch_unread_imap("outlook.office365.com", outlook_user, outlook_pass, max_emails)
                 if outlook_msgs:
-                    items = [f"• From: {m['from']}\n  Subject: {m['subject']}\n  Preview: {m['snippet'][:120]}..." for m in outlook_msgs]
-                    summaries.append(f"📫 Outlook ({len(outlook_msgs)} unread):\n" + "\n".join(items))
+                    items = [f"- From: {m['from']}\n  Subject: {m['subject']}\n  Preview: {m['snippet'][:120]}..." for m in outlook_msgs]
+                    summaries.append(f"Outlook ({len(outlook_msgs)} unread):\n" + "\n".join(items))
                 else:
-                    summaries.append("📫 Outlook: Inbox is clear, no unread messages.")
+                    summaries.append("Outlook: Inbox is clear, no unread messages.")
             except Exception as e:
-                summaries.append(f"📫 Outlook connection error: {e}")
+                summaries.append(f"Outlook connection error: {e}")
 
     if not summaries:
         return (
@@ -147,3 +147,22 @@ def check_unread_emails(account: str = "all", max_emails: int = 5) -> str:
         )
 
     return "\n\n".join(summaries)
+
+
+def get_unread_email_count() -> int:
+    """Returns the total number of unread emails across configured accounts."""
+    count = 0
+    gmail_user = os.getenv("GMAIL_ADDRESS", "").strip()
+    gmail_pass = os.getenv("GMAIL_APP_PASSWORD", "").strip()
+    if gmail_user and gmail_pass:
+        try:
+            mail = imaplib.IMAP4_SSL("imap.gmail.com")
+            mail.login(gmail_user, gmail_pass)
+            mail.select("INBOX", readonly=True)
+            status, messages = mail.search(None, "UNSEEN")
+            if status == "OK" and messages and messages[0]:
+                count += len(messages[0].split())
+            mail.logout()
+        except Exception:
+            pass
+    return count
