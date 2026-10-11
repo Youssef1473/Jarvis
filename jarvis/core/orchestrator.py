@@ -1,4 +1,4 @@
-"""Central orchestrator coordinating audio, hotkeys, STT, LLM, tools, and TTS."""
+"""Central orchestrator coordinating audio, hotkeys, STT, LLM, tools, TTS, and HUD overlay."""
 import asyncio
 import logging
 import threading
@@ -15,12 +15,13 @@ from jarvis.audio.wake_word import WakeWordDetector
 from jarvis.core.memory import MemoryManager
 from jarvis.core.safety import SafetyGate
 from jarvis.core.brain import JarvisBrain
+from jarvis.ui.hud import JarvisHUD
 
 logger = logging.getLogger("Jarvis.Orchestrator")
 
 
 class JarvisOrchestrator:
-    """Coordinates Jarvis's sensory inputs, cognitive loop, and speech output."""
+    """Coordinates Jarvis's sensory inputs, cognitive loop, speech output, and holographic HUD."""
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -33,6 +34,7 @@ class JarvisOrchestrator:
         self.stt = SpeechToText(config)
         self.tts = TextToSpeech(config)
         self.brain = JarvisBrain(config, self.memory, self.safety)
+        self.hud = JarvisHUD()
 
         # Recording state for Push-to-Talk (ALT)
         self._is_recording = False
@@ -57,6 +59,7 @@ class JarvisOrchestrator:
         """Barge-in hook: interrupts speech if user starts typing or presses a key."""
         if self.tts.is_speaking:
             self.tts.stop()
+            self.hud.set_state("idle")
 
     def _audio_record_callback(self, indata, frames, time_info, status):
         """Accumulates microphone audio during push-to-talk."""
@@ -66,11 +69,11 @@ class JarvisOrchestrator:
 
     def _on_ptt_press(self):
         """Called immediately when user holds ALT."""
-        # Barge-in: interrupt any active speech
         if self.tts.is_speaking:
             self.tts.stop()
 
         logger.info("ALT pressed: Listening...")
+        self.hud.set_state("listening")
         self.sfx.play_wake()
 
         with self._lock:
@@ -88,6 +91,7 @@ class JarvisOrchestrator:
         except Exception as e:
             logger.error(f"Failed to start audio recording stream: {e}")
             self._is_recording = False
+            self.hud.set_state("idle")
 
     def _on_ptt_release(self):
         """Called immediately when user releases ALT."""
@@ -95,6 +99,7 @@ class JarvisOrchestrator:
             return
 
         logger.info("ALT released: Processing speech...")
+        self.hud.set_state("thinking")
         self._is_recording = False
 
         if self._record_stream:
@@ -108,10 +113,10 @@ class JarvisOrchestrator:
         with self._lock:
             if not self._recorded_frames:
                 logger.info("No audio captured.")
+                self.hud.set_state("idle")
                 return
             audio_array = np.concatenate(self._recorded_frames, axis=0).flatten()
 
-        # Execute transcription and response in a separate worker thread
         threading.Thread(target=self._process_audio, args=(audio_array,), daemon=True).start()
 
     def _on_wake_word(self):
@@ -123,9 +128,9 @@ class JarvisOrchestrator:
             self.tts.stop()
 
         logger.info("Wake word detected! Listening for command...")
+        self.hud.set_state("listening")
         self.sfx.play_wake()
 
-        # Record a 4-second utterance following wake word
         def record_and_process():
             try:
                 duration = 4.0
@@ -135,15 +140,18 @@ class JarvisOrchestrator:
                 self._process_audio(audio_array)
             except Exception as e:
                 logger.error(f"Wake word capture error: {e}")
+                self.hud.set_state("idle")
 
         threading.Thread(target=record_and_process, daemon=True).start()
 
     def _process_audio(self, audio_array: np.ndarray):
         """Transcribes audio, sends to brain, and delivers spoken output."""
+        self.hud.set_state("thinking")
         self.sfx.play_think()
         text = self.stt.transcribe(audio_array, sample_rate=self.sample_rate)
         if not text or len(text.strip()) < 2:
             logger.info("Audio was unintelligible or empty.")
+            self.hud.set_state("idle")
             return
 
         print(f"\n[Sir]: {text}")
@@ -151,27 +159,33 @@ class JarvisOrchestrator:
 
     def handle_command(self, query: str):
         """Processes a text query, executes tools, and speaks the reply."""
+        self.hud.set_state("thinking")
         self.sfx.play_think()
         reply = self.brain.process_query(query)
         print(f"[Jarvis]: {reply}\n")
         self.sfx.play_done()
 
-        # Speak the response asynchronously
+        # Update HUD to speaking state during TTS
+        self.hud.set_state("speaking")
         asyncio.run(self.tts.speak(reply))
+        self.hud.set_state("idle")
 
     def start(self):
-        """Starts all background listeners."""
+        """Starts all background listeners and the HUD overlay."""
         self._running = True
+        logger.info("Starting Jarvis HUD Holographic Overlay...")
+        self.hud.start()
+
         logger.info("Starting Jarvis Hotkey Listener (Hold ALT to talk)...")
         self.hotkey_listener.start()
 
         logger.info("Starting Wake Word Detector ('Hey Jarvis')...")
         self.wake_detector.start()
 
-        # Play system ready chime
         self.sfx.play_done()
         print("\n" + "=" * 60)
         print(" JARVIS 2.0 ONLINE & OPERATIONAL")
+        print("  - Floating Arc-Reactor HUD active (Drag to move)")
         print("  - Hold ALT to talk (Push-to-Talk)")
         print("  - Say 'Hey Jarvis' to wake via voice")
         print("  - Type directly below and press Enter to chat")
@@ -201,3 +215,4 @@ class JarvisOrchestrator:
         self.hotkey_listener.stop()
         self.wake_detector.stop()
         self.tts.stop()
+        self.hud.stop()
