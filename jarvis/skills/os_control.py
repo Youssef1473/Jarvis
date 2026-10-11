@@ -84,3 +84,27 @@ def minimize_all_windows() -> str:
     """Shows the desktop."""
     pyautogui.hotkey("win", "d")
     return "Desktop shown, all windows minimized."
+
+
+_shutdown_requested = False
+
+
+def is_shutdown_requested() -> bool:
+    global _shutdown_requested
+    return _shutdown_requested
+
+
+def set_shutdown_requested(value: bool = True):
+    global _shutdown_requested
+    _shutdown_requested = value
+
+
+@SkillRegistry.register(
+    name="shutdown_jarvis",
+    description="Shuts down and terminates the Jarvis assistant completely when Sir says goodbye, exit, quit, shut down, or that's it for now."
+)
+def shutdown_jarvis() -> str:
+    """Terminates the Jarvis application."""
+    global _shutdown_requested
+    _shutdown_requested = True
+    return "Powering down systems. Goodbye, Sir."

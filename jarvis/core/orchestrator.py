@@ -157,8 +157,35 @@ class JarvisOrchestrator:
         print(f"\n[Sir]: {text}")
         self.handle_command(text)
 
+    @staticmethod
+    def is_shutdown_command(query: str) -> bool:
+        """Determines if query is a departure or shutdown request."""
+        clean = "".join(c.lower() for c in query if c.isalnum() or c.isspace())
+        triggers = [
+            "goodbye", "good bye", "bye", "shutdown", "shut down",
+            "exit", "quit", "thats it for now", "that is it for now",
+            "thats all for now", "that is all for now",
+            "power down", "deactivate", "go to sleep", "sleep now",
+            "terminate", "close jarvis", "stop working"
+        ]
+        return any(t in clean for t in triggers)
+
     def handle_command(self, query: str):
         """Processes a text query, executes tools, and speaks the reply."""
+        # Immediate direct shutdown handling
+        if self.is_shutdown_command(query):
+            farewell = "Powering down systems. Goodbye, Sir."
+            print(f"[Jarvis]: {farewell}\n")
+            self.sfx.play_done()
+            self.hud.set_state("speaking")
+            asyncio.run(self.tts.speak(farewell))
+            self.hud.set_state("idle")
+            self.stop()
+            import os
+            time.sleep(0.3)
+            os._exit(0)
+            return
+
         self.hud.set_state("thinking")
         self.sfx.play_think()
         reply = self.brain.process_query(query)
@@ -169,6 +196,14 @@ class JarvisOrchestrator:
         self.hud.set_state("speaking")
         asyncio.run(self.tts.speak(reply))
         self.hud.set_state("idle")
+
+        # Check if shutdown tool was invoked during LLM reasoning
+        from jarvis.skills.os_control import is_shutdown_requested
+        if is_shutdown_requested():
+            self.stop()
+            import os
+            time.sleep(0.3)
+            os._exit(0)
 
     def start(self):
         """Starts all background listeners and the HUD overlay."""
@@ -189,7 +224,7 @@ class JarvisOrchestrator:
         print("  - Hold ALT to talk (Push-to-Talk)")
         print("  - Say 'Hey Jarvis' to wake via voice")
         print("  - Type directly below and press Enter to chat")
-        print("  - Press Ctrl+C or type 'exit' to quit")
+        print("  - Say 'Goodbye Jarvis' or type 'exit' to shut down")
         print("=" * 60 + "\n")
 
         # Spoken welcome greeting on launch
@@ -205,12 +240,12 @@ class JarvisOrchestrator:
                 user_input = input("[Sir]: ").strip()
                 if not user_input:
                     continue
-                if user_input.lower() in ("exit", "quit", "shutdown"):
-                    print("[Jarvis]: Shutting down systems. Goodbye, Sir.")
-                    break
                 self.handle_command(user_input)
         except (KeyboardInterrupt, EOFError):
             print("\n[Jarvis]: Terminating session. Have a good day, Sir.")
+            self.stop()
+            import os
+            os._exit(0)
         finally:
             self.stop()
 
