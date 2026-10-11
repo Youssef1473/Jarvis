@@ -194,6 +194,10 @@ Capabilities:
     def _process_openai_compatible_query(self, user_text: str, sentence_callback: Any = None) -> str:
         """Processes user input using Groq or xAI Grok with function calling and screen vision."""
         logger.info(f"Routing query to {self.provider.upper()} ({self.openai_model})...")
+
+        # Keep system instruction up-to-date with latest dynamic memory facts
+        if self.openai_messages and self.openai_messages[0]["role"] == "system":
+            self.openai_messages[0]["content"] = self._get_system_instruction()
         
         # Prepare user payload with vision if requested
         if self.should_capture_screen(user_text):

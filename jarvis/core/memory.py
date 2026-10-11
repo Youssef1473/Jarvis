@@ -196,7 +196,8 @@ class MemoryManager:
         """Asynchronously analyzes user utterances to extract and persist persistent preferences, facts, and habits."""
         cleaned = user_text.strip().lower()
         # Fast filter for greetings, one-word queries, and short commands
-        if len(cleaned) < 14 or cleaned in ("hey jarvis", "exit", "quit", "goodbye", "help", "who are you"):
+        trivial = {"hey jarvis", "exit", "quit", "goodbye", "help", "who are you", "yes", "no", "ok", "okay", "cancel", "thanks", "thank you"}
+        if len(cleaned) < 8 or cleaned in trivial:
             return
 
         def _extract():
