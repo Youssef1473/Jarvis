@@ -71,9 +71,9 @@ def list_directory(folder_path: str = ".") -> str:
 
 @SkillRegistry.register(
     name="read_file",
-    description="Reads lines from a file with 1-indexed line numbers. By default reads up to 500 lines (covering entire modules). Specify start_line and line_count to inspect specific code sections."
+    description="Reads lines from a file with 1-indexed line numbers. By default reads the full file (up to 1000 lines). Specify start_line and line_count to inspect a specific code slice."
 )
-def read_file(file_path: str, start_line: int = 1, line_count: int = 500) -> str:
+def read_file(file_path: str, start_line: int = 1, line_count: int = 1000) -> str:
     """Reads lines from a file with line numbers."""
     target = _resolve_workspace_path(file_path)
     if not target.exists() or not target.is_file():
@@ -96,9 +96,9 @@ def read_file(file_path: str, start_line: int = 1, line_count: int = 500) -> str
 
 @SkillRegistry.register(
     name="read_multiple_files",
-    description="Reads multiple files in a single fast call to save time and round-trips. Pass file paths as a comma-separated string (e.g., 'jarvis/audio/tts.py, jarvis/audio/stt.py')."
+    description="Reads multiple files in a single fast call to save time and round-trips. By default reads the full file (up to 1000 lines each). Pass file paths as a comma-separated string."
 )
-def read_multiple_files(file_paths: str, max_lines_per_file: int = 350) -> str:
+def read_multiple_files(file_paths: str, max_lines_per_file: int = 1000) -> str:
     """Reads several files in batch to minimize latency and round-trips."""
     paths = [p.strip() for p in file_paths.split(",") if p.strip()]
     if not paths:
