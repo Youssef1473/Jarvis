@@ -116,6 +116,9 @@ class JarvisOrchestrator:
 
     def _on_wake_word(self):
         """Called when openWakeWord detects 'Hey Jarvis'."""
+        if self._is_recording:
+            return
+
         if self.tts.is_speaking:
             self.tts.stop()
 
