@@ -40,3 +40,9 @@ def get_grok_api_key() -> str:
     """Retrieves xAI Grok API key from environment."""
     key = os.getenv("GROK_API_KEY", "").strip() or os.getenv("XAI_API_KEY", "").strip()
     return key
+
+
+def get_groq_api_key() -> str:
+    """Retrieves Groq Cloud API key from environment."""
+    key = os.getenv("GROQ_API_KEY", "").strip()
+    return key

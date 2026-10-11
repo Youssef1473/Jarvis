@@ -1,4 +1,4 @@
-"""Jarvis brain orchestration supporting xAI Grok and Google Gemini with dynamic model failover, tools, and vision."""
+"""Jarvis brain orchestration supporting Groq (LPU), xAI Grok, and Google Gemini with dynamic model failover, tools, and vision."""
 import base64
 import json
 import logging
@@ -28,7 +28,7 @@ logger = logging.getLogger("Jarvis.Brain")
 
 
 class JarvisBrain:
-    """Powers reasoning, tool use, memory retrieval, and vision analysis across Grok (xAI) and Gemini."""
+    """Powers reasoning, tool use, memory retrieval, and vision analysis across Groq, Grok, and Gemini."""
 
     BASE_SYSTEM_PROMPT = """You are JARVIS (Just A Rather Very Intelligent System), the personal AI assistant created for Sir.
 
@@ -61,13 +61,13 @@ Capabilities:
         self.safety = safety_gate
         self.temperature = config.get("llm", {}).get("temperature", 0.6)
         
-        # Provider selection: "grok" or "gemini"
-        self.provider = config.get("llm", {}).get("provider", "gemini").lower()
+        # Provider selection: "groq", "grok", or "gemini"
+        self.provider = config.get("llm", {}).get("provider", "groq").lower()
 
-        # Grok (xAI) state
-        self.grok_client = None
-        self.grok_model = config.get("llm", {}).get("grok_model", "grok-2-latest")
-        self.grok_messages: List[Dict[str, Any]] = []
+        # OpenAI-compatible (Groq / xAI) state
+        self.openai_client = None
+        self.openai_model = ""
+        self.openai_messages: List[Dict[str, Any]] = []
 
         # Gemini state
         configured_gemini_model = config.get("llm", {}).get("model", "gemini-3.1-flash-lite")
@@ -78,8 +78,8 @@ Capabilities:
         self.gemini_chat = None
 
         # Initialize requested provider
-        if self.provider == "grok":
-            if not self._init_grok():
+        if self.provider in ("groq", "grok"):
+            if not self._init_openai_compatible():
                 self._init_gemini()
         else:
             self._init_gemini()
@@ -90,27 +90,51 @@ Capabilities:
         prompt = f"{self.BASE_SYSTEM_PROMPT}\n\nStored Facts & Profile for Sir:\n{memory_summary}\n"
         return prompt
 
-    def _init_grok(self) -> bool:
-        """Initializes OpenAI client configured for xAI Grok API."""
-        api_key = os.getenv("GROK_API_KEY", "").strip() or os.getenv("XAI_API_KEY", "").strip()
+    def _init_openai_compatible(self) -> bool:
+        """Initializes client targeting Groq Cloud or xAI Grok."""
+        groq_key = os.getenv("GROQ_API_KEY", "").strip()
+        xai_key = os.getenv("XAI_API_KEY", "").strip() or os.getenv("GROK_API_KEY", "").strip()
+
+        api_key = ""
+        base_url = ""
+
+        # Auto-detect Groq vs xAI based on provider configuration or key prefixes
+        if self.provider == "groq" or (groq_key and groq_key.startswith("gsk_")):
+            api_key = groq_key
+            base_url = "https://api.groq.com/openai/v1"
+            self.provider = "groq"
+            default_model = "qwen/qwen3.8-27b"
+            self.openai_model = self.config.get("llm", {}).get("groq_model", default_model)
+        elif self.provider == "grok" or (xai_key and xai_key.startswith("xai-")):
+            api_key = xai_key
+            base_url = "https://api.x.ai/v1"
+            self.provider = "grok"
+            default_model = "grok-2-latest"
+            self.openai_model = self.config.get("llm", {}).get("grok_model", default_model)
+        elif groq_key:
+            api_key = groq_key
+            base_url = "https://api.groq.com/openai/v1"
+            self.provider = "groq"
+            self.openai_model = "qwen/qwen3.8-27b"
+
         if not api_key:
-            logger.info("GROK_API_KEY not configured. Defaulting to Gemini.")
+            logger.info("No Groq or Grok API key found. Defaulting to Gemini.")
             self.provider = "gemini"
             return False
 
         try:
             from openai import OpenAI
-            self.grok_client = OpenAI(
+            self.openai_client = OpenAI(
                 api_key=api_key,
-                base_url="https://api.x.ai/v1"
+                base_url=base_url
             )
-            self.grok_messages = [
+            self.openai_messages = [
                 {"role": "system", "content": self._get_system_instruction()}
             ]
-            logger.info(f"Jarvis Grok link initialized with model: {self.grok_model}")
+            logger.info(f"Jarvis {self.provider.upper()} link initialized with model: {self.openai_model}")
             return True
         except Exception as e:
-            logger.error(f"Failed to initialize Grok client: {e}. Defaulting to Gemini.")
+            logger.error(f"Failed to initialize {self.provider} client: {e}. Defaulting to Gemini.")
             self.provider = "gemini"
             return False
 
@@ -145,14 +169,19 @@ Capabilities:
         return any(t in q for t in triggers)
 
     def process_query(self, user_text: str, sentence_callback: Any = None) -> str:
-        """Routes query to selected provider (Grok or Gemini) with automatic failover."""
-        if self.provider == "grok" and self.grok_client:
-            return self._process_grok_query(user_text, sentence_callback)
+        """Routes query to selected provider (Groq, Grok, or Gemini) with automatic failover."""
+        # When Groq LPU is active, route screen vision directly to Gemini Multimodal Vision
+        if self.should_capture_screen(user_text) and self.provider == "groq":
+            logger.info("Screen vision requested on Groq. Routing to Gemini Multimodal Vision...")
+            return self._process_gemini_query(user_text, sentence_callback)
+
+        if self.provider in ("groq", "grok") and self.openai_client:
+            return self._process_openai_compatible_query(user_text, sentence_callback)
         return self._process_gemini_query(user_text, sentence_callback)
 
-    def _process_grok_query(self, user_text: str, sentence_callback: Any = None) -> str:
-        """Processes user input using xAI Grok with function calling and screen vision."""
-        logger.info(f"Routing query to Grok ({self.grok_model})...")
+    def _process_openai_compatible_query(self, user_text: str, sentence_callback: Any = None) -> str:
+        """Processes user input using Groq or xAI Grok with function calling and screen vision."""
+        logger.info(f"Routing query to {self.provider.upper()} ({self.openai_model})...")
         
         # Prepare user payload with vision if requested
         if self.should_capture_screen(user_text):
@@ -171,13 +200,13 @@ Capabilities:
         else:
             user_msg = {"role": "user", "content": user_text}
 
-        self.grok_messages.append(user_msg)
+        self.openai_messages.append(user_msg)
         tools = SkillRegistry.get_openai_tools()
 
         try:
-            response = self.grok_client.chat.completions.create(
-                model=self.grok_model,
-                messages=self.grok_messages,
+            response = self.openai_client.chat.completions.create(
+                model=self.openai_model,
+                messages=self.openai_messages,
                 tools=tools if tools else None,
                 temperature=self.temperature,
             )
@@ -185,7 +214,7 @@ Capabilities:
 
             # Handle tool calls loop
             while msg.tool_calls:
-                self.grok_messages.append(msg)
+                self.openai_messages.append(msg)
                 for tool_call in msg.tool_calls:
                     fn_name = tool_call.function.name
                     try:
@@ -193,35 +222,35 @@ Capabilities:
                     except Exception:
                         fn_args = {}
 
-                    logger.info(f"Grok Tool call: {fn_name}({fn_args})")
+                    logger.info(f"{self.provider.upper()} Tool call: {fn_name}({fn_args})")
                     is_safe, warning = self.safety.check_tool_call(fn_name, fn_args)
                     if not is_safe:
                         tool_result = f"Action halted: {warning}"
                     else:
                         tool_result = SkillRegistry.execute(fn_name, **fn_args)
 
-                    logger.info(f"Grok Tool result: {tool_result}")
-                    self.grok_messages.append({
+                    logger.info(f"{self.provider.upper()} Tool result: {tool_result}")
+                    self.openai_messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "content": str(tool_result),
                     })
 
-                response = self.grok_client.chat.completions.create(
-                    model=self.grok_model,
-                    messages=self.grok_messages,
+                response = self.openai_client.chat.completions.create(
+                    model=self.openai_model,
+                    messages=self.openai_messages,
                     tools=tools if tools else None,
                     temperature=self.temperature,
                 )
                 msg = response.choices[0].message
 
             reply_text = msg.content.strip() if msg.content else "At your service, Sir."
-            self.grok_messages.append({"role": "assistant", "content": reply_text})
+            self.openai_messages.append({"role": "assistant", "content": reply_text})
             self.memory.log_interaction(user_text, reply_text)
 
             # Bound memory window
-            if len(self.grok_messages) > 25:
-                self.grok_messages = [self.grok_messages[0]] + self.grok_messages[-20:]
+            if len(self.openai_messages) > 25:
+                self.openai_messages = [self.openai_messages[0]] + self.openai_messages[-20:]
 
             # Dispatch sentences for pipelined streaming TTS
             if sentence_callback and reply_text:
@@ -234,7 +263,7 @@ Capabilities:
             return reply_text
 
         except Exception as e:
-            logger.warning(f"Grok request failed: {e}. Seamlessly falling back to Gemini...")
+            logger.warning(f"{self.provider.upper()} request failed: {e}. Seamlessly falling back to Gemini...")
             return self._process_gemini_query(user_text, sentence_callback)
 
     def _process_gemini_query(self, user_text: str, sentence_callback: Any = None) -> str:
