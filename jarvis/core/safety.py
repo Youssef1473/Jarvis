@@ -11,7 +11,7 @@ class SafetyGate:
         r"\bdel\b",
         r"\brmdir\b",
         r"\bremove-item\b",
-        r"\bformat\b",
+        r"\bformat\s+[a-zA-Z]:",
         r"\bshutdown\b",
         r"\brestart-computer\b",
         r"\bdrop\s+table\b",

@@ -268,16 +268,76 @@ Capabilities:
                 return buffer[:cut_idx].strip(), buffer[cut_idx:]
         return None, buffer
 
+    def classify_query_tier(self, query: str) -> str:
+        """Determines whether a query is suitable for Fast LPU Tier vs Deep Frontier Tier."""
+        q = query.lower().strip()
+
+        # 1. Screen Vision is ALWAYS Deep Tier
+        if self.should_capture_screen(query):
+            return "deep"
+
+        # 2. Questions starting with explanatory or analytical words -> Deep Tier
+        if any(q.startswith(p) for p in ["why ", "how come ", "explain ", "what causes ", "compare ", "analyze "]):
+            return "deep"
+
+        # 3. Explicit deep indicators (coding, scripting, planning, technical troubleshooting)
+        deep_indicators = [
+            "code", "python", "script", "debug", "refactor", "git", "function",
+            "write an email", "draft", "compose", "summarize", "analyze",
+            "explain in detail", "plan", "research", "compare", "why does",
+            "how do i implement", "architecture", "solve", "math", "calculate",
+            "review", "investigate", "audit"
+        ]
+        if any(ind in q for ind in deep_indicators):
+            return "deep"
+
+        # Long prompts (> 18 words) or multi-sentence prompts require deeper reasoning
+        if len(q.split()) > 18 or len(re.findall(r"[.!?]", q)) > 1:
+            return "deep"
+
+        # 4. Fast Tier: Routine OS commands, device queries, volume, time, media, greetings
+        fast_indicators = [
+            "volume", "mute", "unmute", "sound", "louder", "quieter",
+            "battery", "charge", "power", "time", "date", "day", "clock",
+            "open", "launch", "start", "close", "kill", "exit",
+            "play", "pause", "skip", "next song", "previous song",
+            "hello", "hi", "hey", "good morning", "good evening", "good afternoon",
+            "how are you", "who are you", "status", "are you there",
+            "thank you", "thanks", "done", "test", "ping"
+        ]
+        if any(ind in q for ind in fast_indicators):
+            return "fast"
+
+        # Default to deep tier if ambiguous to preserve maximum intellect
+        return "deep"
+
     def _process_openai_compatible_query(self, user_text: str, sentence_callback: Any = None) -> str:
         """Processes user input using OmniRoute, Groq, or xAI Grok with real-time streaming TTS and dynamic failover."""
-        # Determine model candidates for this turn
+        # Determine model candidates with Smart Dynamic Tiering
         if self.provider == "omniroute":
+            dynamic_tiering = self.config.get("llm", {}).get("dynamic_tiering", True)
+            fast_model = self.config.get("llm", {}).get("fast_model", "groq/qwen/qwen3.8-27b")
+            deep_model = self.config.get("llm", {}).get(
+                "deep_model", self.config.get("llm", {}).get("omniroute_model", "antigravity/claude-sonnet-4-6")
+            )
             fallback_list = self.config.get("llm", {}).get("omniroute_fallback_models", [
-                "antigravity/claude-sonnet-4-6",
+                deep_model,
                 "kr/claude-sonnet-4.5",
-                "groq/qwen/qwen3.8-27b",
+                fast_model,
             ])
-            candidate_models = [self.openai_model] + [m for m in fallback_list if m != self.openai_model]
+
+            tier = self.classify_query_tier(user_text) if dynamic_tiering else "deep"
+            logger.info(f"Query classified as [{tier.upper()} TIER]: '{user_text}'")
+
+            if tier == "fast":
+                ordered = [fast_model, deep_model] + [m for m in fallback_list if m not in (fast_model, deep_model)]
+            else:
+                ordered = [deep_model] + [m for m in fallback_list if m != deep_model]
+
+            candidate_models = []
+            for m in ordered:
+                if m and m not in candidate_models:
+                    candidate_models.append(m)
         else:
             candidate_models = [self.openai_model]
 

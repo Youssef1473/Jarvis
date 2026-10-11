@@ -6,6 +6,9 @@ llm:
   provider: "omniroute"           # Primary LLM provider: "omniroute" (gateway to 1200+ models), "groq", "gemini", or "grok"
   omniroute_base_url: "http://127.0.0.1:20128/v1" # Local OmniRoute proxy endpoint
   omniroute_model: "antigravity/claude-sonnet-4-6" # Primary active model (frontier intelligence)
+  dynamic_tiering: true           # Smart Tiering: route routine OS/voice commands to fast LPU, deep tasks to Claude Sonnet
+  fast_model: "groq/qwen/qwen3.8-27b" # Sub-200ms instant voice tier (volume, apps, device status, quick banter)
+  deep_model: "antigravity/claude-sonnet-4-6" # Frontier intellect tier (coding, reasoning, analysis, planning)
   omniroute_fallback_models:      # Auto-switching cascade when quota / rate limits are hit:
     - "antigravity/claude-sonnet-4-6" # Tier 1: Claude Sonnet (Antigravity)
     - "kr/claude-sonnet-4.5"          # Tier 2: Claude Sonnet (Kiro)
