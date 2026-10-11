@@ -11,12 +11,18 @@ logger = logging.getLogger("Jarvis.WakeWord")
 class WakeWordDetector:
     """Continuously monitors microphone stream for the wake word ('Hey Jarvis')."""
 
-    def __init__(self, config: Dict[str, Any], on_wake_callback: Optional[Callable[[], None]] = None):
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        on_wake_callback: Optional[Callable[[], None]] = None,
+        is_speaking_callback: Optional[Callable[[], bool]] = None
+    ):
         audio_cfg = config.get("audio", {})
         self.wake_word = audio_cfg.get("wake_word", "hey jarvis")
         self.threshold = audio_cfg.get("wake_word_threshold", 0.55)
         self.sample_rate = audio_cfg.get("sample_rate", 16000)
         self.on_wake_callback = on_wake_callback
+        self.is_speaking_callback = is_speaking_callback
 
         self.model = None
         self._is_running = False
@@ -41,6 +47,10 @@ class WakeWordDetector:
     def _audio_callback(self, indata, frames, time, status):
         """Processes audio chunks from the sounddevice InputStream."""
         if not self._is_running or self.model is None:
+            return
+
+        # Acoustic Echo Suppression: Do not detect wake word while Jarvis is speaking
+        if self.is_speaking_callback and self.is_speaking_callback():
             return
 
         # indata is float32 [-1.0, 1.0], openWakeWord expects 16-bit PCM integer values

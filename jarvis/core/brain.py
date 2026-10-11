@@ -254,11 +254,9 @@ Capabilities:
 
             # Dispatch sentences for pipelined streaming TTS
             if sentence_callback and reply_text:
-                sentences = re.split(r"(?<=[.!?])\s+", reply_text)
+                sentences = [s.strip() for s in re.split(r"(?<!\d)(?<=[.!?])(?!\d)\s+", reply_text) if s.strip()]
                 for s in sentences:
-                    clean_s = s.strip()
-                    if clean_s:
-                        sentence_callback(clean_s)
+                    sentence_callback(s)
 
             return reply_text
 
@@ -317,11 +315,9 @@ Capabilities:
                 self.memory.log_interaction(user_text, reply_text)
 
                 if sentence_callback and reply_text:
-                    sentences = re.split(r"(?<=[.!?])\s+", reply_text)
+                    sentences = [s.strip() for s in re.split(r"(?<!\d)(?<=[.!?])(?!\d)\s+", reply_text) if s.strip()]
                     for s in sentences:
-                        clean_s = s.strip()
-                        if clean_s:
-                            sentence_callback(clean_s)
+                        sentence_callback(s)
 
                 return reply_text
 

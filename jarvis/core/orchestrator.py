@@ -51,6 +51,7 @@ class JarvisOrchestrator:
         self.wake_detector = WakeWordDetector(
             config,
             on_wake_callback=self._on_wake_word,
+            is_speaking_callback=lambda: self.tts.is_speaking,
         )
 
         self._running = False
@@ -237,11 +238,11 @@ class JarvisOrchestrator:
 
         reply = self.brain.process_query(query, sentence_callback=queue_speech)
         print(f"[Jarvis]: {reply}\n")
-        self.sfx.play_done()
 
         # Complete playback of remaining queued audio
         self.tts.finish_streaming_session()
         self.hud.set_state("idle")
+        self.sfx.play_done()
 
         # Check if shutdown tool was invoked during LLM reasoning
         from jarvis.skills.os_control import is_shutdown_requested

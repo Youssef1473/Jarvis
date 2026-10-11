@@ -44,9 +44,11 @@ class TextToSpeech:
         self._is_speaking = False
         self._stop_event = threading.Event()
         
-        # Streaming worker state
+        # Streaming worker state (Double-buffered: text queue -> audio queue)
         self._sentence_queue: queue.Queue = queue.Queue()
-        self._stream_thread: Optional[threading.Thread] = None
+        self._audio_queue: queue.Queue = queue.Queue()
+        self._synth_thread: Optional[threading.Thread] = None
+        self._playback_thread: Optional[threading.Thread] = None
         self._stream_active = False
 
         # Kokoro engine instance
@@ -95,11 +97,18 @@ class TextToSpeech:
     def stop(self):
         """Immediately interrupts and halts speech playback across all engines."""
         self._stop_event.set()
-        
-        # Empty queue
+        self._stream_active = False
+
+        # Empty queues
         while not self._sentence_queue.empty():
             try:
                 self._sentence_queue.get_nowait()
+            except Exception:
+                break
+
+        while not self._audio_queue.empty():
+            try:
+                self._audio_queue.get_nowait()
             except Exception:
                 break
 
@@ -117,7 +126,6 @@ class TextToSpeech:
                 pass
 
         self._is_speaking = False
-        self._stream_active = False
 
     def _clean_text_for_speech(self, text: str) -> str:
         """Strips markdown and formatting so speech sounds completely natural."""
@@ -133,20 +141,26 @@ class TextToSpeech:
         return cleaned
 
     def start_streaming_session(self):
-        """Initializes a streaming session for real-time sentence-by-sentence delivery."""
+        """Initializes a double-buffered streaming session with concurrent pre-synthesis."""
         self._stop_event.clear()
         self._is_speaking = True
         self._stream_active = True
 
         if self.engine == "kokoro" and self._kokoro:
-            # Drain queue
             while not self._sentence_queue.empty():
                 try:
                     self._sentence_queue.get_nowait()
                 except Exception:
                     break
 
-            def _stream_worker():
+            while not self._audio_queue.empty():
+                try:
+                    self._audio_queue.get_nowait()
+                except Exception:
+                    break
+
+            # Stage 1: Synthesis Producer Worker (Computes next sentence audio in background)
+            def _synth_worker():
                 while self._stream_active and not self._stop_event.is_set():
                     try:
                         sentence = self._sentence_queue.get(timeout=0.1)
@@ -154,6 +168,7 @@ class TextToSpeech:
                         continue
 
                     if sentence is None or self._stop_event.is_set():
+                        self._audio_queue.put(None)
                         break
 
                     clean_text = self._clean_text_for_speech(sentence)
@@ -167,20 +182,36 @@ class TextToSpeech:
                             speed=self.kokoro_speed,
                             lang=self.kokoro_lang
                         )
-                        if self._stop_event.is_set():
-                            break
-
-                        sd.play(samples, sr)
-                        # Wait for this sentence to finish playing or interrupt
-                        while sd.get_stream().active and not self._stop_event.is_set():
-                            time.sleep(0.04)
+                        if not self._stop_event.is_set():
+                            self._audio_queue.put((samples, sr))
                     except Exception as e:
-                        logger.error(f"Kokoro playback error on '{clean_text}': {e}")
+                        logger.error(f"Kokoro synth error on '{clean_text}': {e}")
+
+            # Stage 2: Audio Playback Consumer Worker (Plays pre-buffered audio seamlessly)
+            def _playback_worker():
+                while self._stream_active and not self._stop_event.is_set():
+                    try:
+                        item = self._audio_queue.get(timeout=0.1)
+                    except queue.Empty:
+                        continue
+
+                    if item is None or self._stop_event.is_set():
+                        break
+
+                    samples, sr = item
+                    try:
+                        sd.play(samples, sr)
+                        while sd.get_stream().active and not self._stop_event.is_set():
+                            time.sleep(0.02)
+                    except Exception as e:
+                        logger.error(f"Playback error: {e}")
 
                 self._is_speaking = False
 
-            self._stream_thread = threading.Thread(target=_stream_worker, daemon=True)
-            self._stream_thread.start()
+            self._synth_thread = threading.Thread(target=_synth_worker, daemon=True)
+            self._playback_thread = threading.Thread(target=_playback_worker, daemon=True)
+            self._synth_thread.start()
+            self._playback_thread.start()
 
         else:
             # SAPI5 streaming path
@@ -199,7 +230,7 @@ class TextToSpeech:
                 logger.error(f"Failed to start streaming SAPI session: {e}")
 
     def queue_sentence(self, sentence: str):
-        """Enqueues and immediately begins speaking a sentence in real time."""
+        """Enqueues and immediately begins pre-synthesizing a sentence in real time."""
         text = sentence.strip()
         if not text or self._stop_event.is_set():
             return
@@ -215,11 +246,13 @@ class TextToSpeech:
                     logger.error(f"SAPI queue error: {e}")
 
     def finish_streaming_session(self):
-        """Waits for all queued sentences to complete playback or until interrupted."""
+        """Waits for pre-synthesis and playback to conclude seamlessly or until interrupted."""
         if self.engine == "kokoro" and self._kokoro:
-            self._sentence_queue.put(None)  # Sentinel to stop worker
-            if self._stream_thread and self._stream_thread.is_alive():
-                self._stream_thread.join(timeout=30.0)
+            self._sentence_queue.put(None)  # Signal synth worker
+            if self._synth_thread and self._synth_thread.is_alive():
+                self._synth_thread.join(timeout=30.0)
+            if self._playback_thread and self._playback_thread.is_alive():
+                self._playback_thread.join(timeout=30.0)
             self._is_speaking = False
             self._stream_active = False
 
