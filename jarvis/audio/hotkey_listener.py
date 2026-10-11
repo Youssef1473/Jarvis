@@ -36,9 +36,29 @@ class HotkeyListener:
 
     KEYBOARD_KEY_MAP = {
         "alt": (keyboard.Key.alt, keyboard.Key.alt_l, keyboard.Key.alt_r),
+        "alt_r": (keyboard.Key.alt_r, keyboard.Key.alt_gr),
+        "alt_l": (keyboard.Key.alt_l,),
         "ctrl": (keyboard.Key.ctrl, keyboard.Key.ctrl_l, keyboard.Key.ctrl_r),
+        "ctrl_r": (keyboard.Key.ctrl_r,),
+        "ctrl_l": (keyboard.Key.ctrl_l,),
         "shift": (keyboard.Key.shift, keyboard.Key.shift_l, keyboard.Key.shift_r),
         "space": (keyboard.Key.space,),
+        "caps_lock": (keyboard.Key.caps_lock,),
+        "caps": (keyboard.Key.caps_lock,),
+        "tilde": (keyboard.KeyCode.from_char("`"),),
+        "`": (keyboard.KeyCode.from_char("`"),),
+        "f1": (keyboard.Key.f1,),
+        "f2": (keyboard.Key.f2,),
+        "f3": (keyboard.Key.f3,),
+        "f4": (keyboard.Key.f4,),
+        "f5": (keyboard.Key.f5,),
+        "f6": (keyboard.Key.f6,),
+        "f7": (keyboard.Key.f7,),
+        "f8": (keyboard.Key.f8,),
+        "f9": (keyboard.Key.f9,),
+        "f10": (keyboard.Key.f10,),
+        "f11": (keyboard.Key.f11,),
+        "f12": (keyboard.Key.f12,),
     }
 
     def __init__(
