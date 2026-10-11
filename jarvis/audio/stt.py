@@ -40,6 +40,7 @@ class SpeechToText:
         self.language = stt_cfg.get("language", "en")
         self.beam_size = int(stt_cfg.get("beam_size", 1))
         self.trim_silence = bool(stt_cfg.get("trim_silence", True))
+        self.cpu_threads = int(stt_cfg.get("cpu_threads", 4))
         self.initial_prompt = stt_cfg.get("initial_prompt", "Jarvis, Sir, computer, volume, battery, system.")
         self.model = None
         self._init_model()
@@ -69,10 +70,10 @@ class SpeechToText:
             except Exception as e:
                 logger.warning(f"CUDA initialization or DLL load failed ({e}). Falling back to CPU...")
 
-        # Fallback to CPU with int8 (fast on multi-core 12th Gen i5)
+        # Fallback to CPU with int8 (capped to 4 threads to prevent CPU spikes)
         try:
-            logger.info(f"Loading faster-whisper '{self.model_size}' on CPU (int8)...")
-            self.model = WhisperModel(self.model_size, device="cpu", compute_type="int8", cpu_threads=6)
+            logger.info(f"Loading faster-whisper '{self.model_size}' on CPU (int8, {self.cpu_threads} threads)...")
+            self.model = WhisperModel(self.model_size, device="cpu", compute_type="int8", cpu_threads=self.cpu_threads)
             logger.info("Successfully loaded faster-whisper on CPU.")
         except Exception as e:
             logger.error(f"Failed to load faster-whisper on CPU: {e}")
@@ -144,7 +145,7 @@ class SpeechToText:
             logger.warning(f"Transcription error encountered: {e}. Switching to CPU...")
             try:
                 from faster_whisper import WhisperModel
-                self.model = WhisperModel(self.model_size, device="cpu", compute_type="int8", cpu_threads=6)
+                self.model = WhisperModel(self.model_size, device="cpu", compute_type="int8", cpu_threads=self.cpu_threads)
                 segments, info = self.model.transcribe(
                     audio_to_transcribe,
                     beam_size=self.beam_size,

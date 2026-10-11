@@ -21,6 +21,17 @@ from jarvis.ui.hud import JarvisHUD
 logger = logging.getLogger("Jarvis.Orchestrator")
 
 
+def trim_process_memory():
+    """Trims unreferenced RAM on Windows and invokes garbage collector."""
+    import gc
+    gc.collect()
+    try:
+        import ctypes
+        ctypes.windll.psapi.EmptyWorkingSet(ctypes.windll.kernel32.GetCurrentProcess())
+    except Exception:
+        pass
+
+
 class JarvisOrchestrator:
     """Coordinates Jarvis's sensory inputs, cognitive loop, speech output, holographic HUD, and proactive heartbeat."""
 
@@ -205,8 +216,10 @@ class JarvisOrchestrator:
 
         def record_and_process_vad():
             try:
-                from openwakeword.vad import VAD
-                vad = VAD()
+                vad = self.wake_detector.get_vad()
+                if vad is None:
+                    from openwakeword.vad import VAD
+                    vad = VAD()
                 captured_chunks = []
                 block_size = 1280
                 sample_rate = self.sample_rate
@@ -324,6 +337,7 @@ class JarvisOrchestrator:
         self.tts.finish_streaming_session()
         self.set_state("idle")
         self.sfx.play_done()
+        trim_process_memory()
 
         # Check if shutdown tool was invoked during LLM reasoning
         from jarvis.skills.os_control import is_shutdown_requested
@@ -378,6 +392,7 @@ class JarvisOrchestrator:
         self.set_state("speaking")
         asyncio.run(self.tts.speak("Jarvis systems operational. All sub-systems online, Sir."))
         self.set_state("idle")
+        trim_process_memory()
 
     def run_interactive_loop(self):
         """Main execution loop for voice and console interaction."""

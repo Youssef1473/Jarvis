@@ -304,7 +304,10 @@ class TextToSpeech:
                     lang=self.kokoro_lang
                 )
                 if not self._stop_event.is_set():
+                    duration = len(samples) / float(sr)
                     sd.play(samples, sr)
+                    if duration > 0.15:
+                        time.sleep(duration * 0.85)
                     while sd.get_stream().active and not self._stop_event.is_set():
                         time.sleep(0.04)
                     if self._stop_event.is_set():

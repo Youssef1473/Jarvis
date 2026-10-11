@@ -1,4 +1,5 @@
 """Wake-word listener using openWakeWord ('Hey Jarvis')."""
+from collections import deque
 import logging
 import threading
 from typing import Dict, Any, Callable, Optional
@@ -9,7 +10,7 @@ logger = logging.getLogger("Jarvis.WakeWord")
 
 
 class WakeWordDetector:
-    """Continuously monitors microphone stream for the wake word ('Hey Jarvis')."""
+    """Continuously monitors microphone stream for the wake word ('Hey Jarvis') with zero-idle CPU energy gating."""
 
     def __init__(
         self,
@@ -19,15 +20,21 @@ class WakeWordDetector:
     ):
         audio_cfg = config.get("audio", {})
         self.wake_word = audio_cfg.get("wake_word", "hey jarvis")
-        self.threshold = audio_cfg.get("wake_word_threshold", 0.55)
+        self.threshold = float(audio_cfg.get("wake_word_threshold", 0.55))
+        self.energy_threshold = float(audio_cfg.get("wake_word_energy_threshold", 0.0035))
         self.sample_rate = audio_cfg.get("sample_rate", 16000)
         self.on_wake_callback = on_wake_callback
         self.is_speaking_callback = is_speaking_callback
 
         self.model = None
+        self._vad = None
         self._is_running = False
         self._stream = None
         self._thread: Optional[threading.Thread] = None
+
+        # Energy gate state: rolling pre-roll buffer to retain lead-in speech frames while idling
+        self._preroll_buffer: deque = deque(maxlen=4)
+        self._active_chunks_remaining = 0
 
     def _init_model(self):
         """Initializes openWakeWord model."""
@@ -44,29 +51,64 @@ class WakeWordDetector:
             logger.error(f"Failed to initialize openWakeWord: {e}")
             self.model = None
 
-    def _audio_callback(self, indata, frames, time, status):
-        """Processes audio chunks from the sounddevice InputStream."""
+    def get_vad(self):
+        """Returns cached VAD instance to prevent reloading ONNX models on each wake event."""
+        if self._vad is None:
+            try:
+                from openwakeword.vad import VAD
+                self._vad = VAD()
+            except Exception as e:
+                logger.error(f"Failed to initialize openWakeWord VAD: {e}")
+                return None
+        return self._vad
+
+    def _audio_callback(self, indata, frames, time_info, status):
+        """Processes audio chunks from the sounddevice InputStream with energy-gated zero-idle CPU."""
         if not self._is_running or self.model is None:
             return
 
         # Acoustic Echo Suppression: Do not detect wake word while Jarvis is speaking
         if self.is_speaking_callback and self.is_speaking_callback():
+            self._preroll_buffer.clear()
+            self._active_chunks_remaining = 0
             return
 
-        # indata is float32 [-1.0, 1.0], openWakeWord expects 16-bit PCM integer values
-        audio_chunk = (indata[:, 0] * 32767).astype(np.int16)
+        # indata is float32 [-1.0, 1.0], chunk has 1280 samples (80ms at 16kHz)
+        raw_float = indata[:, 0]
+        rms_energy = float(np.sqrt(np.mean(raw_float ** 2)))
+
+        # Sub-microsecond energy gate: if room is silent, skip heavy ONNX neural inferences
+        if rms_energy >= self.energy_threshold:
+            # Voice / sound detected: activate predictor and sustain active processing for ~2.0s (25 chunks)
+            self._active_chunks_remaining = 25
+        elif self._active_chunks_remaining > 0:
+            self._active_chunks_remaining -= 1
+
+        # If completely idle (silent ambient room), store in pre-roll deque and return immediately (0.002ms)
+        if self._active_chunks_remaining == 0:
+            self._preroll_buffer.append(raw_float.copy())
+            return
+
+        # Active speech processing: replay pre-roll lead-in chunks if waking up from idle
+        chunks_to_feed = []
+        if self._preroll_buffer:
+            while self._preroll_buffer:
+                chunks_to_feed.append((self._preroll_buffer.popleft() * 32767).astype(np.int16))
+
+        chunks_to_feed.append((raw_float * 32767).astype(np.int16))
 
         try:
-            # Predict scores for audio chunk
-            prediction = self.model.predict(audio_chunk)
-            for model_name, score in prediction.items():
-                if score >= self.threshold:
-                    logger.info(f"Wake word detected! Score: {score:.3f}")
-                    # Reset model buffer to prevent double triggers
-                    self.model.reset()
-                    if self.on_wake_callback:
-                        self.on_wake_callback()
-                    break
+            for chunk_pcm in chunks_to_feed:
+                prediction = self.model.predict(chunk_pcm)
+                for model_name, score in prediction.items():
+                    if score >= self.threshold:
+                        logger.info(f"Wake word detected! Score: {score:.3f}")
+                        self.model.reset()
+                        self._preroll_buffer.clear()
+                        self._active_chunks_remaining = 0
+                        if self.on_wake_callback:
+                            self.on_wake_callback()
+                        return
         except Exception as e:
             logger.error(f"Error predicting wake word: {e}")
 

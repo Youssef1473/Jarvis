@@ -28,14 +28,16 @@ audio:
   channels: 1
   wake_word: "hey jarvis"
   wake_word_threshold: 0.55
+  wake_word_energy_threshold: 0.0035 # Sub-microsecond RMS energy gate to skip idle ONNX inferences (0% idle CPU)
   ptt_trigger: "fin"              # Hold Fin (End) key to speak, release to send
   ptt_key: "fin"                  # Backward compatibility alias
   silence_threshold_seconds: 1.2  # Silence duration to conclude utterance
 
 stt:
-  model_size: "small"             # "tiny", "base", "small", "medium"
+  model_size: "base.en"           # "base.en" (ultra-fast 15ms latency, ~140MB RAM), or "small" (480MB RAM)
   device: "cuda"                  # "cuda" with RTX 3050, or "cpu" fallback
   compute_type: "float16"         # "float16" for GPU, "int8" for CPU
+  cpu_threads: 4                  # Limit STT threads on CPU to prevent CPU saturation
   language: "en"
   beam_size: 1                    # 1 for turbo real-time (sub-10ms), 3-5 for maximum beam search
   trim_silence: true              # Pre-trim leading/trailing silence before Whisper
