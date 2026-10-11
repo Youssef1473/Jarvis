@@ -64,6 +64,11 @@ Architectural Self-Awareness & Failover Cascade:
   2. Google Gemini Flash cascade: `gemini-3.1-flash-lite`, `gemini-3.5-flash-lite`, and `gemini-3.7-flash`.
   3. When OmniRoute is active: cascades from `antigravity/claude-sonnet-4-6` -> `kr/claude-sonnet-4.5` -> `groq/qwen/qwen3.8-27b` -> Gemini.
 - If Sir asks about your models, fallbacks, or quota limits, accurately state this exact cascade.
+
+Persistent Episodic Memory & Dialogue Recall:
+- You possess persistent memory across restarts and separate sessions. Recent dialogue turns from prior sessions are automatically preserved in your working context.
+- You have direct access to the `recall_past_conversation` skill to search through the persistent SQLite dialogue archive.
+- When Sir asks about past conversations, earlier discussions, previous commands, or past topics ("what did we talk about earlier?", "remind me what we discussed"), NEVER claim that you do not retain memory between sessions or that each session starts fresh. Instead, refer to your active context or invoke `recall_past_conversation` to retrieve and accurately summarize the prior dialogue for Sir.
 """
 
     GEMINI_CANDIDATE_MODELS = [
@@ -195,7 +200,15 @@ Architectural Self-Awareness & Failover Cascade:
             self.openai_messages = [
                 {"role": "system", "content": self._get_system_instruction()}
             ]
-            logger.info(f"Jarvis {self.provider.upper()} link initialized with model: {self.openai_model}")
+            # Restore recent interactions from persistent SQLite memory
+            recent_turns = self.memory.get_recent_interactions(limit=6)
+            for turn in recent_turns:
+                u_text = turn.get("user_input", "").strip()
+                j_text = turn.get("jarvis_reply", "").strip()
+                if u_text and j_text:
+                    self.openai_messages.append({"role": "user", "content": u_text})
+                    self.openai_messages.append({"role": "assistant", "content": j_text})
+            logger.info(f"Jarvis {self.provider.upper()} link initialized with model: {self.openai_model} ({len(recent_turns)} prior turns restored).")
             return True
         except Exception as e:
             logger.error(f"Failed to initialize {self.provider} client: {e}. Defaulting to Gemini.")
@@ -216,15 +229,26 @@ Architectural Self-Awareness & Failover Cascade:
         all_tools = list(SkillRegistry.get_all_tools().values())
         system_instruction = self._get_system_instruction()
 
+        # Restore recent interactions for Gemini history
+        history = []
+        recent_turns = self.memory.get_recent_interactions(limit=6)
+        for turn in recent_turns:
+            u_text = turn.get("user_input", "").strip()
+            j_text = turn.get("jarvis_reply", "").strip()
+            if u_text and j_text:
+                history.append(types.Content(role="user", parts=[types.Part.from_text(text=u_text)]))
+                history.append(types.Content(role="model", parts=[types.Part.from_text(text=j_text)]))
+
         self.gemini_chat = self.gemini_client.chats.create(
             model=self.gemini_model,
+            history=history if history else None,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=self.temperature,
                 tools=all_tools,
             )
         )
-        logger.info(f"Jarvis Gemini session initialized with model: {self.gemini_model}")
+        logger.info(f"Jarvis Gemini session initialized with model: {self.gemini_model} ({len(recent_turns)} prior turns restored).")
 
     def should_capture_screen(self, query: str) -> bool:
         """Determines if the prompt requests looking at the screen."""

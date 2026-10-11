@@ -80,3 +80,25 @@ def recall_fact(key: str) -> str:
     if val:
         return f"Stored fact for '{key}': {val}"
     return f"No stored fact found for '{key}'."
+
+
+@SkillRegistry.register(
+    name="recall_past_conversation",
+    description="Searches previous conversation logs and dialogues with Sir by topic, question, or keyword. Use this whenever Sir asks what you previously discussed, past decisions, earlier commands, or past topics."
+)
+def recall_past_conversation(query: str, limit: int = 5) -> str:
+    """Searches past conversation logs in SQLite memory."""
+    mem = _get_memory()
+    results = mem.search_interactions(query, limit=limit)
+    if not results:
+        return f"No past conversation logs found matching '{query}', Sir."
+
+    formatted = []
+    for r in results:
+        ts = r.get("created_at", "Unknown time")
+        u_msg = r.get("user_input", "")
+        j_msg = r.get("jarvis_reply", "")
+        formatted.append(f"[{ts}]\nSir: {u_msg}\nJarvis: {j_msg}")
+
+    return "Past Dialogue Logs Found:\n\n" + "\n\n---\n\n".join(formatted)
+

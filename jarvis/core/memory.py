@@ -192,6 +192,46 @@ class MemoryManager:
             """, (user_input, jarvis_reply, tool_calls or ""))
             conn.commit()
 
+    def get_recent_interactions(self, limit: int = 8) -> List[Dict[str, Any]]:
+        """Retrieves the most recent N interaction turns in chronological order."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT user_input, jarvis_reply, tool_calls, created_at
+                FROM interactions
+                ORDER BY id DESC
+                LIMIT ?
+            """, (limit,))
+            rows = cursor.fetchall()
+            return [dict(r) for r in reversed(rows)]
+
+    def search_interactions(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Searches past conversation logs by keyword or phrase across questions and answers."""
+        terms = [t.strip().lower() for t in query.split() if len(t.strip()) > 2]
+        if not terms:
+            terms = [query.strip().lower()]
+
+        conditions = []
+        params = []
+        for term in terms:
+            conditions.append("(LOWER(user_input) LIKE ? OR LOWER(jarvis_reply) LIKE ?)")
+            params.extend([f"%{term}%", f"%{term}%"])
+
+        where_clause = " OR ".join(conditions)
+        sql = f"""
+            SELECT id, user_input, jarvis_reply, tool_calls, created_at
+            FROM interactions
+            WHERE {where_clause}
+            ORDER BY id DESC
+            LIMIT ?
+        """
+        params.append(limit)
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(sql, tuple(params))
+            return [dict(r) for r in cursor.fetchall()]
+
     def auto_learn_from_interaction(self, user_text: str, reply_text: str, groq_api_key: Optional[str] = None):
         """Asynchronously analyzes user utterances to extract and persist persistent preferences, facts, and habits."""
         cleaned = user_text.strip().lower()
