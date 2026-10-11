@@ -201,24 +201,54 @@ class MemoryManager:
             return
 
         def _extract():
+            system_prompt = (
+                "You are an ambient background memory extractor for Sir's personal assistant JARVIS. "
+                "Analyze the user's utterance and determine if Sir revealed any permanent personal facts, "
+                "preferences, habits, routine details, projects, or behavioral rules about himself. "
+                "If so, output a JSON array of objects with keys: 'category' (identity|preference|habit|project|general), "
+                "'key' (snake_case, concise), 'value' (clear description). "
+                "If no persistent personal facts about Sir were shared (e.g. routine queries, system commands, transient questions), "
+                "output ONLY an empty array: []\n"
+                "Output valid JSON without markdown fences."
+            )
+
+            # Priority 1: Use Gemini Flash Lite (massive token quota, zero impact on Groq's 8000 TPM quota)
+            gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+            if gemini_key:
+                try:
+                    from google import genai
+                    g_client = genai.Client(api_key=gemini_key)
+                    g_res = g_client.models.generate_content(
+                        model="gemini-3.1-flash-lite",
+                        contents=f"{system_prompt}\n\nUser statement: '{user_text}'"
+                    )
+                    content = g_res.text.strip() if g_res.text else "[]"
+                    if content.startswith("```"):
+                        content = re.sub(r"^```(?:json)?\n?", "", content)
+                        content = re.sub(r"\n?```$", "", content)
+                    items = json.loads(content)
+                    if isinstance(items, list):
+                        for item in items:
+                            key = item.get("key", "").strip()
+                            val = item.get("value", "").strip()
+                            cat = item.get("category", "general").strip()
+                            if key and val:
+                                self.remember_fact(key, val, cat)
+                                logger.info(f"Learned new fact about Sir via ambient link: [{cat}] {key} -> {val}")
+                        return
+                except Exception as e:
+                    logger.debug(f"Gemini background memory extraction notice: {e}")
+
+            # Priority 2: Fallback to Groq with max_retries=0 and stagger
             api_key = groq_api_key or os.getenv("GROQ_API_KEY", "").strip()
             if not api_key:
                 return
 
             try:
+                import time
+                time.sleep(1.0)  # Stagger slightly to avoid burst contention with speech
                 from openai import OpenAI
-                client = OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
-                system_prompt = (
-                    "You are an ambient background memory extractor for Sir's personal assistant JARVIS. "
-                    "Analyze the user's utterance and determine if Sir revealed any permanent personal facts, "
-                    "preferences, habits, routine details, projects, or behavioral rules about himself. "
-                    "If so, output a JSON array of objects with keys: 'category' (identity|preference|habit|project|general), "
-                    "'key' (snake_case, concise), 'value' (clear description). "
-                    "If no persistent personal facts about Sir were shared (e.g. routine queries, system commands, transient questions), "
-                    "output ONLY an empty array: []\n"
-                    "Output valid JSON without markdown fences."
-                )
-
+                client = OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1", max_retries=0, timeout=8.0)
                 res = client.chat.completions.create(
                     model="qwen/qwen3.8-27b",
                     messages=[
@@ -244,7 +274,7 @@ class MemoryManager:
                             self.remember_fact(key, val, cat)
                             logger.info(f"Learned new fact about Sir: [{cat}] {key} -> {val}")
             except Exception as e:
-                logger.debug(f"Memory extraction notice: {e}")
+                logger.debug(f"Groq background memory extraction notice: {e}")
 
         threading.Thread(target=_extract, daemon=True).start()
 

@@ -138,7 +138,9 @@ Capabilities:
             from openai import OpenAI
             self.openai_client = OpenAI(
                 api_key=api_key,
-                base_url=base_url
+                base_url=base_url,
+                max_retries=0,
+                timeout=12.0
             )
             self.openai_messages = [
                 {"role": "system", "content": self._get_system_instruction()}
@@ -228,8 +230,10 @@ Capabilities:
             )
             msg = response.choices[0].message
 
+            had_tool_call = False
             # Handle tool calls loop
             while msg.tool_calls:
+                had_tool_call = True
                 self.openai_messages.append(msg)
                 for tool_call in msg.tool_calls:
                     fn_name = tool_call.function.name
@@ -252,18 +256,50 @@ Capabilities:
                         "content": str(tool_result),
                     })
 
+                # Follow-up conversational response does not need 27 tool schemas, cutting ~2,200 tokens
                 response = self.openai_client.chat.completions.create(
                     model=self.openai_model,
                     messages=self.openai_messages,
-                    tools=tools if tools else None,
+                    tools=None,
                     temperature=self.temperature,
                 )
-                msg = response.choices[0].message
+            # Fallback for inline pseudo-XML tool calls (e.g. Qwen formatting)
+            if not msg.tool_calls and msg.content and "<tool_call>" in msg.content:
+                fn_match = re.search(r'<function=([a-zA-Z0-9_]+)>', msg.content)
+                if fn_match:
+                    had_tool_call = True
+                    fn_name = fn_match.group(1)
+                    fn_args = {}
+                    for p_match in re.finditer(r'<parameter=([a-zA-Z0-9_]+)>\s*(.*?)\s*</parameter>', msg.content, re.DOTALL):
+                        fn_args[p_match.group(1)] = p_match.group(2).strip()
+
+                    logger.info(f"{self.provider.upper()} Inline tool call: {fn_name}({fn_args})")
+                    is_safe, warning = self.safety.check_tool_call(fn_name, fn_args)
+                    tool_result = f"Action halted: {warning}" if not is_safe else SkillRegistry.execute(fn_name, **fn_args)
+                    logger.info(f"{self.provider.upper()} Inline tool result: {tool_result}")
+
+                    self.openai_messages.append(msg)
+                    self.openai_messages.append({
+                        "role": "user",
+                        "content": f"[System Tool Result: {tool_result}. Briefly acknowledge to Sir that this was completed.]"
+                    })
+                    response = self.openai_client.chat.completions.create(
+                        model=self.openai_model,
+                        messages=self.openai_messages,
+                        tools=None,
+                        temperature=self.temperature,
+                    )
+                    msg = response.choices[0].message
 
             reply_text = msg.content.strip() if msg.content else "At your service, Sir."
+            reply_text = re.sub(r"<tool_call>.*?</tool_call>", "", reply_text, flags=re.DOTALL).strip()
+            if not reply_text:
+                reply_text = "Updated, Sir."
+
             self.openai_messages.append({"role": "assistant", "content": reply_text})
             self.memory.log_interaction(user_text, reply_text)
-            self.memory.auto_learn_from_interaction(user_text, reply_text)
+            if not had_tool_call:
+                self.memory.auto_learn_from_interaction(user_text, reply_text)
 
             # Bound memory window
             if len(self.openai_messages) > 25:

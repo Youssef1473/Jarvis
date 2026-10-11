@@ -7,7 +7,7 @@ llm:
   groq_model: "qwen/qwen3.8-27b"  # Groq Cloud model (instant 300ms inference)
   grok_model: "grok-2-latest"     # xAI Grok model ("grok-2-latest", "grok-2-vision-1212")
   model: "gemini-3.1-flash-lite"  # Google Gemini model
-  temperature: 0.6
+  temperature: 0.3
   max_output_tokens: 1024
 
 audio:

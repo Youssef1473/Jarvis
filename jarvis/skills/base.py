@@ -53,10 +53,7 @@ class SkillRegistry:
                 if param.annotation != inspect.Parameter.empty:
                     p_type = type_map.get(param.annotation, "string")
 
-                props[p_name] = {
-                    "type": p_type,
-                    "description": f"Parameter: {p_name}"
-                }
+                props[p_name] = {"type": p_type}
                 if param.default == inspect.Parameter.empty:
                     required.append(p_name)
 
@@ -77,7 +74,16 @@ class SkillRegistry:
 
     @classmethod
     def execute(cls, name: str, **kwargs) -> Any:
-        tool = cls.get_tool(name)
+        aliases = {
+            "store_fact": "remember_fact",
+            "save_fact": "remember_fact",
+            "get_fact": "recall_fact",
+            "find_fact": "recall_fact",
+            "remember": "remember_fact",
+            "recall": "recall_fact",
+        }
+        resolved = aliases.get(name, name)
+        tool = cls.get_tool(resolved)
         if not tool:
             return f"Error: Tool '{name}' not found."
         try:
