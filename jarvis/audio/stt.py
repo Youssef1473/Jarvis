@@ -20,6 +20,7 @@ def _setup_nvidia_dll_paths():
                 if bin_dir.is_dir():
                     try:
                         os.add_dll_directory(str(bin_dir))
+                        os.environ["PATH"] = f"{bin_dir};{os.environ.get('PATH', '')}"
                         logger.info(f"Registered NVIDIA DLL path: {bin_dir}")
                     except Exception:
                         pass
