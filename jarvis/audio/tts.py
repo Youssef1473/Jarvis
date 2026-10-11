@@ -80,9 +80,12 @@ class TextToSpeech:
                 opts.intra_op_num_threads = self.cpu_threads
                 opts.inter_op_num_threads = 2
                 opts.graph_optimization_level = rt.GraphOptimizationLevel.ORT_ENABLE_ALL
-                sess = rt.InferenceSession(self.kokoro_model_path, sess_options=opts, providers=["CPUExecutionProvider"])
+                available = rt.get_available_providers()
+                providers = ["DmlExecutionProvider", "CPUExecutionProvider"] if "DmlExecutionProvider" in available else ["CPUExecutionProvider"]
+                sess = rt.InferenceSession(self.kokoro_model_path, sess_options=opts, providers=providers)
                 self._kokoro = Kokoro.from_session(sess, self.kokoro_voices_path)
-                logger.info(f"Kokoro-82M neural engine loaded ({self.kokoro_voice}) with {self.cpu_threads} CPU threads in {time.time()-t0:.2f}s.")
+                active_prov = sess.get_providers()[0] if hasattr(sess, "get_providers") else providers[0]
+                logger.info(f"Kokoro-82M neural engine loaded ({self.kokoro_voice}) via {active_prov} in {time.time()-t0:.2f}s.")
             else:
                 logger.warning("Kokoro model files not found. Defaulting to SAPI5.")
                 self.engine = "sapi5"
