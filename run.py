@@ -61,13 +61,20 @@ def check_api_key():
 
 def main():
     setup_logging()
-    check_api_key()
+
+    # Check for stealth mode flags (--stealth, --background, -b, -s)
+    is_stealth = any(arg in sys.argv for arg in ("--stealth", "--background", "-b", "-s"))
+    if is_stealth:
+        from jarvis.ui.tray import set_console_visible
+        set_console_visible(False)
+    else:
+        check_api_key()
 
     config = load_config()
     orchestrator = JarvisOrchestrator(config)
 
-    # Launch system tray icon in background
-    tray_app = SystemTrayApp(on_quit_callback=orchestrator.stop)
+    # Launch full-featured system tray app in background
+    tray_app = SystemTrayApp(orchestrator=orchestrator, on_quit_callback=orchestrator.stop)
     tray_app.run_in_background()
 
     # Run main interactive loop

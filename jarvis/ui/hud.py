@@ -167,6 +167,29 @@ class JarvisHUD:
             self._thread = threading.Thread(target=self._run_tk, daemon=True)
             self._thread.start()
 
+    def toggle_visibility(self) -> bool:
+        """Toggles HUD overlay visibility. Returns new visibility state."""
+        if not self.root:
+            return False
+        try:
+            if self.root.winfo_viewable():
+                self.root.withdraw()
+                return False
+            else:
+                self.root.deiconify()
+                return True
+        except Exception:
+            return False
+
+    def is_visible(self) -> bool:
+        """Returns True if the HUD overlay window is currently mapped on screen."""
+        if not self.root:
+            return False
+        try:
+            return bool(self.root.winfo_viewable())
+        except Exception:
+            return False
+
     def stop(self):
         """Destroys the HUD window."""
         self.running = False

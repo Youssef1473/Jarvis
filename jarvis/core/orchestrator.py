@@ -38,6 +38,9 @@ class JarvisOrchestrator:
         self.hud = JarvisHUD()
         self.heartbeat = JarvisHeartbeat(self, config)
 
+        # Mute state
+        self._is_muted = False
+
         # Recording state for Push-to-Talk (ALT)
         self._is_recording = False
         self._recorded_frames: List[np.ndarray] = []
@@ -58,6 +61,25 @@ class JarvisOrchestrator:
 
         self._running = False
 
+    def is_muted(self) -> bool:
+        """Returns True if voice listening is currently muted."""
+        return self._is_muted
+
+    def toggle_mute(self) -> bool:
+        """Toggles audio sensing mute state. Returns new muted status."""
+        self._is_muted = not self._is_muted
+        if self._is_muted:
+            logger.info("Jarvis audio sensors MUTED.")
+            if self.tts.is_speaking:
+                self.tts.stop()
+            self.wake_detector.stop()
+            self.hud.set_state("idle")
+        else:
+            logger.info("Jarvis audio sensors UNMUTED.")
+            self.wake_detector.start()
+            self.sfx.play_wake()
+        return self._is_muted
+
     def _on_key_activity(self):
         """Barge-in hook: interrupts speech if user starts typing or presses a key."""
         if self.tts.is_speaking:
@@ -72,6 +94,9 @@ class JarvisOrchestrator:
 
     def _on_ptt_press(self):
         """Called immediately when user holds ALT."""
+        if self._is_muted:
+            return
+
         if self.tts.is_speaking:
             self.tts.stop()
 
@@ -124,7 +149,7 @@ class JarvisOrchestrator:
 
     def _on_wake_word(self):
         """Called when openWakeWord detects 'Hey Jarvis'."""
-        if self._is_recording:
+        if self._is_muted or self._is_recording:
             return
 
         if self.tts.is_speaking:
@@ -286,14 +311,24 @@ class JarvisOrchestrator:
         self.hud.set_state("idle")
 
     def run_interactive_loop(self):
-        """Console input loop for text typing alongside voice."""
+        """Main execution loop for voice and console interaction."""
         self.start()
         try:
-            while self._running:
-                user_input = input("[Sir]: ").strip()
-                if not user_input:
-                    continue
-                self.handle_command(user_input)
+            import sys
+            is_interactive = sys.stdin and hasattr(sys.stdin, "isatty") and sys.stdin.isatty()
+            if is_interactive:
+                while self._running:
+                    try:
+                        user_input = input("[Sir]: ").strip()
+                        if not user_input:
+                            continue
+                        self.handle_command(user_input)
+                    except (EOFError, KeyboardInterrupt):
+                        break
+            else:
+                # Running in stealth / background mode without terminal stdin
+                while self._running:
+                    time.sleep(0.5)
         except (KeyboardInterrupt, EOFError):
             print("\n[Jarvis]: Terminating session. Have a good day, Sir.")
             self.stop()
