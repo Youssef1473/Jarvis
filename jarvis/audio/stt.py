@@ -38,6 +38,9 @@ class SpeechToText:
         self.preferred_device = stt_cfg.get("device", "cuda")
         self.compute_type = stt_cfg.get("compute_type", "float16")
         self.language = stt_cfg.get("language", "en")
+        self.beam_size = int(stt_cfg.get("beam_size", 1))
+        self.trim_silence = bool(stt_cfg.get("trim_silence", True))
+        self.initial_prompt = stt_cfg.get("initial_prompt", "Jarvis, Sir, computer, volume, battery, system.")
         self.model = None
         self._init_model()
 
@@ -75,9 +78,33 @@ class SpeechToText:
             logger.error(f"Failed to load faster-whisper on CPU: {e}")
             self.model = None
 
+    @staticmethod
+    def _trim_audio_silence(audio: np.ndarray, sample_rate: int = 16000, threshold: float = 0.012, pad_ms: int = 150) -> np.ndarray:
+        """Trims leading and trailing silence from audio array using RMS energy."""
+        if len(audio) == 0:
+            return audio
+
+        frame_size = int(sample_rate * 0.02)
+        pad_samples = int(sample_rate * (pad_ms / 1000.0))
+        num_frames = len(audio) // frame_size
+        if num_frames == 0:
+            return audio
+
+        frames = audio[:num_frames * frame_size].reshape(num_frames, frame_size)
+        rms = np.sqrt(np.mean(frames ** 2, axis=1))
+        active_indices = np.where(rms > threshold)[0]
+        if len(active_indices) == 0:
+            return audio
+
+        start_frame = max(0, active_indices[0])
+        end_frame = min(num_frames, active_indices[-1] + 1)
+        start_sample = max(0, start_frame * frame_size - pad_samples)
+        end_sample = min(len(audio), end_frame * frame_size + pad_samples)
+        return audio[start_sample:end_sample]
+
     def transcribe(self, audio_data: np.ndarray, sample_rate: int = 16000) -> str:
         """
-        Transcribes audio array with automatic CPU fallback on runtime errors.
+        Transcribes audio array with turbo greedy decoding and automatic CPU fallback.
         """
         if self.model is None:
             logger.error("Whisper model is not initialized.")
@@ -94,13 +121,22 @@ class SpeechToText:
         if max_abs > 1.0:
             audio_data = audio_data / max_abs
 
+        # Energy-based silence pre-trimming
+        audio_to_transcribe = self._trim_audio_silence(audio_data, sample_rate=sample_rate) if self.trim_silence else audio_data
+
         try:
             segments, info = self.model.transcribe(
-                audio_data,
-                beam_size=3,
+                audio_to_transcribe,
+                beam_size=self.beam_size,
                 language=self.language,
+                temperature=0.0,
+                condition_on_previous_text=False,
+                initial_prompt=self.initial_prompt,
                 vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=400),
+                vad_parameters=dict(
+                    min_silence_duration_ms=250,
+                    speech_pad_ms=150,
+                ),
             )
             text = " ".join([segment.text for segment in segments]).strip()
             return text
@@ -110,11 +146,17 @@ class SpeechToText:
                 from faster_whisper import WhisperModel
                 self.model = WhisperModel(self.model_size, device="cpu", compute_type="int8", cpu_threads=6)
                 segments, info = self.model.transcribe(
-                    audio_data,
-                    beam_size=3,
+                    audio_to_transcribe,
+                    beam_size=self.beam_size,
                     language=self.language,
+                    temperature=0.0,
+                    condition_on_previous_text=False,
+                    initial_prompt=self.initial_prompt,
                     vad_filter=True,
-                    vad_parameters=dict(min_silence_duration_ms=400),
+                    vad_parameters=dict(
+                        min_silence_duration_ms=250,
+                        speech_pad_ms=150,
+                    ),
                 )
                 text = " ".join([segment.text for segment in segments]).strip()
                 return text

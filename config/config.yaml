@@ -33,6 +33,8 @@ stt:
   device: "cuda"                  # "cuda" with RTX 3050, or "cpu" fallback
   compute_type: "float16"         # "float16" for GPU, "int8" for CPU
   language: "en"
+  beam_size: 1                    # 1 for turbo real-time (sub-10ms), 3-5 for maximum beam search
+  trim_silence: true              # Pre-trim leading/trailing silence before Whisper
 
 tts:
   engine: "kokoro"                # "kokoro" (movie-grade neural voice), "sapi5", or "edge"
