@@ -280,10 +280,15 @@ Persistent Episodic Memory & Dialogue Recall:
         cleaned = re.sub(r"<[^>]+>", "", cleaned)
         # Remove URLs
         cleaned = re.sub(r"https?://\S+", "", cleaned)
+        # Remove markdown horizontal rules (e.g. ---, ___, ***)
+        cleaned = re.sub(r"[-*_]{2,}", "", cleaned)
         # Remove markdown markers
         cleaned = re.sub(r"[\*_~#]", "", cleaned)
         # Normalize whitespace
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        # Discard if it contains no letters or digits
+        if not re.search(r"[a-zA-Z0-9]", cleaned):
+            return ""
         return cleaned
 
     @staticmethod

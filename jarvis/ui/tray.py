@@ -247,7 +247,7 @@ class SystemTrayApp:
             pystray.MenuItem(f"JARVIS 2.0 (Online)", None, enabled=False),
             pystray.MenuItem(f"Brain: {provider_name} ({model_name})", None, enabled=False),
             pystray.MenuItem(f"Gateway: OmniRoute (Port 20128)", None, enabled=False),
-            pystray.MenuItem(f"Voice: Kokoro-82M Neural (Offline)", None, enabled=False),
+            pystray.MenuItem(f"Voice: Kokoro-82M Neural (Local CUDA)", None, enabled=False),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
                 "Mute Voice Sensors",

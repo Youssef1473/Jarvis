@@ -147,15 +147,22 @@ class TextToSpeech:
 
     def _clean_text_for_speech(self, text: str) -> str:
         """Strips markdown and formatting so speech sounds completely natural."""
+        if not text:
+            return ""
+        # Remove markdown horizontal rules (e.g. ---, ___, ***)
+        cleaned = re.sub(r"[-*_]{2,}", "", text.strip())
         # Remove bold/italic markers
-        cleaned = re.sub(r"[*_~`#]", "", text)
+        cleaned = re.sub(r"[*_~`#]", "", cleaned)
         # Remove bullet points and numbered lists
-        cleaned = re.sub(r"^\s*[-*•]\s*", "", cleaned)
+        cleaned = re.sub(r"^\s*[-*•]+\s*", "", cleaned)
         cleaned = re.sub(r"^\s*\d+\.\s*", "", cleaned)
         # Remove URLs
         cleaned = re.sub(r"https?://\S+", "", cleaned)
         # Normalize whitespace
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        # Must contain at least one pronounceable alphanumeric character
+        if not re.search(r"[a-zA-Z0-9]", cleaned):
+            return ""
         return cleaned
 
     def start_streaming_session(self):
