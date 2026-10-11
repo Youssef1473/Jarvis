@@ -27,6 +27,7 @@ class TextToSpeech:
         self.kokoro_voice = tts_cfg.get("kokoro_voice", "bm_george")
         self.kokoro_speed = float(tts_cfg.get("kokoro_speed", 1.05))
         self.kokoro_lang = tts_cfg.get("kokoro_lang", "en-gb")
+        self.cpu_threads = int(tts_cfg.get("cpu_threads", 4))
         base_dir = config.get("_base_dir", os.getcwd())
         self.kokoro_model_path = os.path.join(base_dir, tts_cfg.get("kokoro_model", "data/models/kokoro/kokoro-v1.0.onnx"))
         self.kokoro_voices_path = os.path.join(base_dir, tts_cfg.get("kokoro_voices", "data/models/kokoro/voices-v1.0.bin"))
@@ -61,7 +62,7 @@ class TextToSpeech:
         self._init_sapi()
 
     def _init_kokoro(self):
-        """Initializes Kokoro neural engine."""
+        """Initializes Kokoro neural engine with constrained CPU threading to prevent CPU spikes."""
         try:
             # Silence phonemizer stderr mismatch warnings
             try:
@@ -72,10 +73,16 @@ class TextToSpeech:
                 pass
 
             if os.path.exists(self.kokoro_model_path) and os.path.exists(self.kokoro_voices_path):
+                import onnxruntime as rt
                 from kokoro_onnx import Kokoro
                 t0 = time.time()
-                self._kokoro = Kokoro(self.kokoro_model_path, self.kokoro_voices_path)
-                logger.info(f"Kokoro-82M neural engine loaded ({self.kokoro_voice}) in {time.time()-t0:.2f}s.")
+                opts = rt.SessionOptions()
+                opts.intra_op_num_threads = self.cpu_threads
+                opts.inter_op_num_threads = 2
+                opts.graph_optimization_level = rt.GraphOptimizationLevel.ORT_ENABLE_ALL
+                sess = rt.InferenceSession(self.kokoro_model_path, sess_options=opts, providers=["CPUExecutionProvider"])
+                self._kokoro = Kokoro.from_session(sess, self.kokoro_voices_path)
+                logger.info(f"Kokoro-82M neural engine loaded ({self.kokoro_voice}) with {self.cpu_threads} CPU threads in {time.time()-t0:.2f}s.")
             else:
                 logger.warning("Kokoro model files not found. Defaulting to SAPI5.")
                 self.engine = "sapi5"
@@ -200,9 +207,13 @@ class TextToSpeech:
 
                     samples, sr = item
                     try:
+                        duration = len(samples) / float(sr)
                         sd.play(samples, sr)
+                        # Sleep bulk duration to yield CPU to Windows audio pipeline (audiodg)
+                        if duration > 0.15:
+                            time.sleep(duration * 0.85)
                         while sd.get_stream().active and not self._stop_event.is_set():
-                            time.sleep(0.02)
+                            time.sleep(0.04)
                     except Exception as e:
                         logger.error(f"Playback error: {e}")
 
