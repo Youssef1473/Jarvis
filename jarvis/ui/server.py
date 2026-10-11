@@ -42,6 +42,7 @@ class JarvisUIService:
             Route("/", endpoint=self._handle_index, methods=["GET"]),
             Route("/api/status", endpoint=self._handle_status, methods=["GET"]),
             Route("/api/command", endpoint=self._handle_command, methods=["POST"]),
+            Route("/api/action", endpoint=self._handle_action, methods=["POST"]),
             Route("/api/mute", endpoint=self._handle_mute, methods=["POST"]),
             WebSocketRoute("/ws", endpoint=self._handle_websocket),
         ]
@@ -73,6 +74,28 @@ class JarvisUIService:
             return JSONResponse({"status": "queued", "command": cmd_text})
 
         return JSONResponse({"error": "Orchestrator not connected"}, status_code=503)
+
+    async def _handle_action(self, request):
+        try:
+            body = await request.json()
+            action = body.get("action", "")
+        except Exception:
+            action = ""
+
+        if action == "set_volume":
+            from jarvis.skills.os_control import adjust_volume
+            percent = int(body.get("percent", 50))
+            adjust_volume(action="set", percent=percent)
+            self.broadcast_message("jarvis", f"Master volume set to {percent}%, Sir.")
+            return JSONResponse({"status": "success", "percent": percent})
+
+        elif action == "toggle_mute":
+            if self.orchestrator:
+                is_muted = self.orchestrator.toggle_mute()
+                self.broadcast_telemetry({"is_muted": is_muted})
+                return JSONResponse({"is_muted": is_muted})
+
+        return JSONResponse({"error": f"Unknown action '{action}'"}, status_code=400)
 
     async def _handle_mute(self, request):
         if self.orchestrator:
@@ -110,6 +133,11 @@ class JarvisUIService:
                         if action == "toggle_mute" and self.orchestrator:
                             is_muted = self.orchestrator.toggle_mute()
                             self.broadcast_telemetry({"is_muted": is_muted})
+                        elif action == "set_volume":
+                            from jarvis.skills.os_control import adjust_volume
+                            percent = int(payload.get("percent", 50))
+                            adjust_volume(action="set", percent=percent)
+                            self.broadcast_message("jarvis", f"Master volume set to {percent}%, Sir.")
 
                 except Exception as e:
                     logger.warning(f"Error handling HUD WebSocket message: {e}")

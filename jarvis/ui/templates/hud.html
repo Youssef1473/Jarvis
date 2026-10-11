@@ -611,7 +611,7 @@
         <button class="btn-action" onclick="sendQuickCommand('System status check')">
           <span>⚡</span> STATUS CHECK
         </button>
-        <button class="btn-action" onclick="sendQuickCommand('Set volume to 50 percent')">
+        <button class="btn-action" onclick="setVolume(50)">
           <span>🔊</span> VOL 50%
         </button>
       </div>
@@ -990,6 +990,18 @@
     function sendQuickCommand(cmd) {
       document.getElementById('cmdInput').value = cmd;
       transmitCommand();
+    }
+
+    function setVolume(pct) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'action', action: 'set_volume', percent: pct }));
+      } else {
+        fetch('/api/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'set_volume', percent: pct })
+        });
+      }
     }
 
     function toggleMute() {

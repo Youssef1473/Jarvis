@@ -35,6 +35,19 @@ def test_ui_server_lifecycle():
             assert "gpu" in data
             assert "model" in data
 
+        # 3. Test direct action endpoint (instant hardware volume execution)
+        action_data = json.dumps({"action": "set_volume", "percent": 50}).encode("utf-8")
+        req_action = urllib.request.Request(
+            f"http://127.0.0.1:{test_port}/api/action",
+            data=action_data,
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req_action, timeout=3.0) as resp:
+            assert resp.status == 200
+            res = json.loads(resp.read().decode("utf-8"))
+            assert res.get("status") == "success"
+            assert res.get("percent") == 50
+
     finally:
         service.stop()
         time.sleep(0.3)
