@@ -157,6 +157,14 @@ class SystemTrayApp:
         except Exception:
             pass
 
+    def _open_omniroute_dashboard(self, icon, item):
+        """Opens the OmniRoute AI Gateway Web Dashboard."""
+        try:
+            import webbrowser
+            webbrowser.open("http://localhost:20128/dashboard")
+        except Exception:
+            pass
+
     def _view_memory(self, icon, item):
         """Presents a sleek, dark-themed Tkinter viewer displaying stored facts and preferences."""
         def _show_gui():
@@ -227,6 +235,7 @@ class SystemTrayApp:
         menu_items = [
             pystray.MenuItem(f"JARVIS 2.0 (Online)", None, enabled=False),
             pystray.MenuItem(f"Brain: {provider_name} ({model_name})", None, enabled=False),
+            pystray.MenuItem(f"Gateway: OmniRoute (Port 20128)", None, enabled=False),
             pystray.MenuItem(f"Voice: Kokoro-82M Neural (Offline)", None, enabled=False),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
@@ -245,6 +254,7 @@ class SystemTrayApp:
                 checked=lambda item: not is_console_visible()
             ),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Open OmniRoute Gateway Dashboard", self._open_omniroute_dashboard),
             pystray.MenuItem("Deliver Morning Standup Briefing", self._trigger_morning_briefing),
             pystray.MenuItem("View Memory Knowledge Base", self._view_memory),
             pystray.MenuItem("Open Project Workspace", self._open_project_folder),

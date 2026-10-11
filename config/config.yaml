@@ -3,7 +3,9 @@
 # ==============================================================================
 
 llm:
-  provider: "groq"                # Primary LLM provider: "groq" (ultra-fast LPU), "gemini", or "grok"
+  provider: "omniroute"           # Primary LLM provider: "omniroute" (gateway to 1200+ models), "groq" (ultra-fast LPU), "gemini", or "grok"
+  omniroute_base_url: "http://127.0.0.1:20128/v1" # Local OmniRoute proxy endpoint
+  omniroute_model: "groq/qwen/qwen3.8-27b"        # Active model in OmniRoute (e.g. groq/qwen/qwen3.8-27b, deepseek, claude, gpt-4o)
   groq_model: "qwen/qwen3.8-27b"  # Groq Cloud model (instant 300ms inference)
   grok_model: "grok-2-latest"     # xAI Grok model ("grok-2-latest", "grok-2-vision-1212")
   model: "gemini-3.1-flash-lite"  # Google Gemini model

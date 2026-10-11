@@ -69,10 +69,10 @@ Capabilities:
         self.safety = safety_gate
         self.temperature = config.get("llm", {}).get("temperature", 0.6)
         
-        # Provider selection: "groq", "grok", or "gemini"
-        self.provider = config.get("llm", {}).get("provider", "groq").lower()
+        # Provider selection: "omniroute", "groq", "grok", or "gemini"
+        self.provider = config.get("llm", {}).get("provider", "omniroute").lower()
 
-        # OpenAI-compatible (Groq / xAI) state
+        # OpenAI-compatible (OmniRoute / Groq / xAI) state
         self.openai_client = None
         self.openai_model = ""
         self.openai_messages: List[Dict[str, Any]] = []
@@ -86,7 +86,7 @@ Capabilities:
         self.gemini_chat = None
 
         # Initialize requested provider
-        if self.provider in ("groq", "grok"):
+        if self.provider in ("omniroute", "groq", "grok"):
             if not self._init_openai_compatible():
                 self._init_gemini()
         else:
@@ -103,15 +103,38 @@ Capabilities:
         return prompt
 
     def _init_openai_compatible(self) -> bool:
-        """Initializes client targeting Groq Cloud or xAI Grok."""
+        """Initializes client targeting OmniRoute, Groq Cloud, or xAI Grok."""
+        omniroute_key = os.getenv("OMNIROUTE_API_KEY", "sk-omniroute-jarvis-core-2026").strip()
         groq_key = os.getenv("GROQ_API_KEY", "").strip()
         xai_key = os.getenv("XAI_API_KEY", "").strip() or os.getenv("GROK_API_KEY", "").strip()
 
         api_key = ""
         base_url = ""
 
-        # Auto-detect Groq vs xAI based on provider configuration or key prefixes
-        if self.provider == "groq" or (groq_key and groq_key.startswith("gsk_")):
+        # Auto-detect OmniRoute vs Groq vs xAI based on provider configuration or key prefixes
+        if self.provider == "omniroute":
+            base_url = self.config.get("llm", {}).get("omniroute_base_url", "http://127.0.0.1:20128/v1")
+            api_key = omniroute_key or "sk-omniroute-jarvis-core-2026"
+            default_model = "groq/qwen/qwen3.8-27b"
+            self.openai_model = self.config.get("llm", {}).get("omniroute_model", default_model)
+            # Lightweight health check: probe if OmniRoute is reachable
+            try:
+                import urllib.request
+                req = urllib.request.Request(f"{base_url.rstrip('/')}/models", headers={"Authorization": f"Bearer {api_key}"})
+                with urllib.request.urlopen(req, timeout=1.5):
+                    pass
+                logger.info(f"Jarvis OmniRoute link verified at {base_url}")
+            except Exception as e:
+                logger.warning(f"OmniRoute gateway at {base_url} is not responding ({e}). Seamlessly falling back to Groq Cloud...")
+                if groq_key:
+                    self.provider = "groq"
+                    api_key = groq_key
+                    base_url = "https://api.groq.com/openai/v1"
+                    self.openai_model = self.config.get("llm", {}).get("groq_model", "qwen/qwen3.8-27b")
+                else:
+                    self.provider = "gemini"
+                    return False
+        elif self.provider == "groq" or (groq_key and groq_key.startswith("gsk_")):
             api_key = groq_key
             base_url = "https://api.groq.com/openai/v1"
             self.provider = "groq"
@@ -130,7 +153,7 @@ Capabilities:
             self.openai_model = "qwen/qwen3.8-27b"
 
         if not api_key:
-            logger.info("No Groq or Grok API key found. Defaulting to Gemini.")
+            logger.info("No valid API key found for requested provider. Defaulting to Gemini.")
             self.provider = "gemini"
             return False
 
@@ -189,7 +212,7 @@ Capabilities:
             logger.info("Screen vision requested on Groq. Routing to Gemini Multimodal Vision...")
             return self._process_gemini_query(user_text, sentence_callback)
 
-        if self.provider in ("groq", "grok") and self.openai_client:
+        if self.provider in ("omniroute", "groq", "grok") and self.openai_client:
             return self._process_openai_compatible_query(user_text, sentence_callback)
         return self._process_gemini_query(user_text, sentence_callback)
 
