@@ -71,9 +71,9 @@ def list_directory(folder_path: str = ".") -> str:
 
 @SkillRegistry.register(
     name="read_file",
-    description="Reads lines from a file with 1-indexed line numbers. Specify start_line and line_count to inspect specific code sections."
+    description="Reads lines from a file with 1-indexed line numbers. By default reads up to 500 lines (covering entire modules). Specify start_line and line_count to inspect specific code sections."
 )
-def read_file(file_path: str, start_line: int = 1, line_count: int = 100) -> str:
+def read_file(file_path: str, start_line: int = 1, line_count: int = 500) -> str:
     """Reads lines from a file with line numbers."""
     target = _resolve_workspace_path(file_path)
     if not target.exists() or not target.is_file():
@@ -92,6 +92,36 @@ def read_file(file_path: str, start_line: int = 1, line_count: int = 100) -> str
         return header + "\n" + "\n".join(formatted)
     except Exception as e:
         return f"Error reading file: {e}"
+
+
+@SkillRegistry.register(
+    name="read_multiple_files",
+    description="Reads multiple files in a single fast call to save time and round-trips. Pass file paths as a comma-separated string (e.g., 'jarvis/audio/tts.py, jarvis/audio/stt.py')."
+)
+def read_multiple_files(file_paths: str, max_lines_per_file: int = 350) -> str:
+    """Reads several files in batch to minimize latency and round-trips."""
+    paths = [p.strip() for p in file_paths.split(",") if p.strip()]
+    if not paths:
+        return "No file paths provided."
+
+    sections = []
+    for fp in paths[:12]:
+        target = _resolve_workspace_path(fp)
+        if not target.exists() or not target.is_file():
+            sections.append(f"=== {fp} ===\n[File does not exist: {target}]")
+            continue
+        try:
+            with open(target, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+            total = len(lines)
+            shown = lines[:max_lines_per_file]
+            formatted = [f"{i + 1:>4}: {line.rstrip()}" for i, line in enumerate(shown)]
+            suffix = f"\n... [{total - max_lines_per_file} more lines truncated]" if total > max_lines_per_file else ""
+            sections.append(f"=== {target.name} ({len(shown)} of {total} lines) ===\n" + "\n".join(formatted) + suffix)
+        except Exception as e:
+            sections.append(f"=== {fp} ===\n[Error reading file: {e}]")
+
+    return "\n\n".join(sections)
 
 
 @SkillRegistry.register(

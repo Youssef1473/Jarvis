@@ -488,7 +488,7 @@ Persistent Episodic Memory & Dialogue Recall:
 
                 had_tool_call = False
                 tool_iterations = 0
-                max_tool_iterations = 3
+                max_tool_iterations = 10
 
                 # Step 2: Handle tool calls if invoked
                 while tool_calls_map and tool_iterations < max_tool_iterations:

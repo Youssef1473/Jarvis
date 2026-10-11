@@ -1,5 +1,6 @@
 """Operating system and desktop automation tools for Windows."""
 import os
+import re
 import subprocess
 import pyautogui
 from jarvis.skills.base import SkillRegistry

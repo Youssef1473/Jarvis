@@ -20,6 +20,7 @@ def test_dev_skills():
     assert "search_codebase" in tools
     assert "run_project_tests" in tools
     assert "git_status" in tools
+    assert "read_multiple_files" in tools
 
     print("\n1. Testing list_directory...")
     dir_res = SkillRegistry.execute("list_directory", folder_path=".")
@@ -31,6 +32,12 @@ def test_dev_skills():
     print("Read excerpt:\n" + read_res)
     assert "run.py - Lines 1 to 8" in read_res
     assert "1:" in read_res
+
+    print("\n2b. Testing read_multiple_files (batch)...")
+    batch_res = SkillRegistry.execute("read_multiple_files", file_paths="run.py, jarvis/audio/stt.py", max_lines_per_file=10)
+    print("Batch excerpt:\n" + "\n".join(batch_res.splitlines()[:10]))
+    assert "=== run.py" in batch_res
+    assert "=== stt.py" in batch_res
 
     print("\n3. Testing search_codebase...")
     search_res = SkillRegistry.execute("search_codebase", query="Kokoro", folder_path="jarvis", file_pattern="*.py")
