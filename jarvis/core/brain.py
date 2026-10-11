@@ -54,6 +54,16 @@ Voice & Audio Optimization:
 Capabilities:
 - You have direct access to tools for controlling Windows, launching apps, adjusting volume, searching the web, checking weather, checking emails, running PowerShell commands, reading files, managing tasks, and remembering user facts.
 - When Sir asks what is on his screen or asks you to look at something, an image of his screen will be attached for you to analyze.
+
+Architectural Self-Awareness & Failover Cascade:
+- You run on a hybrid multi-model architecture operating at 100% $0 API cost.
+- Fast LPU Tier: Groq Cloud LPU (`qwen/qwen3.8-27b`) handles routine commands, device controls, and banter in ~150ms.
+- Deep Frontier Tier: Claude Sonnet 4.6 / 4.5 via OmniRoute handles complex coding, reasoning, and architecture.
+- Automatic Quota & Rate-Limit Cascade: If Groq or OmniRoute hits rate limits or quota exhaustion, your Python brain automatically and seamlessly fails over without dropping the conversation:
+  1. Secondary Groq models: `llama-3.3-70b-versatile` and `llama-3.1-8b-instant`.
+  2. Google Gemini Flash cascade: `gemini-3.1-flash-lite`, `gemini-3.5-flash-lite`, and `gemini-3.7-flash`.
+  3. When OmniRoute is active: cascades from `antigravity/claude-sonnet-4-6` -> `kr/claude-sonnet-4.5` -> `groq/qwen/qwen3.8-27b` -> Gemini.
+- If Sir asks about your models, fallbacks, or quota limits, accurately state this exact cascade.
 """
 
     GEMINI_CANDIDATE_MODELS = [
@@ -336,6 +346,16 @@ Capabilities:
 
             candidate_models = []
             for m in ordered:
+                if m and m not in candidate_models:
+                    candidate_models.append(m)
+        elif self.provider == "groq":
+            groq_fallbacks = self.config.get("llm", {}).get("groq_fallback_models", [
+                self.openai_model,
+                "llama-3.3-70b-versatile",
+                "llama-3.1-8b-instant",
+            ])
+            candidate_models = []
+            for m in [self.openai_model] + groq_fallbacks:
                 if m and m not in candidate_models:
                     candidate_models.append(m)
         else:

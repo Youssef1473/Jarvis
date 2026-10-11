@@ -14,6 +14,10 @@ llm:
     - "kr/claude-sonnet-4.5"          # Tier 2: Claude Sonnet (Kiro)
     - "groq/qwen/qwen3.8-27b"         # Tier 3: Qwen 3.8 (Groq Cloud LPU)
   groq_model: "qwen/qwen3.8-27b"  # Groq Cloud model (instant 300ms inference)
+  groq_fallback_models:           # Auto-switching cascade within Groq:
+    - "qwen/qwen3.8-27b"
+    - "llama-3.3-70b-versatile"
+    - "llama-3.1-8b-instant"
   grok_model: "grok-2-latest"     # xAI Grok model ("grok-2-latest", "grok-2-vision-1212")
   model: "gemini-3.1-flash-lite"  # Google Gemini model (Ultimate fallback)
   temperature: 0.3
