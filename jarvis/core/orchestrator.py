@@ -348,8 +348,9 @@ class JarvisOrchestrator:
                 except Exception:
                     pass
 
-        logger.info("Starting Jarvis HUD Desktop Overlay...")
-        self.hud.start()
+        if self.config.get("hud", {}).get("desktop_overlay", False):
+            logger.info("Starting Jarvis HUD Desktop Overlay...")
+            self.hud.start()
 
         logger.info("Starting Jarvis Hotkey Listener (Hold ALT to talk)...")
         self.hotkey_listener.start()

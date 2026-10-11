@@ -67,10 +67,7 @@ class JarvisUIService:
         if not cmd_text:
             return JSONResponse({"error": "Empty command"}, status_code=400)
 
-        # Broadcast user prompt to HUD
-        self.broadcast_message("user", cmd_text)
-
-        # Dispatch command asynchronously to orchestrator
+        # Dispatch command asynchronously to orchestrator (orchestrator broadcasts message to all clients)
         if self.orchestrator:
             threading.Thread(target=self.orchestrator.handle_command, args=(cmd_text,), daemon=True).start()
             return JSONResponse({"status": "queued", "command": cmd_text})
@@ -106,7 +103,6 @@ class JarvisUIService:
                     if msg_type == "command":
                         cmd = payload.get("text", "").strip()
                         if cmd and self.orchestrator:
-                            self.broadcast_message("user", cmd)
                             threading.Thread(target=self.orchestrator.handle_command, args=(cmd,), daemon=True).start()
 
                     elif msg_type == "action":

@@ -131,7 +131,10 @@ class SystemTrayApp:
 
     def _toggle_hud(self, icon, item):
         """Toggles the floating Arc-Reactor holographic overlay."""
-        self.orchestrator.hud.toggle_visibility()
+        if not getattr(self.orchestrator.hud, "running", False):
+            self.orchestrator.hud.start()
+        else:
+            self.orchestrator.hud.toggle_visibility()
         icon.update_menu()
 
     def _toggle_console(self, icon, item):

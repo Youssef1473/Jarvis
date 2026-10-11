@@ -447,6 +447,55 @@
     ::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.2); }
     ::-webkit-scrollbar-thumb { background: rgba(0, 240, 255, 0.3); border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: var(--holo-cyan); }
+
+    /* Responsive Layout for Narrow, Split, or Docked Windows */
+    @media (max-width: 1024px) {
+      body {
+        overflow-y: auto;
+        height: auto;
+        min-height: 100vh;
+      }
+      main {
+        display: flex;
+        flex-direction: column;
+        height: auto;
+        padding: 12px;
+        gap: 14px;
+        overflow-y: visible;
+      }
+      .center-stage {
+        order: 1;
+        min-height: 280px;
+      }
+      #reactorCanvas {
+        max-width: 280px;
+        max-height: 280px;
+      }
+      .hud-card {
+        order: 2;
+        min-height: 320px;
+      }
+      .command-deck {
+        order: 3;
+        flex-direction: column;
+        align-items: stretch;
+        padding: 12px;
+        gap: 10px;
+        height: auto;
+      }
+      .quick-actions {
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+      .btn-action {
+        flex: 1 1 45%;
+        justify-content: center;
+        padding: 10px 12px;
+      }
+      .input-wrapper {
+        width: 100%;
+      }
+    }
   </style>
 </head>
 <body>
@@ -869,7 +918,22 @@
     }
 
     let messageCount = 1;
+    let lastMsgKey = "";
+    let lastMsgTime = 0;
+
     function appendChatMessage(sender, text, timeStr) {
+      if (!text || !text.trim()) return;
+
+      // Deduplicate identical message from same sender within 2.0 seconds
+      const cleanText = text.trim();
+      const key = `${sender.toLowerCase()}:${cleanText}`;
+      const nowMs = Date.now();
+      if (key === lastMsgKey && (nowMs - lastMsgTime) < 2000) {
+        return;
+      }
+      lastMsgKey = key;
+      lastMsgTime = nowMs;
+
       const container = document.getElementById('chatContainer');
       const bubble = document.createElement('div');
       bubble.className = `chat-bubble chat-${sender.toLowerCase()}`;
@@ -883,7 +947,7 @@
           <span>${authorName}</span>
           <span>${now}</span>
         </div>
-        <div class="bubble-text">${escapeHtml(text)}</div>
+        <div class="bubble-text">${escapeHtml(cleanText)}</div>
       `;
 
       container.appendChild(bubble);
@@ -907,7 +971,6 @@
       const query = input.value.trim();
       if (!query) return;
 
-      appendChatMessage('user', query);
       input.value = '';
 
       if (ws && ws.readyState === WebSocket.OPEN) {
@@ -920,9 +983,6 @@
           body: JSON.stringify({ command: query })
         })
         .then(res => res.json())
-        .then(data => {
-          if (data.reply) appendChatMessage('jarvis', data.reply);
-        })
         .catch(err => console.error("REST transmit error:", err));
       }
     }
