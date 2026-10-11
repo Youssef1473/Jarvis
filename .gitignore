@@ -18,7 +18,9 @@ data/test_memory.db
 # Models cache
 *.onnx
 *.tflite
+*.bin
 models/
+data/models/
 .cache/
 
 # Audio scratch

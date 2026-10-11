@@ -3,7 +3,7 @@
 # ==============================================================================
 
 llm:
-  model: "gemini-3.5-flash"
+  model: "gemini-3.1-flash-lite"
   temperature: 0.6
   max_output_tokens: 1024
 
@@ -22,13 +22,12 @@ stt:
   language: "en"
 
 tts:
-  engine: "sapi5"                 # "sapi5" (local, zero-latency, offline) or "edge"
-  sapi_voice: "David"             # "David" (male) or "Zira" (female)
-  sapi_rate: 1                    # SAPI speech rate (-10 to +10)
-  voice: "en-GB-RyanNeural"       # Edge-TTS neural voice (used when engine is "edge")
-  rate: "+10%"
-  volume: "+0%"
-  pitch: "+0Hz"
+  engine: "kokoro"                # "kokoro" (movie-grade neural voice), "sapi5", or "edge"
+  kokoro_voice: "bm_george"       # "bm_george", "bm_lewis", "bm_daniel" (British JARVIS)
+  kokoro_speed: 1.05              # Speech speed multiplier (0.8 - 1.5)
+  kokoro_lang: "en-gb"            # "en-gb" (British English)
+  sapi_voice: "David"             # SAPI5 fallback voice
+  sapi_rate: 1                    # SAPI5 fallback speech rate
 
 sounds:
   enabled: true

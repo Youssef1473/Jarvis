@@ -15,6 +15,7 @@ import jarvis.skills.productivity
 import jarvis.skills.calendar_manager
 import jarvis.skills.browser_agent
 import jarvis.skills.email_manager
+import jarvis.skills.screen_vision
 from jarvis.vision.screen_capture import ScreenPerception
 from jarvis.core.memory import MemoryManager
 from jarvis.core.safety import SafetyGate
@@ -44,10 +45,10 @@ Capabilities:
 """
 
     CANDIDATE_MODELS = [
-        "gemini-3.8-flash",
+        "gemini-3.1-flash-lite",
         "gemini-3.5-flash",
         "gemini-flash-latest",
-        "gemini-3.1-flash-lite",
+        "gemini-3.8-flash",
     ]
 
     def __init__(self, config: Dict[str, Any], memory_manager: MemoryManager, safety_gate: SafetyGate):

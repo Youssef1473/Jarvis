@@ -1,5 +1,6 @@
 """Screen capture and visual perception for Jarvis 2.0."""
 import io
+import sys
 import logging
 from typing import Optional
 from PIL import Image, ImageGrab
@@ -7,12 +8,36 @@ from PIL import Image, ImageGrab
 logger = logging.getLogger("Jarvis.Vision")
 
 
+def _ensure_desktop_access():
+    """Ensures thread is attached to the interactive Windows desktop."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            # Enable DPI awareness (Per Monitor v2)
+            try:
+                ctypes.windll.shcore.SetProcessDpiAwareness(2)
+            except Exception:
+                try:
+                    user32.SetProcessDPIAware()
+                except Exception:
+                    pass
+
+            # Ensure thread desktop is attached to 'Default'
+            hdesk = user32.OpenDesktopW("Default", 0, False, 0x01FF)
+            if hdesk:
+                user32.SetThreadDesktop(hdesk)
+        except Exception as e:
+            logger.debug(f"Desktop switch notice: {e}")
+
+
 class ScreenPerception:
     """Captures desktop screenshots and prepares images for Gemini Vision analysis."""
 
     @staticmethod
     def capture_screen(max_width: int = 1600) -> Optional[Image.Image]:
-        """Captures full screen and scales down proportionally for fast LLM inference."""
+        """Captures active screen and scales down proportionally for fast LLM inference."""
+        _ensure_desktop_access()
         try:
             screenshot = ImageGrab.grab(all_screens=False)
             # Scale down if width exceeds max_width to keep payload small and fast
