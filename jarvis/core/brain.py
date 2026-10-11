@@ -44,7 +44,7 @@ Capabilities:
         self.config = config
         self.memory = memory_manager
         self.safety = safety_gate
-        self.model_name = config.get("llm", {}).get("model", "gemini-2.0-flash")
+        self.model_name = config.get("llm", {}).get("model", "gemini-3.8-flash")
         self.temperature = config.get("llm", {}).get("temperature", 0.6)
         
         api_key = os.getenv("GEMINI_API_KEY", "").strip()
