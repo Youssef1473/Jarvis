@@ -34,6 +34,7 @@ import jarvis.skills.notes
 import jarvis.skills.system_watchdog
 import jarvis.skills.deep_research
 import jarvis.skills.document_ingest
+import jarvis.skills.self_evolution
 from jarvis.vision.screen_capture import ScreenPerception
 from jarvis.core.memory import MemoryManager
 from jarvis.core.safety import SafetyGate
@@ -95,6 +96,12 @@ Calendar & Schedule Management:
 
 Universal Document & PDF Ingestion:
 - When Sir mentions an uploaded, imported, or staged PDF/document, or provides context for a document (e.g., "that PDF is my class schedule, put it on my calendar", "the document I imported is an invoice", "process that PDF"), you MUST invoke `process_staged_document` passing Sir's instructions in `user_context` to parse and register the data into the database.
+
+Autonomous Self-Building & Dynamic Feature Creation:
+- You possess the capability to build, program, and expand your own skills and features dynamically at runtime.
+- When Sir asks you to add a feature to yourself, create a new command, teach yourself an action, or do something where the command is not currently present (e.g. "add a feature to open a Brave tab", "create a command to check disk space", "teach yourself how to do X", "add this feature to yourself"), you MUST invoke `create_or_update_custom_skill`.
+- Write clean, self-contained Python code defining functions decorated with `@SkillRegistry.register(name='...', description='...')`.
+- The tool will be immediately hot-reloaded into your running brain without restarting, allowing you to invoke the newly created skill and complete Sir's request in the same session.
 """
 
     GEMINI_CANDIDATE_MODELS = [
@@ -141,9 +148,13 @@ Universal Document & PDF Ingestion:
         "execute_powershell",
         "run_project_tests",
         "web_search",
+        "create_or_update_custom_skill",
+        "list_custom_skills",
+        "delete_custom_skill",
     }
 
     TOOL_INTENT_GROUPS = (
+        (("add feature", "create feature", "build yourself", "create a skill", "add a skill", "create command", "add command", "build a command", "create tool", "add tool", "new tool", "new skill", "evolve", "self build", "teach yourself", "learn to", "brave tab", "open a brave", "custom skill"), {"create_or_update_custom_skill", "list_custom_skills", "execute_powershell", "read_file", "write_file", "patch_file"}),
         (("volume", "mute", "unmute", "sound", "louder", "quieter"), {"adjust_volume"}),
         (("play", "pause", "skip", "next song", "previous song", "media", "spotify"), {"control_media"}),
         (("show desktop", "minimize all"), {"minimize_all_windows"}),
@@ -1594,56 +1605,87 @@ Universal Document & PDF Ingestion:
         else:
             target_model = self.antigravity_model
 
-        # Stream directly if no tools needed
-        stream_cb = sentence_callback if not has_tools else None
-        res = self.antigravity_bridge.generate_response(
-            prompt=prompt,
-            model=target_model,
-            system_instruction=system_instruction,
-            sentence_callback=stream_cb,
-            timeout=90.0,
-        )
+        # Multi-turn tool execution loop
+        max_tool_iterations = 12 if self.active_task_mode == "code" else 4
+        iterations = 0
+        current_prompt = prompt
+        last_tool_result = ""
+        had_tool_call = False
+        reply = ""
 
-        reply_text = (res.get("response") or "").strip()
-        self.last_latencies["antigravity"] = float(res.get("duration_seconds", 0.0)) * 1000.0
+        while iterations < max_tool_iterations:
+            iterations += 1
+            # Only stream to TTS if this is a direct conversational turn with no tools involved
+            stream_cb = sentence_callback if (not has_tools and iterations == 1) else None
+            res = self.antigravity_bridge.generate_response(
+                prompt=current_prompt,
+                model=target_model,
+                system_instruction=system_instruction,
+                sentence_callback=stream_cb,
+                timeout=90.0,
+            )
+            reply_text = (res.get("response") or "").strip()
+            self.last_latencies["antigravity"] = float(res.get("duration_seconds", 0.0)) * 1000.0
 
-        # Check for tool call in output
-        tool_call_match = re.search(
-            r'\{[\s\r\n]*"tool"[\s\r\n]*:[\s\r\n]*"([^"]+)"[\s\r\n]*,[\s\r\n]*"arguments"[\s\r\n]*:[\s\r\n]*(\{.*?\})[\s\r\n]*\}',
-            reply_text,
-            re.DOTALL
-        )
-        if tool_call_match:
+            # Check for tool call in output
+            tool_call_match = re.search(
+                r'\{[\s\r\n]*"tool"[\s\r\n]*:[\s\r\n]*"([^"]+)"[\s\r\n]*,[\s\r\n]*"arguments"[\s\r\n]*:[\s\r\n]*(\{.*?\})[\s\r\n]*\}',
+                reply_text,
+                re.DOTALL
+            )
+            if not tool_call_match:
+                # No further tool calls: we have reached the final answer!
+                reply = reply_text
+                break
+
+            had_tool_call = True
             fn_name = tool_call_match.group(1).strip()
             try:
                 fn_args = json.loads(tool_call_match.group(2))
             except Exception:
                 fn_args = {}
 
-            logger.info("ANTIGRAVITY Tool call: %s(%s)", fn_name, fn_args)
+            logger.info("ANTIGRAVITY Tool call [%d/%d]: %s(%s)", iterations, max_tool_iterations, fn_name, fn_args)
             is_safe, warning = self.safety.check_tool_call(fn_name, fn_args)
             if not is_safe:
                 tool_result = f"Action halted: {warning}"
             else:
                 tool_result = SkillRegistry.execute(fn_name, **fn_args)
-            logger.info("ANTIGRAVITY Tool result: %s", tool_result)
+            last_tool_result = str(tool_result)
+            logger.info("ANTIGRAVITY Tool result: %s", last_tool_result[:250])
 
-            # Synthesize final spoken response with tool result
-            followup_prompt = (
-                f"Sir asked: {user_text}\n"
-                f"You called tool '{fn_name}', which produced the following result:\n{tool_result}\n\n"
-                f"Deliver a clear, concise final spoken update to Sir as JARVIS."
+            # Refresh available tools in case a new dynamic skill was hot-registered!
+            if fn_name == "create_or_update_custom_skill":
+                tools = SkillRegistry.get_openai_tools()
+                tool_signatures = []
+                for t in tools:
+                    fn = t.get("function", {})
+                    params = fn.get("parameters", {}).get("properties", {})
+                    tool_signatures.append(f"- {fn.get('name')}: {fn.get('description')} (params: {list(params.keys())})")
+                tools_block = "\n\n[System Update]: Your newly created skill has been hot-registered into the live runtime! Available tools now include:\n" + "\n".join(tool_signatures) + "\n\n"
+            else:
+                tools_block = ""
+
+            # Prepare next turn in the conversation
+            current_prompt += (
+                f"\n\n[Previous Action Executed]: {fn_name}\n"
+                f"[Action Output]:\n{last_tool_result}\n"
+                f"{tools_block}"
+                f"Next instruction: If additional tool calls are needed (e.g. to execute or test the newly created skill), output the next JSON tool call: "
+                f'{{"tool": "<name>", "arguments": {{<args>}}}}.\n'
+                f"If the requested task is complete, deliver your clear, concise final verbal response to Sir as JARVIS."
             )
-            followup_res = self.antigravity_bridge.generate_response(
-                prompt=followup_prompt,
-                model=target_model,
-                system_instruction=system_instruction,
-                sentence_callback=sentence_callback,
-                timeout=60.0,
-            )
-            reply = (followup_res.get("response") or str(tool_result)).strip()
-        else:
-            reply = reply_text
+
+        if not reply:
+            reply = reply_text or (f"Action completed, Sir: {last_tool_result}" if had_tool_call else "At your service, Sir.")
+
+        # Deliver spoken response if sentence_callback provided and we had tool calls (which held streaming)
+        if sentence_callback and had_tool_call and reply:
+            sentences = [s.strip() for s in re.split(r"(?<!\d)(?<=[.!?])(?!\d)\s+", reply) if s.strip()]
+            for s in sentences:
+                clean_s = self._clean_speech_clause(s)
+                if clean_s:
+                    sentence_callback(clean_s)
 
         self.memory.log_interaction(user_text, reply, None)
         self.memory.auto_learn_from_interaction(user_text, reply, provider=self.provider)
