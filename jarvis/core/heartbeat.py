@@ -43,8 +43,13 @@ class JarvisHeartbeat:
         self._running = False
         self._thread: Optional[threading.Thread] = None
 
-        # Alert deduplication sets
-        self._alerted_event_ids: Set[int] = set()
+        # Alert deduplication sets (persisted in memory to survive restarts)
+        today_str = datetime.date.today().isoformat()
+        try:
+            stored_alerted = self.orchestrator.memory.get_fact(f"alerted_events_{today_str}") or ""
+            self._alerted_event_ids: Set[int] = {int(x) for x in stored_alerted.split(",") if x.strip().isdigit()}
+        except Exception:
+            self._alerted_event_ids: Set[int] = set()
         self._alerted_task_ids: Set[int] = set()
 
         # Cooldown timestamps
@@ -192,7 +197,20 @@ class JarvisHeartbeat:
             logger.error(f"Failed to generate morning briefing: {e}")
             return False
 
-    def _parse_time(self, timestr: str) -> Optional[datetime.datetime]:
+    def _mark_event_alerted(self, eid: int):
+        """Marks an event as alerted and persists to memory so restarts do not repeat it."""
+        self._alerted_event_ids.add(eid)
+        try:
+            today_str = datetime.date.today().isoformat()
+            self.orchestrator.memory.remember_fact(
+                f"alerted_events_{today_str}",
+                ",".join(str(i) for i in self._alerted_event_ids),
+                category="system"
+            )
+        except Exception as e:
+            logger.debug(f"Could not persist alerted event id {eid}: {e}")
+
+    def _parse_time(self, timestr: str, created_at: Optional[str] = None) -> Optional[datetime.datetime]:
         """Parses various date/time formats into a datetime object."""
         timestr = timestr.strip()
         now = datetime.datetime.now()
@@ -209,7 +227,16 @@ class JarvisHeartbeat:
             try:
                 dt = datetime.datetime.strptime(timestr, fmt)
                 if fmt in ("%H:%M", "%I:%M %p", "%I %p"):
-                    dt = dt.replace(year=now.year, month=now.month, day=now.day)
+                    if created_at:
+                        try:
+                            # created_at is typically "YYYY-MM-DD HH:MM:SS"
+                            c_dt = datetime.datetime.fromisoformat(created_at.strip())
+                            # If created on an earlier day without explicit date, it was for that creation day
+                            dt = dt.replace(year=c_dt.year, month=c_dt.month, day=c_dt.day)
+                        except Exception:
+                            dt = dt.replace(year=now.year, month=now.month, day=now.day)
+                    else:
+                        dt = dt.replace(year=now.year, month=now.month, day=now.day)
                 return dt
             except ValueError:
                 pass
@@ -226,15 +253,20 @@ class JarvisHeartbeat:
                 if eid in self._alerted_event_ids:
                     continue
 
-                start_dt = self._parse_time(event["start_time"])
+                start_dt = self._parse_time(event["start_time"], event.get("created_at"))
                 if not start_dt:
                     continue
 
-                # Calculate delta in minutes
+                # Calculate delta in seconds and minutes
                 delta_seconds = (start_dt - now).total_seconds()
                 delta_minutes = int(delta_seconds // 60)
 
-                # Alert if event is 1 to 15 minutes away
+                # If event is already in the past (more than 10 minutes ago), mark alerted to prevent lingering
+                if delta_seconds < -600:
+                    self._mark_event_alerted(eid)
+                    continue
+
+                # Alert if event is 0 to 15 minutes away
                 if 0 <= delta_minutes <= 15:
                     title = event["title"]
                     loc = f" at {event['location']}" if event.get("location") else ""
@@ -242,7 +274,7 @@ class JarvisHeartbeat:
                     msg = f"Pardon the interruption, Sir. You have '{title}' scheduled {time_desc}{loc}."
                     
                     if self.speak_proactive(msg):
-                        self._alerted_event_ids.add(eid)
+                        self._mark_event_alerted(eid)
                         break  # Announce one at a time to prevent stacking
         except Exception as e:
             logger.debug(f"Calendar check notice: {e}")

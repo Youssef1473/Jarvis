@@ -24,7 +24,16 @@ def _get_memory() -> MemoryManager:
 def schedule_calendar_event(title: str, start_time: str, end_time: str = "", location: str = "") -> str:
     """Adds a calendar event to the schedule."""
     mem = _get_memory()
-    return mem.add_calendar_event(title, start_time, end_time or None, location or None)
+    clean_time = start_time.strip()
+    for fmt in ("%H:%M", "%I:%M %p", "%I %p"):
+        try:
+            datetime.datetime.strptime(clean_time, fmt)
+            clean_time = f"{datetime.date.today().isoformat()} {clean_time}"
+            break
+        except ValueError:
+            pass
+
+    return mem.add_calendar_event(title, clean_time, end_time or None, location or None)
 
 
 @SkillRegistry.register(
@@ -48,12 +57,12 @@ def list_calendar_events(include_all: bool = False) -> str:
 
 @SkillRegistry.register(
     name="cancel_calendar_event",
-    description="Cancels a scheduled meeting or calendar event by its numerical ID."
+    description="Cancels, removes, or dismisses a scheduled meeting or calendar event by its numerical ID or by matching title (e.g. 'Stark Board Meeting'). Call this when Sir asks to cancel or dismiss a meeting, or says they do not have that meeting."
 )
-def cancel_calendar_event(event_id: int) -> str:
-    """Cancels a scheduled event."""
+def cancel_calendar_event(event_id: Any = None, title: str = "") -> str:
+    """Cancels a scheduled event by ID or title."""
     mem = _get_memory()
-    return mem.cancel_calendar_event(event_id)
+    return mem.cancel_calendar_event(event_id=event_id, title=title)
 
 
 @SkillRegistry.register(

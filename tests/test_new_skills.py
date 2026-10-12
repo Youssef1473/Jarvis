@@ -33,6 +33,11 @@ def test_new_skills():
     print(f"Calendar events:\n{list_res}")
     assert "Stark Board Meeting" in list_res
 
+    # Clean up test event
+    cancel_res = SkillRegistry.execute("cancel_calendar_event", title="Stark Board Meeting")
+    print(f"Cleanup: {cancel_res}")
+    assert "Cancelled" in cancel_res
+
     # 2. Test Morning Protocol
     print("\n2. Testing Morning Protocol...")
     briefing = SkillRegistry.execute("morning_protocol", city="London")

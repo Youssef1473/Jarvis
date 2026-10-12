@@ -85,6 +85,9 @@ Persistent Episodic Memory & Dialogue Recall:
 - Persistent memory may be available through the memory tools and recent interaction context.
 - You have direct access to the `recall_past_conversation` skill to search through the persistent SQLite dialogue archive.
 - When asked about past conversations, use `recall_past_conversation` if available and summarize only what the current context or tool result supports. If no record is available, say so.
+
+Calendar & Schedule Management:
+- When Sir indicates that a scheduled meeting or proactive calendar alert does not exist, was mistaken, or should be cancelled (e.g. "I don't have a [meeting]", "cancel that meeting", "dismiss that appointment"), you MUST immediately invoke `cancel_calendar_event` with the event title or ID rather than merely apologizing conversationally.
 """
 
     GEMINI_CANDIDATE_MODELS = [
@@ -122,7 +125,7 @@ Persistent Episodic Memory & Dialogue Recall:
         (("time", "date", "day", "clock"), {"get_current_time_and_date"}),
         (("weather", "temperature", "forecast"), {"get_weather"}),
         (("remind", "reminder", "to-do", "todo", "task"), {"add_task_or_reminder", "list_pending_tasks", "complete_task"}),
-        (("calendar", "meeting", "appointment", "schedule"), {"schedule_calendar_event", "list_calendar_events", "cancel_calendar_event"}),
+        (("calendar", "meeting", "appointment", "schedule", "starkboard", "stark board", "cancel event", "dismiss event", "no meeting", "don't have a meeting", "dont have a meeting"), {"schedule_calendar_event", "list_calendar_events", "cancel_calendar_event"}),
         (("remember", "save this", "store this"), {"remember_fact"}),
         (("recall", "previous conversation", "past conversation", "we discussed", "you said earlier"), {"recall_fact", "recall_past_conversation"}),
         (("email", "inbox", "unread mail", "gmail", "mail", "send email", "search email", "read email", "draft email"), {"check_unread_emails", "search_emails", "read_email_details", "send_email"}),

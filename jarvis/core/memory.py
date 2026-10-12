@@ -294,21 +294,60 @@ class MemoryManager:
         """Retrieves active calendar events."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            query = "SELECT id, title, start_time, end_time, location FROM calendar_events WHERE is_cancelled = 0 ORDER BY start_time"
+            query = "SELECT id, title, start_time, end_time, location, created_at FROM calendar_events WHERE is_cancelled = 0 ORDER BY start_time"
             if include_cancelled:
-                query = "SELECT id, title, start_time, end_time, location, is_cancelled FROM calendar_events ORDER BY start_time"
+                query = "SELECT id, title, start_time, end_time, location, created_at, is_cancelled FROM calendar_events ORDER BY start_time"
             cursor.execute(query)
             return [dict(row) for row in cursor.fetchall()]
 
-    def cancel_calendar_event(self, event_id: int) -> str:
-        """Marks a calendar event as cancelled."""
+    def cancel_calendar_event(self, event_id: Any = None, title: Optional[str] = None) -> str:
+        """Marks a calendar event as cancelled by numerical ID or by matching title."""
+        # Normalize arguments if event_id is passed as title string or digits
+        if event_id is not None:
+            if isinstance(event_id, str):
+                s_id = event_id.strip()
+                if s_id.isdigit():
+                    event_id = int(s_id)
+                elif not title:
+                    title = s_id
+                    event_id = None
+                else:
+                    event_id = None
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("UPDATE calendar_events SET is_cancelled = 1 WHERE id = ?", (event_id,))
-            conn.commit()
-            if cursor.rowcount > 0:
-                return f"Event #{event_id} has been cancelled, Sir."
-            return f"Event #{event_id} was not found."
+            if event_id is not None:
+                cursor.execute("UPDATE calendar_events SET is_cancelled = 1 WHERE id = ?", (int(event_id),))
+                conn.commit()
+                if cursor.rowcount > 0:
+                    return f"Event #{event_id} has been cancelled, Sir."
+                return f"Event #{event_id} was not found."
+
+            if title and title.strip():
+                clean_title = title.strip()
+                cursor.execute("""
+                    SELECT id, title FROM calendar_events
+                    WHERE is_cancelled = 0 AND LOWER(title) LIKE ?
+                """, (f"%{clean_title.lower()}%",))
+                rows = cursor.fetchall()
+                if not rows:
+                    return f"No active calendar event matching '{clean_title}' was found, Sir."
+
+                cancelled_ids = [r["id"] for r in rows]
+                cancelled_titles = [r["title"] for r in rows]
+                placeholders = ",".join("?" * len(cancelled_ids))
+                cursor.execute(f"UPDATE calendar_events SET is_cancelled = 1 WHERE id IN ({placeholders})", cancelled_ids)
+                conn.commit()
+                return f"Cancelled calendar event(s): {', '.join(cancelled_titles)}, Sir."
+
+            # If neither provided, cancel the most recent or upcoming active event
+            cursor.execute("SELECT id, title FROM calendar_events WHERE is_cancelled = 0 ORDER BY id DESC LIMIT 1")
+            row = cursor.fetchone()
+            if row:
+                cursor.execute("UPDATE calendar_events SET is_cancelled = 1 WHERE id = ?", (row["id"],))
+                conn.commit()
+                return f"Cancelled event '{row['title']}' (#{row['id']}), Sir."
+            return "No active calendar events to cancel, Sir."
 
     # Interaction History & Autonomous Self-Learning
     def log_interaction(self, user_input: str, jarvis_reply: str, tool_calls: Optional[str] = None):
