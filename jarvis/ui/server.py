@@ -242,11 +242,55 @@ class JarvisUIService:
         return JSONResponse({"staged": []})
 
     async def _handle_calendar(self, request):
-        """Returns upcoming calendar appointments for HUD drawer."""
-        if self.orchestrator and hasattr(self.orchestrator, "memory"):
-            events = self.orchestrator.memory.get_calendar_events(include_cancelled=False)
-            return JSONResponse({"events": events})
-        return JSONResponse({"events": []})
+        """Returns upcoming calendar appointments, grouped schedule matrix, and saved calendar documents."""
+        try:
+            mem = None
+            if self.orchestrator and hasattr(self.orchestrator, "memory"):
+                mem = self.orchestrator.memory
+            else:
+                from jarvis.skills.calendar_manager import _get_memory
+                mem = _get_memory()
+
+            events = mem.get_calendar_events(include_cancelled=False) if mem else []
+            saved_cals = mem.get_saved_calendars() if mem and hasattr(mem, "get_saved_calendars") else []
+
+            # Group events chronologically by date
+            from collections import defaultdict
+            import re
+            import datetime
+            grouped = defaultdict(list)
+            for e in events:
+                st = e.get("start_time", "")
+                m = re.match(r"^(\d{4}-\d{2}-\d{2})", st)
+                if m:
+                    d_str = m.group(1)
+                    try:
+                        dt = datetime.datetime.strptime(d_str, "%Y-%m-%d")
+                        day_name = dt.strftime("%A")
+                        day_formatted = dt.strftime("%A, %B %d")
+                    except Exception:
+                        day_name = "Other"
+                        day_formatted = d_str
+                    grouped[d_str].append({
+                        **e,
+                        "day_name": day_name,
+                        "day_formatted": day_formatted,
+                    })
+                else:
+                    grouped["unscheduled"].append({
+                        **e,
+                        "day_name": "Other",
+                        "day_formatted": "Other",
+                    })
+
+            return JSONResponse({
+                "events": events,
+                "saved_calendars": saved_cals,
+                "grouped": dict(grouped)
+            })
+        except Exception as e:
+            logger.error(f"Error handling calendar request: {e}")
+            return JSONResponse({"events": [], "saved_calendars": [], "grouped": {}, "error": str(e)})
 
     async def _handle_websocket(self, websocket: WebSocket):
         await websocket.accept()

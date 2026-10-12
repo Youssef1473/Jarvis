@@ -68,14 +68,16 @@ class TestSpatialTimetableIngest(unittest.TestCase):
 
     def test_calendar_event_deduplication(self):
         """Verifies that adding the same event twice updates rather than duplicating."""
-        msg1 = self.memory.add_calendar_event("PROJET C++", "2026-10-13 09:00", "2026-10-13 12:15", "G011")
+        import uuid
+        unique_title = f"PROJET C++ {uuid.uuid4().hex[:6]}"
+        msg1 = self.memory.add_calendar_event(unique_title, "2026-10-13 09:00", "2026-10-13 12:15", "G011")
         self.assertIn("scheduled", msg1)
 
         # Second add should update the existing event
-        msg2 = self.memory.add_calendar_event("PROJET C++", "2026-10-13 09:00", "2026-10-13 12:15", "G011 Room Updated")
+        msg2 = self.memory.add_calendar_event(unique_title, "2026-10-13 09:00", "2026-10-13 12:15", "G011 Room Updated")
         self.assertIn("updated", msg2)
 
-        events = [e for e in self.memory.get_calendar_events() if e["title"] == "PROJET C++" and e["start_time"] == "2026-10-13 09:00"]
+        events = [e for e in self.memory.get_calendar_events() if e["title"] == unique_title and e["start_time"] == "2026-10-13 09:00"]
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["location"], "G011 Room Updated")
 

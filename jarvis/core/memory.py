@@ -479,6 +479,21 @@ class MemoryManager:
             """, (q, q, q, limit))
             return [dict(row) for row in cursor.fetchall()]
 
+    def get_saved_calendars(self) -> List[Dict[str, Any]]:
+        """Retrieves all calendar and schedule documents archived in memory."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, title, category, summary, file_path, created_at
+                FROM documents
+                WHERE LOWER(category) IN ('schedule', 'syllabus')
+                   OR LOWER(title) LIKE '%timetable%'
+                   OR LOWER(title) LIKE '%calendar%'
+                   OR LOWER(title) LIKE '%schedule%'
+                ORDER BY id DESC
+            """)
+            return [dict(row) for row in cursor.fetchall()]
+
     # Interaction History & Autonomous Self-Learning
     def log_interaction(self, user_input: str, jarvis_reply: str, tool_calls: Optional[str] = None):
         """Logs a conversation turn."""
