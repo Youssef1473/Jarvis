@@ -494,6 +494,30 @@ class MemoryManager:
             """)
             return [dict(row) for row in cursor.fetchall()]
 
+    def delete_saved_calendar(self, doc_id: int) -> bool:
+        """Deletes a saved calendar document from knowledge memory."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_calendar_event(self, event_id: int) -> bool:
+        """Permanently deletes a calendar event by numerical ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM calendar_events WHERE id = ?", (event_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def clear_calendar_events(self) -> int:
+        """Deletes all calendar events from the active database."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM calendar_events")
+            conn.commit()
+            return cursor.rowcount
+
     # Interaction History & Autonomous Self-Learning
     def log_interaction(self, user_input: str, jarvis_reply: str, tool_calls: Optional[str] = None):
         """Logs a conversation turn."""

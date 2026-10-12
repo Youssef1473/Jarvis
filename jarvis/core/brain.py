@@ -90,6 +90,7 @@ Persistent Episodic Memory & Dialogue Recall:
 Calendar & Schedule Management:
 - When Sir asks about his calendar, schedule, timetable, upcoming meetings, classes, appointments, or agenda (e.g. "tell me my calendar", "what's on my schedule", "what classes do I have", "my timetable", "can you tell me my calendar again"), you MUST invoke `list_calendar_events` to retrieve his current active events before answering. Never claim you do not have the schedule or context without querying the calendar.
 - When Sir indicates that a scheduled meeting or proactive calendar alert does not exist, was mistaken, or should be cancelled (e.g. "I don't have a [meeting]", "cancel that meeting", "dismiss that appointment"), you MUST immediately invoke `cancel_calendar_event` with the event title or ID rather than merely apologizing conversationally.
+- When Sir asks to delete, purge, or remove a calendar, timetable document, or clear all events (e.g. "delete my calendar", "delete that timetable", "clear all calendar events"), you MUST invoke `delete_calendar` rather than claiming you cannot delete stored records.
 
 Universal Document & PDF Ingestion:
 - When Sir mentions an uploaded, imported, or staged PDF/document, or provides context for a document (e.g., "that PDF is my class schedule, put it on my calendar", "the document I imported is an invoice", "process that PDF"), you MUST invoke `process_staged_document` passing Sir's instructions in `user_context` to parse and register the data into the database.
@@ -136,7 +137,7 @@ Universal Document & PDF Ingestion:
         (("time", "date", "day", "clock"), {"get_current_time_and_date"}),
         (("weather", "temperature", "forecast"), {"get_weather"}),
         (("remind", "reminder", "to-do", "todo", "task"), {"add_task_or_reminder", "list_pending_tasks", "complete_task"}),
-        (("calendar", "meeting", "appointment", "schedule", "starkboard", "stark board", "cancel event", "dismiss event", "no meeting", "don't have a meeting", "dont have a meeting", "timetable", "classes", "class", "upcoming", "what do i have", "whats on my", "what's on my"), {"schedule_calendar_event", "list_calendar_events", "cancel_calendar_event"}),
+        (("calendar", "meeting", "appointment", "schedule", "starkboard", "stark board", "cancel event", "dismiss event", "no meeting", "don't have a meeting", "dont have a meeting", "timetable", "classes", "class", "upcoming", "what do i have", "whats on my", "what's on my", "delete calendar", "remove calendar", "clear calendar", "clear schedule"), {"schedule_calendar_event", "list_calendar_events", "cancel_calendar_event", "delete_calendar"}),
         (("remember", "save this", "store this"), {"remember_fact"}),
         (("recall", "previous conversation", "past conversation", "we discussed", "you said earlier"), {"recall_fact", "recall_past_conversation"}),
         (("email", "inbox", "unread mail", "gmail", "mail", "send email", "search email", "read email", "draft email"), {"check_unread_emails", "search_emails", "read_email_details", "send_email"}),

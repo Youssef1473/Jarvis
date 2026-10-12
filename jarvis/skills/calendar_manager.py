@@ -98,6 +98,45 @@ def cancel_calendar_event(event_id: Any = None, title: str = "") -> str:
 
 
 @SkillRegistry.register(
+    name="delete_calendar",
+    description="Deletes or removes a saved timetable or calendar document by title or ID, or clears the active calendar schedule. Call this when Sir asks to delete a calendar or clear all calendar events."
+)
+def delete_calendar(calendar_name: str = "", calendar_id: Any = None, clear_events: bool = False) -> str:
+    """Deletes a saved calendar document or clears the schedule."""
+    mem = _get_memory()
+    cals = mem.get_saved_calendars()
+    target_id = None
+    target_title = calendar_name.strip()
+
+    if calendar_id is not None:
+        try:
+            target_id = int(calendar_id)
+        except Exception:
+            pass
+
+    if target_id is None and target_title:
+        for c in cals:
+            if target_title.lower() in c["title"].lower():
+                target_id = c["id"]
+                target_title = c["title"]
+                break
+
+    if target_id is not None:
+        mem.delete_saved_calendar(target_id)
+        cleared_msg = ""
+        if clear_events:
+            n = mem.clear_calendar_events()
+            cleared_msg = f" and cleared {n} associated event(s)"
+        return f"Calendar '{target_title}' (#{target_id}) has been deleted{cleared_msg}, Sir."
+
+    if clear_events or "clear" in target_title.lower():
+        n = mem.clear_calendar_events()
+        return f"All active calendar events ({n} events) have been cleared, Sir."
+
+    return f"I could not locate a saved calendar matching '{calendar_name}', Sir."
+
+
+@SkillRegistry.register(
     name="morning_protocol",
     description="Executes the full executive morning briefing protocol: date/time, weather report, today's schedule, pending tasks, and global headlines."
 )

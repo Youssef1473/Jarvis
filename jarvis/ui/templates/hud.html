@@ -1031,6 +1031,61 @@
       color: var(--holo-cyan);
       opacity: 0.8;
     }
+    .cal-btn-danger {
+      background: rgba(255, 51, 102, 0.12);
+      border: 1px solid var(--holo-crimson);
+      color: var(--holo-crimson);
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 0.82rem;
+      font-weight: 700;
+      padding: 5px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+      letter-spacing: 0.5px;
+    }
+    .cal-btn-danger:hover {
+      background: rgba(255, 51, 102, 0.25);
+      box-shadow: 0 0 14px rgba(255, 51, 102, 0.5);
+    }
+    .cal-pill-del-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      cursor: pointer;
+      padding: 2px 4px;
+      border-radius: 3px;
+      margin-left: 4px;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .cal-pill-del-btn:hover {
+      color: var(--holo-crimson);
+      background: rgba(255, 51, 102, 0.2);
+      transform: scale(1.15);
+    }
+    .cal-card-del-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-dim);
+      font-size: 0.75rem;
+      cursor: pointer;
+      padding: 1px 4px;
+      border-radius: 3px;
+      transition: all 0.2s ease;
+      line-height: 1;
+    }
+    .cal-card-del-btn:hover {
+      color: var(--holo-crimson);
+      border-color: rgba(255, 51, 102, 0.4);
+      background: rgba(255, 51, 102, 0.15);
+    }
   </style>
 </head>
 <body>
@@ -1282,8 +1337,15 @@
 
       <!-- Active Calendar Info Bar -->
       <div class="cal-info-bar">
-        <div id="activeCalTitle" class="active-cal-name">⚡ MASTER ACTIVE SCHEDULE (ALL SESSIONS)</div>
-        <div id="activeCalSummary" class="active-cal-desc">Displaying all active academic & calendar events registered in Jarvis SQLite memory.</div>
+        <div>
+          <div id="activeCalTitle" class="active-cal-name">⚡ MASTER ACTIVE SCHEDULE (ALL SESSIONS)</div>
+          <div id="activeCalSummary" class="active-cal-desc">Displaying all active academic & calendar events registered in Jarvis SQLite memory.</div>
+        </div>
+        <div id="calActiveActions" style="display:flex; align-items:center; gap:8px;">
+          <button id="btnDeleteCalendar" class="cal-btn-danger" onclick="promptDeleteCurrentCalendar()" title="Delete or clear this calendar">
+            <span>🗑️</span> DELETE CALENDAR
+          </button>
+        </div>
       </div>
 
       <!-- Calendar Week Matrix Grid -->
@@ -1304,6 +1366,33 @@
         <div class="cal-footer-hint">
           VOICE PROMPT: "Jarvis, what classes do I have today?"
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Holographic Confirmation Modal for Calendar Deletion -->
+  <div id="calConfirmBackdrop" class="calendar-modal-backdrop" style="z-index: 2600;" onclick="if(event.target === this) closeConfirmModal()">
+    <div class="calendar-modal-dialog" style="max-width: 520px; border-color: var(--holo-crimson); box-shadow: 0 0 45px rgba(255, 51, 102, 0.4);">
+      <div class="cal-modal-header" style="background: rgba(255, 51, 102, 0.08); border-bottom-color: rgba(255, 51, 102, 0.3);">
+        <div class="cal-header-left">
+          <span style="font-size: 1.5rem;">⚠️</span>
+          <div>
+            <div class="cal-title" style="color: var(--holo-crimson); text-shadow: 0 0 10px rgba(255, 51, 102, 0.6);">// PURGE CALENDAR ARCHIVE</div>
+            <div class="cal-subtitle">IRREVERSIBLE MEMORY MODIFICATION PROTOCOL</div>
+          </div>
+        </div>
+        <button class="cal-close-btn" onclick="closeConfirmModal()">✕</button>
+      </div>
+      <div style="padding: 20px 24px; font-family: 'Rajdhani', sans-serif; font-size: 1.05rem; color: var(--text-main);">
+        <p id="confirmModalText" style="margin-bottom: 16px;">Are you sure you want to delete this calendar from Jarvis?</p>
+        <label id="confirmClearEventsWrapper" style="display: flex; align-items: center; gap: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--holo-amber); cursor: pointer; user-select: none;">
+          <input type="checkbox" id="confirmClearEventsCheckbox" checked style="accent-color: var(--holo-crimson); width: 16px; height: 16px;">
+          Also clear timetable events from active schedule
+        </label>
+      </div>
+      <div style="padding: 14px 24px; background: rgba(0, 0, 0, 0.3); border-top: 1px solid rgba(255, 51, 102, 0.2); display: flex; justify-content: flex-end; gap: 10px;">
+        <button class="cal-btn-outline" style="border-color: var(--panel-border); color: var(--text-dim);" onclick="closeConfirmModal()">CANCEL</button>
+        <button id="btnExecuteDelete" class="cal-btn-danger" style="padding: 8px 18px;" onclick="executeDeleteCalendar()">CONFIRM PURGE 🗑️</button>
       </div>
     </div>
   </div>
@@ -1889,6 +1978,9 @@
               <span>📄</span>
               <span>${escapeHtml(doc.title)}</span>
               <span class="cal-pill-tag">${catTag}</span>
+              <button class="cal-pill-del-btn" onclick="event.stopPropagation(); promptDeleteCalendar(${doc.id}, '${escapeJs(doc.title)}')" title="Delete this calendar from Jarvis">
+                🗑️
+              </button>
             </div>
           `;
         });
@@ -1898,14 +1990,23 @@
       // 3. Update Active Info Bar
       const titleEl = document.getElementById('activeCalTitle');
       const descEl = document.getElementById('activeCalSummary');
+      const delBtn = document.getElementById('btnDeleteCalendar');
       if (currentCalendarFilter === null) {
         if (titleEl) titleEl.textContent = '⚡ MASTER ACTIVE SCHEDULE (ALL SESSIONS)';
         if (descEl) descEl.textContent = 'Displaying all active academic & calendar events registered in Jarvis SQLite memory.';
+        if (delBtn) {
+          delBtn.innerHTML = '<span>🧹</span> CLEAR SCHEDULE';
+          delBtn.title = 'Purge all active sessions from calendar';
+        }
       } else {
         const found = savedCals.find(d => d.id === currentCalendarFilter);
         if (found) {
           if (titleEl) titleEl.textContent = `📄 ${found.title.toUpperCase()}`;
           if (descEl) descEl.textContent = found.summary || 'Archived timetable document in database.';
+          if (delBtn) {
+            delBtn.innerHTML = '<span>🗑️</span> DELETE CALENDAR';
+            delBtn.title = `Delete '${found.title}' from Jarvis`;
+          }
         }
       }
 
@@ -1942,7 +2043,10 @@
                   <div class="cal-event-title">${escapeHtml(ev.title)}</div>
                   <div class="cal-event-meta">
                     ${ev.location ? `<span class="cal-event-room">📍 ${escapeHtml(ev.location)}</span>` : '<span></span>'}
-                    <span style="color:var(--text-dim); font-size:0.7rem;">#${ev.id}</span>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                      <span style="color:var(--text-dim); font-size:0.7rem;">#${ev.id}</span>
+                      <button class="cal-card-del-btn" onclick="event.stopPropagation(); deleteCalendarEvent(${ev.id}, '${escapeJs(ev.title)}')" title="Delete session #${ev.id}">✕</button>
+                    </div>
                   </div>
                 </div>
               `;
@@ -1970,6 +2074,124 @@
           `;
         }).join('');
       }
+    }
+
+    // Calendar Deletion Controller
+    let pendingDeleteCalendarId = null;
+    let pendingDeleteCalendarTitle = "";
+
+    function escapeJs(str) {
+      if (!str) return '';
+      return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    }
+
+    function promptDeleteCalendar(docId, title) {
+      pendingDeleteCalendarId = docId;
+      pendingDeleteCalendarTitle = title || `Calendar #${docId}`;
+      const backdrop = document.getElementById('calConfirmBackdrop');
+      const textEl = document.getElementById('confirmModalText');
+      const wrapper = document.getElementById('confirmClearEventsWrapper');
+      if (textEl) {
+        textEl.innerHTML = `Are you sure you want to permanently delete calendar "<strong>${escapeHtml(pendingDeleteCalendarTitle)}</strong>" from Jarvis?`;
+      }
+      if (wrapper) wrapper.style.display = 'flex';
+      if (backdrop) backdrop.classList.add('open');
+    }
+
+    function promptDeleteCurrentCalendar() {
+      if (currentCalendarFilter === null) {
+        promptClearAllEvents();
+      } else if (cachedCalendarData && cachedCalendarData.saved_calendars) {
+        const found = cachedCalendarData.saved_calendars.find(d => d.id === currentCalendarFilter);
+        if (found) {
+          promptDeleteCalendar(found.id, found.title);
+        }
+      }
+    }
+
+    function promptClearAllEvents() {
+      pendingDeleteCalendarId = 'ALL';
+      pendingDeleteCalendarTitle = 'ALL ACTIVE SCHEDULE SESSIONS';
+      const backdrop = document.getElementById('calConfirmBackdrop');
+      const textEl = document.getElementById('confirmModalText');
+      const wrapper = document.getElementById('confirmClearEventsWrapper');
+      if (textEl) {
+        textEl.innerHTML = `Are you sure you want to purge <strong>ALL active schedule events</strong> from Jarvis memory?`;
+      }
+      if (wrapper) wrapper.style.display = 'none';
+      if (backdrop) backdrop.classList.add('open');
+    }
+
+    function closeConfirmModal() {
+      const backdrop = document.getElementById('calConfirmBackdrop');
+      if (backdrop) backdrop.classList.remove('open');
+      pendingDeleteCalendarId = null;
+      pendingDeleteCalendarTitle = "";
+    }
+
+    function executeDeleteCalendar() {
+      const btn = document.getElementById('btnExecuteDelete');
+      if (btn) btn.disabled = true;
+
+      if (pendingDeleteCalendarId === 'ALL') {
+        fetch('/api/calendar/clear', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        })
+          .then(res => res.json())
+          .then(data => {
+            closeConfirmModal();
+            loadCalendarModalData();
+            if (activeDrawerTab === 'agenda') loadDrawerContent();
+          })
+          .catch(err => {
+            console.error("Error clearing calendar events:", err);
+            closeConfirmModal();
+          })
+          .finally(() => {
+            if (btn) btn.disabled = false;
+          });
+      } else if (pendingDeleteCalendarId) {
+        const clearCheckbox = document.getElementById('confirmClearEventsCheckbox');
+        const clearEvents = clearCheckbox ? clearCheckbox.checked : false;
+
+        fetch('/api/calendar/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ doc_id: pendingDeleteCalendarId, clear_events: clearEvents })
+        })
+          .then(res => res.json())
+          .then(data => {
+            closeConfirmModal();
+            currentCalendarFilter = null;
+            loadCalendarModalData();
+            if (activeDrawerTab === 'agenda') loadDrawerContent();
+          })
+          .catch(err => {
+            console.error("Error deleting calendar document:", err);
+            closeConfirmModal();
+          })
+          .finally(() => {
+            if (btn) btn.disabled = false;
+          });
+      }
+    }
+
+    function deleteCalendarEvent(eventId, title) {
+      fetch('/api/calendar/event/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event_id: eventId })
+      })
+        .then(res => res.json())
+        .then(data => {
+          loadCalendarModalData();
+          if (activeDrawerTab === 'agenda') loadDrawerContent();
+        })
+        .catch(err => {
+          console.error("Error deleting event:", err);
+        });
     }
 
     let messageCount = 1;

@@ -73,6 +73,9 @@ class JarvisUIService:
             Route("/api/documents/upload", endpoint=self._handle_documents_upload, methods=["POST"]),
             Route("/api/documents/staged", endpoint=self._handle_staged_documents, methods=["GET"]),
             Route("/api/calendar", endpoint=self._handle_calendar, methods=["GET"]),
+            Route("/api/calendar/delete", endpoint=self._handle_calendar_delete, methods=["POST"]),
+            Route("/api/calendar/event/delete", endpoint=self._handle_calendar_event_delete, methods=["POST"]),
+            Route("/api/calendar/clear", endpoint=self._handle_calendar_clear, methods=["POST"]),
             WebSocketRoute("/ws", endpoint=self._handle_websocket),
         ]
         return Starlette(routes=routes)
@@ -291,6 +294,113 @@ class JarvisUIService:
         except Exception as e:
             logger.error(f"Error handling calendar request: {e}")
             return JSONResponse({"events": [], "saved_calendars": [], "grouped": {}, "error": str(e)})
+
+    async def _handle_calendar_delete(self, request):
+        """Deletes a saved calendar document and optionally clears all schedule events."""
+        try:
+            body = await request.json()
+            doc_id = int(body.get("doc_id", 0))
+            clear_events = bool(body.get("clear_events", False))
+            if not doc_id:
+                return JSONResponse({"error": "Missing doc_id"}, status_code=400)
+
+            mem = None
+            if self.orchestrator and hasattr(self.orchestrator, "memory"):
+                mem = self.orchestrator.memory
+            else:
+                from jarvis.skills.calendar_manager import _get_memory
+                mem = _get_memory()
+
+            doc_title = f"Calendar #{doc_id}"
+            if mem:
+                with mem._get_connection() as conn:
+                    cur = conn.cursor()
+                    cur.execute("SELECT title FROM documents WHERE id = ?", (doc_id,))
+                    row = cur.fetchone()
+                    if row:
+                        doc_title = row["title"]
+
+            success = mem.delete_saved_calendar(doc_id) if mem else False
+            events_cleared = 0
+            if clear_events and mem:
+                events_cleared = mem.clear_calendar_events()
+
+            self.broadcast({
+                "type": "calendar_deleted",
+                "doc_id": doc_id,
+                "title": doc_title,
+                "events_cleared": events_cleared,
+                "message": f"Calendar '{doc_title}' deleted successfully, Sir."
+            })
+
+            return JSONResponse({
+                "status": "deleted" if success else "not_found",
+                "doc_id": doc_id,
+                "title": doc_title,
+                "events_cleared": events_cleared,
+                "message": f"Calendar '{doc_title}' has been deleted."
+            })
+        except Exception as e:
+            logger.error(f"Error deleting calendar: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def _handle_calendar_event_delete(self, request):
+        """Deletes an individual calendar event by numerical ID."""
+        try:
+            body = await request.json()
+            event_id = int(body.get("event_id", 0))
+            if not event_id:
+                return JSONResponse({"error": "Missing event_id"}, status_code=400)
+
+            mem = None
+            if self.orchestrator and hasattr(self.orchestrator, "memory"):
+                mem = self.orchestrator.memory
+            else:
+                from jarvis.skills.calendar_manager import _get_memory
+                mem = _get_memory()
+
+            success = mem.delete_calendar_event(event_id) if mem else False
+
+            self.broadcast({
+                "type": "calendar_event_deleted",
+                "event_id": event_id,
+                "message": f"Calendar event #{event_id} deleted."
+            })
+
+            return JSONResponse({
+                "status": "deleted" if success else "not_found",
+                "event_id": event_id
+            })
+        except Exception as e:
+            logger.error(f"Error deleting calendar event: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def _handle_calendar_clear(self, request):
+        """Purges all active calendar events from memory."""
+        try:
+            mem = None
+            if self.orchestrator and hasattr(self.orchestrator, "memory"):
+                mem = self.orchestrator.memory
+            else:
+                from jarvis.skills.calendar_manager import _get_memory
+                mem = _get_memory()
+
+            count = mem.clear_calendar_events() if mem else 0
+
+            self.broadcast({
+                "type": "calendar_cleared",
+                "count": count,
+                "message": f"Active schedule cleared ({count} events purged), Sir."
+            })
+
+            return JSONResponse({
+                "status": "cleared",
+                "count": count,
+                "message": f"Cleared {count} calendar events."
+            })
+        except Exception as e:
+            logger.error(f"Error clearing calendar events: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     async def _handle_websocket(self, websocket: WebSocket):
         await websocket.accept()
