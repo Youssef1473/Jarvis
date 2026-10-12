@@ -592,7 +592,19 @@ Universal Document & PDF Ingestion:
 
     def process_query(self, user_text: str, sentence_callback: Any = None) -> str:
         """Routes normal conversation to the configured primary model; consultations are explicit."""
-        # Voice model switching commands for Google AI Pro fleet
+        # Voice model switching commands for Google AI Pro fleet & Hybrid token shield
+        hybrid_match = re.match(
+            r"^\s*(?:switch to|use|activate|enable|turn on)\s+(?:hybrid|hybrid mode|token shield|token saver)\s*$",
+            user_text,
+            re.IGNORECASE,
+        )
+        if hybrid_match:
+            self.provider = "hybrid"
+            reply = "Hybrid token-shield mode activated, Sir. Local commands run offline at zero tokens, casual chat on free Groq LPU, and deep reasoning routed to your Google AI Pro fleet."
+            if sentence_callback:
+                sentence_callback(reply)
+            return reply
+
         auto_match = re.match(
             r"^\s*(?:switch to|use|activate|set model to|enable)\s+(?:auto|automatic|dynamic)\s*(?:tiering|mode|model)?\s*$",
             user_text,
@@ -620,11 +632,15 @@ Universal Document & PDF Ingestion:
                 sentence_callback(reply)
             return reply
 
-        if any(user_text.lower().strip() == p for p in ["what model are you using", "what is your active model", "current model", "active model", "what model is active"]):
-            if getattr(self, "antigravity_auto_tiering", True):
-                reply = f"My cognitive uplink is in dynamic auto-tiering mode (defaulting to {self.antigravity_model}), Sir."
+        if any(user_text.lower().strip() == p for p in ["what model are you using", "what is your active model", "current model", "active model", "what model is active", "what provider is active"]):
+            if self.provider in ("hybrid", "auto"):
+                auto_tier_txt = "dynamic auto-tiering" if getattr(self, "antigravity_auto_tiering", True) else f"locked to {self.antigravity_model}"
+                reply = (
+                    f"Operating in Hybrid Token-Shield mode, Sir. "
+                    f"Workstation actions run offline (0 tokens), casual chat on Groq LPU, and deep cognition on Google AI Pro ({auto_tier_txt})."
+                )
             else:
-                reply = f"My active cognitive uplink is currently locked to {self.antigravity_model}, Sir."
+                reply = f"My active cognitive uplink is currently locked to {self.provider.upper()} ({self.antigravity_model}), Sir."
             if sentence_callback:
                 sentence_callback(reply)
             return reply
@@ -655,9 +671,11 @@ Universal Document & PDF Ingestion:
         )
         self.active_tool_names = self._select_tools_for_query(user_text)
 
-        # Smart Tri-Tier Hybrid Dispatch
+        # Smart Tri-Tier Hybrid Dispatch (Token-Shielded Architecture)
         if self.provider in ("hybrid", "auto"):
-            # 1. Screen Vision queries -> Route directly to Gemini Multimodal
+            has_antigravity = getattr(self, "antigravity_bridge", None) and self.antigravity_bridge.is_available()
+
+            # 1. Screen Vision queries -> Route to Gemini or local Ollama vision
             if self.should_capture_screen(user_text) and self.gemini_client:
                 logger.info("Hybrid Routing: Screen vision requested -> GEMINI MULTIMODAL")
                 reply = self._process_gemini_query(user_text, sentence_callback)
@@ -665,7 +683,7 @@ Universal Document & PDF Ingestion:
                     return reply
                 logger.warning("Gemini vision query encountered error. Falling back to local Ollama vision...")
 
-            # 2. Local OS & workstation device actions -> Route to local Ollama (0ms network latency)
+            # 2. Local OS & workstation device actions -> Route to local Ollama (0ms network latency, 0 TOKENS)
             os_action_tools = {
                 "launch_application", "close_application", "adjust_volume", "control_media",
                 "minimize_all_windows", "lock_workstation", "get_system_vitals", "get_battery_status",
@@ -676,27 +694,40 @@ Universal Document & PDF Ingestion:
                 "check_hardware_health", "start_hardware_watchdog", "stop_hardware_watchdog"
             }
             if any(t in self.active_tool_names for t in os_action_tools) and getattr(self, "ollama_client", None):
-                logger.info("Hybrid Routing: OS / Device command -> LOCAL OLLAMA (0ms network latency)")
+                logger.info("Hybrid Routing: OS / Device command -> LOCAL OLLAMA (0ms network latency, 0 tokens consumed)")
                 self.openai_client = self.ollama_client
                 self.openai_model = self.ollama_model
                 return self._process_openai_compatible_query(user_text, sentence_callback)
 
-            # 3. Conversational speech, code, planning -> Route to Groq LPU (500+ tok/s)
+            # 3. Classify query complexity: Deep/Code tasks vs Fast Conversational Reflex
+            query_tier = self.classify_query_tier(user_text)
+
+            # Route Deep reasoning, code, academic schedules, planning to Google AI Pro Apex
+            if (query_tier == "deep" or self.active_task_mode == "code") and has_antigravity:
+                logger.info("Hybrid Routing: Deep Cognitive / Engineering query -> GOOGLE AI PRO APEX (Antigravity)")
+                return self._process_antigravity_query(user_text, sentence_callback)
+
+            # 4. Fast Reflex Tier: Casual speech, short chit-chat -> Route to Groq LPU (500+ tok/s, 0 Google Pro tokens)
             if getattr(self, "groq_client", None):
                 try:
-                    logger.info(f"Hybrid Routing: Conversational / Reasoning query -> GROQ LPU ({self.groq_model})")
+                    logger.info(f"Hybrid Routing: Fast Reflex query -> GROQ LPU ({self.groq_model})")
                     self.openai_client = self.groq_client
                     self.openai_model = self.groq_model
                     return self._process_openai_compatible_query(user_text, sentence_callback)
                 except Exception as e:
-                    logger.warning(f"Groq query failed ({e}). Seamlessly falling back to LOCAL OLLAMA...")
-                    if getattr(self, "ollama_client", None):
+                    logger.warning(f"Groq query failed ({e}). Seamlessly falling back...")
+                    if has_antigravity:
+                        logger.info("Hybrid Fallback: Routing to ANTIGRAVITY FLASH...")
+                        return self._process_antigravity_query(user_text, sentence_callback)
+                    elif getattr(self, "ollama_client", None):
                         self.openai_client = self.ollama_client
                         self.openai_model = self.ollama_model
                         return self._process_openai_compatible_query(user_text, sentence_callback)
 
-            # 4. Default fallback to Ollama or Gemini
-            if getattr(self, "ollama_client", None):
+            # 5. Default fallback to Antigravity, Ollama, or Gemini
+            if has_antigravity:
+                return self._process_antigravity_query(user_text, sentence_callback)
+            elif getattr(self, "ollama_client", None):
                 self.openai_client = self.ollama_client
                 self.openai_model = self.ollama_model
                 return self._process_openai_compatible_query(user_text, sentence_callback)
@@ -931,6 +962,7 @@ Universal Document & PDF Ingestion:
             "write an email", "draft", "compose", "summarize", "analyze",
             "explain in detail", "plan", "research", "compare", "why does",
             "how do i implement", "architecture", "solve", "math", "calculate",
+            "timetable", "calendar", "schedule", "syllabus", "exam", "classes",
             "review", "investigate", "audit", "test suite"
         ]
         if any(ind in q for ind in deep_indicators):

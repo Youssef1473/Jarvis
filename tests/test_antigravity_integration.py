@@ -133,9 +133,31 @@ class TestAntigravityIntegration(unittest.TestCase):
         self.assertIn("Dynamic model tiering activated", res_auto)
         self.assertTrue(brain.antigravity_auto_tiering)
 
-        # Test what model is active
-        res_active = brain.process_query("what model are you using")
-        self.assertIn("auto-tiering", res_active)
+        # Test switch to hybrid
+        res_hybrid = brain.process_query("switch to hybrid")
+        self.assertIn("Hybrid token-shield mode activated", res_hybrid)
+        self.assertEqual(brain.provider, "hybrid")
+
+        # Test what model is active in hybrid mode
+        res_active_hybrid = brain.process_query("what model are you using")
+        self.assertIn("Hybrid Token-Shield mode", res_active_hybrid)
+
+    def test_hybrid_token_shield_routing(self):
+        """Verifies that Hybrid mode routes OS commands locally and deep queries to Google AI Pro."""
+        brain = JarvisBrain(self.config, self.memory, self.safety)
+        brain.provider = "hybrid"
+
+        # 1. OS command classification -> Fast / Local reflex (0 tokens)
+        tier_mute = brain.classify_query_tier("mute the volume please")
+        self.assertEqual(tier_mute, "fast")
+
+        # 2. Deep academic / timetable classification -> Deep Apex tier (Google AI Pro)
+        tier_cal = brain.classify_query_tier("can you analyze my class timetable and schedule my study session for calculus?")
+        self.assertEqual(tier_cal, "deep")
+
+        # 3. Code query classification -> Deep Apex tier (Claude Sonnet 4.6)
+        tier_code = brain.classify_query_tier("write a python function to parse json and handle exceptions")
+        self.assertEqual(tier_code, "deep")
 
 
 if __name__ == "__main__":

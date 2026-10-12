@@ -419,9 +419,16 @@ class AntigravityBridge:
         finally:
             if proc:
                 try:
+                    for pipe in (proc.stdin, proc.stdout, proc.stderr):
+                        if pipe and not getattr(pipe, "closed", True):
+                            pipe.close()
                     if proc.poll() is None:
                         proc.terminate()
-                        proc.wait(timeout=2.0)
+                        try:
+                            proc.wait(timeout=2.0)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                            proc.wait(timeout=1.0)
                 except Exception:
                     pass
 
