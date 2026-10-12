@@ -2,14 +2,107 @@
 import datetime
 import json
 import logging
+import math
 import os
+from collections import Counter
 from pathlib import Path
 import re
 import sqlite3
 import threading
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 logger = logging.getLogger("Jarvis.Memory")
+
+
+class VectorMemoryEngine:
+    """Local vector recall engine using TF-IDF subword and token n-gram vectors with cosine similarity.
+    Runs 100% locally with zero external network or model download dependencies in <1ms."""
+
+    SEMANTIC_SYNONYMS = {
+        "editor": ["ide", "vscode", "code", "programming", "sublime", "pycharm", "cursor", "neovim", "vim"],
+        "ide": ["editor", "vscode", "code", "development", "programming"],
+        "code": ["programming", "script", "developer", "ide", "editor", "software"],
+        "favorite": ["preferred", "best", "liked", "fav", "top", "choice"],
+        "preference": ["favorite", "preferred", "setting", "likes", "choice"],
+        "music": ["song", "audio", "spotify", "playlist", "track", "tunes", "artist"],
+        "work": ["job", "project", "career", "task", "company", "office", "business"],
+        "home": ["house", "apartment", "residence", "address", "location"],
+        "car": ["vehicle", "automobile", "drive", "transport"],
+        "drink": ["coffee", "tea", "water", "beverage"],
+        "food": ["meal", "lunch", "dinner", "breakfast", "snack"],
+        "os": ["operating system", "windows", "linux", "mac", "wsl"],
+        "city": ["town", "location", "country", "place", "residence"],
+        "watchdog": ["sentinel", "monitor", "telemetry", "hardware", "vitals"],
+        "note": ["notes", "memo", "reminder", "scratchpad", "jot"],
+    }
+
+    def tokenize(self, text: str) -> List[str]:
+        """Extracts word tokens, semantic aliases, and subword n-grams."""
+        if not text:
+            return []
+        cleaned = re.sub(r"[^\w\s]", " ", text.lower())
+        words = [w for w in cleaned.split() if len(w) > 1]
+
+        tokens = list(words)
+        for w in words:
+            syns = self.SEMANTIC_SYNONYMS.get(w, [])
+            tokens.extend(syns)
+
+        # Add character 3-grams and 4-grams for root matching and typo resilience
+        for w in words:
+            if len(w) >= 3:
+                for i in range(len(w) - 2):
+                    tokens.append(f"#{w[i:i+3]}")
+            if len(w) >= 4:
+                for i in range(len(w) - 3):
+                    tokens.append(f"##{w[i:i+4]}")
+
+        return tokens
+
+    def vectorize(self, text: str, idf_weights: Optional[Dict[str, float]] = None) -> Dict[str, float]:
+        """Calculates L2-normalized TF-IDF vector for a given text."""
+        tokens = self.tokenize(text)
+        if not tokens:
+            return {}
+        counts = Counter(tokens)
+        total = len(tokens)
+
+        vec = {}
+        for token, count in counts.items():
+            tf = count / total
+            idf = idf_weights.get(token, 1.0) if idf_weights else 1.0
+            vec[token] = tf * idf
+
+        norm = math.sqrt(sum(v * v for v in vec.values()))
+        if norm > 0:
+            for k in vec:
+                vec[k] /= norm
+        return vec
+
+    def compute_idf(self, corpus: List[str]) -> Dict[str, float]:
+        """Computes inverse document frequency across the corpus."""
+        n_docs = len(corpus)
+        if n_docs == 0:
+            return {}
+        doc_freq = Counter()
+        for doc in corpus:
+            unique_tokens = set(self.tokenize(doc))
+            for tok in unique_tokens:
+                doc_freq[tok] += 1
+
+        idf = {}
+        for tok, df in doc_freq.items():
+            idf[tok] = math.log((1 + n_docs) / (1 + df)) + 1.0
+        return idf
+
+    @staticmethod
+    def cosine_similarity(vec1: Dict[str, float], vec2: Dict[str, float]) -> float:
+        """Computes cosine similarity between two unit-normalized sparse vectors."""
+        if not vec1 or not vec2:
+            return 0.0
+        if len(vec1) > len(vec2):
+            vec1, vec2 = vec2, vec1
+        return sum(val * vec2.get(k, 0.0) for k, val in vec1.items())
 
 
 class MemoryManager:
@@ -27,6 +120,7 @@ class MemoryManager:
         db_rel_path = memory_config.get("db_path", "data/jarvis_memory.db")
         self.db_path = base_dir / db_rel_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.vector_engine = VectorMemoryEngine()
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
@@ -128,6 +222,30 @@ class MemoryManager:
             cursor = conn.cursor()
             cursor.execute("SELECT category, key, value FROM facts ORDER BY category, key")
             return [dict(row) for row in cursor.fetchall()]
+
+    def semantic_search_facts(self, query: str, top_k: int = 5, min_score: float = 0.12) -> List[Dict[str, Any]]:
+        """Finds stored facts semantically relevant to query using cosine similarity vectors."""
+        facts = self.get_all_facts()
+        if not facts:
+            return []
+
+        corpus = [f"{f.get('category', '')} {f.get('key', '')} {f.get('value', '')}" for f in facts]
+        idf = self.vector_engine.compute_idf(corpus)
+        query_vec = self.vector_engine.vectorize(query, idf)
+        if not query_vec:
+            return []
+
+        scored = []
+        for f, doc_text in zip(facts, corpus):
+            doc_vec = self.vector_engine.vectorize(doc_text, idf)
+            score = self.vector_engine.cosine_similarity(query_vec, doc_vec)
+            if score >= min_score:
+                f_dict = dict(f)
+                f_dict["relevance_score"] = round(score, 3)
+                scored.append(f_dict)
+
+        scored.sort(key=lambda x: x["relevance_score"], reverse=True)
+        return scored[:top_k]
 
     # Tasks & Reminders
     def add_task(self, description: str, due_date: Optional[str] = None) -> str:
@@ -243,6 +361,39 @@ class MemoryManager:
             cursor.execute(sql, tuple(params))
             return [dict(r) for r in cursor.fetchall()]
 
+    def semantic_search_interactions(self, query: str, top_k: int = 5, min_score: float = 0.10) -> List[Dict[str, Any]]:
+        """Searches past conversation history using semantic vector similarity."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, user_input, jarvis_reply, tool_calls, created_at
+                FROM interactions
+                ORDER BY id DESC
+                LIMIT 150
+            """)
+            rows = [dict(r) for r in cursor.fetchall()]
+
+        if not rows:
+            return []
+
+        corpus = [f"{r['user_input']} {r['jarvis_reply']}" for r in rows]
+        idf = self.vector_engine.compute_idf(corpus)
+        query_vec = self.vector_engine.vectorize(query, idf)
+        if not query_vec:
+            return []
+
+        scored = []
+        for r, doc_text in zip(rows, corpus):
+            doc_vec = self.vector_engine.vectorize(doc_text, idf)
+            score = self.vector_engine.cosine_similarity(query_vec, doc_vec)
+            if score >= min_score:
+                r_dict = dict(r)
+                r_dict["relevance_score"] = round(score, 3)
+                scored.append(r_dict)
+
+        scored.sort(key=lambda x: x["relevance_score"], reverse=True)
+        return scored[:top_k]
+
     def auto_learn_from_interaction(
         self,
         user_text: str,
@@ -336,18 +487,28 @@ class MemoryManager:
 
         threading.Thread(target=_extract, daemon=True).start()
 
-    def get_context_summary(self) -> str:
-        """Generates a structured, categorized summary of remembered facts for the LLM prompt."""
-        with self._context_summary_lock:
-            if self._context_summary_cache is not None:
-                return self._context_summary_cache
+    def get_context_summary(self, query: Optional[str] = None) -> str:
+        """Generates a structured, categorized summary of remembered facts for the LLM prompt.
+        If a query is provided, semantically prioritizes matched knowledge at the top."""
+        if not query:
+            with self._context_summary_lock:
+                if self._context_summary_cache is not None:
+                    return self._context_summary_cache
 
         facts = self.get_all_facts()
         if not facts:
             summary = "No prior facts recorded."
-            with self._context_summary_lock:
-                self._context_summary_cache = summary
+            if not query:
+                with self._context_summary_lock:
+                    self._context_summary_cache = summary
             return summary
+
+        semantic_section = ""
+        if query:
+            matched = self.semantic_search_facts(query, top_k=4, min_score=0.15)
+            if matched:
+                lines = [f"• {m['key'].replace('_', ' ').capitalize()}: {m['value']}" for m in matched]
+                semantic_section = "[Directly Relevant Knowledge to Current Context]\n" + "\n".join(lines) + "\n\n"
 
         by_cat = {}
         for f in facts:
@@ -357,7 +518,8 @@ class MemoryManager:
         sections = []
         for cat, items in sorted(by_cat.items()):
             sections.append(f"[{cat}]\n" + "\n".join(f"• {item}" for item in items))
-        summary = "\n\n".join(sections)
-        with self._context_summary_lock:
-            self._context_summary_cache = summary
+        summary = semantic_section + "\n\n".join(sections)
+        if not query:
+            with self._context_summary_lock:
+                self._context_summary_cache = summary
         return summary

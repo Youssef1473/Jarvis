@@ -188,6 +188,13 @@ Persistent Episodic Memory & Dialogue Recall:
         self.gemini_task_mode = None
         self.gemini_tool_names: frozenset[str] = frozenset()
 
+        # Dynamic round-trip latency tracking in milliseconds
+        self.last_latencies: Dict[str, float] = {
+            "ollama": 0.0,
+            "groq": 0.0,
+            "gemini": 0.0,
+        }
+
         # Initialize requested provider
         if self.provider in ("hybrid", "auto"):
             self._init_hybrid_providers()
@@ -628,6 +635,10 @@ Persistent Episodic Memory & Dialogue Recall:
             "claude": "READY" if enabled and metered_enabled and os.getenv("ANTHROPIC_API_KEY", "").strip() else "METERED / OFF",
         }
 
+    def get_latencies(self) -> Dict[str, float]:
+        """Returns the most recent measured round-trip inference latencies in milliseconds."""
+        return dict(self.last_latencies)
+
     def _consult_specialist(self, provider: str, prompt: str) -> str:
         """Run only a user-requested secondary consultation; never changes the primary model."""
         llm_cfg = self.config.get("llm", {})
@@ -836,6 +847,7 @@ Persistent Episodic Memory & Dialogue Recall:
 
     def _process_openai_compatible_query(self, user_text: str, sentence_callback: Any = None) -> str:
         """Processes user input using OmniRoute, Groq, or xAI Grok with real-time streaming TTS and dynamic failover."""
+        t_start = time.perf_counter()
         # Determine model candidates with Smart Dynamic Tiering
         # Provider and model are explicit. A failed request never fans out to another
         # model/provider and therefore cannot spend unexpected credits or leak context.
@@ -1170,6 +1182,11 @@ Persistent Episodic Memory & Dialogue Recall:
                 if len(self.openai_messages) > 25:
                     self.openai_messages = [self.openai_messages[0]] + self.openai_messages[-20:]
 
+                elapsed_ms = round((time.perf_counter() - t_start) * 1000, 1)
+                prov_key = "ollama" if (getattr(self, "ollama_client", None) and self.openai_client == self.ollama_client) else "groq"
+                self.last_latencies[prov_key] = elapsed_ms
+                logger.info(f"Inference latency ({prov_key}): {elapsed_ms}ms")
+
                 return reply_text
 
             except Exception as e:
@@ -1200,6 +1217,7 @@ Persistent Episodic Memory & Dialogue Recall:
 
     def _process_gemini_query(self, user_text: str, sentence_callback: Any = None) -> str:
         """Processes user input using Google Gemini with dynamic candidate failover."""
+        t_start = time.perf_counter()
         if not self.gemini_client:
             api_key = os.getenv("GEMINI_API_KEY", "").strip()
             if api_key:
@@ -1267,6 +1285,10 @@ Persistent Episodic Memory & Dialogue Recall:
                     sentences = [s.strip() for s in re.split(r"(?<!\d)(?<=[.!?])(?!\d)\s+", reply_text) if s.strip()]
                     for s in sentences:
                         sentence_callback(s)
+
+                elapsed_ms = round((time.perf_counter() - t_start) * 1000, 1)
+                self.last_latencies["gemini"] = elapsed_ms
+                logger.info(f"Inference latency (gemini): {elapsed_ms}ms")
 
                 return reply_text
 

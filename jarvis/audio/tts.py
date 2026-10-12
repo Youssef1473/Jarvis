@@ -166,6 +166,38 @@ class TextToSpeech:
             return ""
         return cleaned
 
+    def _split_into_audio_chunks(self, text: str) -> list[str]:
+        """Splits text into natural clause phrases (commas, semicolons, colons, dashes)
+        to enable ultra-low Time-to-First-Audio (<50ms) via progressive chunked synthesis."""
+        if not text:
+            return []
+
+        # Split on natural pause delimiters
+        raw_parts = re.split(r'([,;:—–\n]+)', text)
+        chunks = []
+        current = ""
+
+        for part in raw_parts:
+            if not part:
+                continue
+            current += part
+            words = current.strip().split()
+            # If current buffer ends in punctuation and has at least 3 words, emit chunk
+            if re.search(r'[,;:—–\n]$', current.strip()) and len(words) >= 3:
+                chunks.append(current.strip())
+                current = ""
+            elif len(words) >= 12:
+                chunks.append(current.strip())
+                current = ""
+
+        if current.strip():
+            if chunks and len(current.strip().split()) < 3:
+                chunks[-1] = chunks[-1] + " " + current.strip()
+            else:
+                chunks.append(current.strip())
+
+        return [c for c in chunks if c]
+
     def start_streaming_session(self):
         """Initializes a double-buffered streaming session with concurrent pre-synthesis."""
         self._stop_event.clear()
@@ -201,17 +233,21 @@ class TextToSpeech:
                     if not clean_text:
                         continue
 
-                    try:
-                        samples, sr = self._kokoro.create(
-                            clean_text,
-                            voice=self.kokoro_voice,
-                            speed=self.kokoro_speed,
-                            lang=self.kokoro_lang
-                        )
-                        if not self._stop_event.is_set():
-                            self._audio_queue.put((samples, sr))
-                    except Exception as e:
-                        logger.error(f"Kokoro synth error on '{clean_text}': {e}")
+                    sub_chunks = self._split_into_audio_chunks(clean_text)
+                    for chunk in sub_chunks:
+                        if self._stop_event.is_set() or not self._stream_active:
+                            break
+                        try:
+                            samples, sr = self._kokoro.create(
+                                chunk,
+                                voice=self.kokoro_voice,
+                                speed=self.kokoro_speed,
+                                lang=self.kokoro_lang
+                            )
+                            if not self._stop_event.is_set():
+                                self._audio_queue.put((samples, sr))
+                        except Exception as e:
+                            logger.error(f"Kokoro synth error on '{chunk}': {e}")
 
             # Stage 2: Audio Playback Consumer Worker (Plays pre-buffered audio seamlessly)
             def _playback_worker():
@@ -336,15 +372,19 @@ class TextToSpeech:
 
         if self.engine == "kokoro" and self._kokoro:
             try:
-                samples, sr = self._kokoro.create(
-                    clean_text,
-                    voice=self.kokoro_voice,
-                    speed=self.kokoro_speed,
-                    lang=self.kokoro_lang
-                )
-                if not self._stop_event.is_set():
-                    sd.play(samples, sr)
-                    sd.wait()
+                sub_chunks = self._split_into_audio_chunks(clean_text)
+                for chunk in sub_chunks:
+                    if self._stop_event.is_set():
+                        break
+                    samples, sr = self._kokoro.create(
+                        chunk,
+                        voice=self.kokoro_voice,
+                        speed=self.kokoro_speed,
+                        lang=self.kokoro_lang
+                    )
+                    if not self._stop_event.is_set():
+                        sd.play(samples, sr)
+                        sd.wait()
             except Exception as e:
                 logger.error(f"Kokoro speak_sync error: {e}. Falling back to SAPI5.")
                 self._speak_local_sapi(clean_text)

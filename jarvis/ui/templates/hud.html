@@ -703,6 +703,10 @@
           <span class="telemetry-val" id="activeTimersVal" style="color: var(--holo-amber);">0 ACTIVE</span>
         </div>
         <div class="telemetry-row">
+          <span class="telemetry-label">INFERENCE SPEED</span>
+          <span class="thermal-badge" id="latencyBadge" style="border-color: var(--holo-cyan); color: var(--holo-cyan); background: rgba(0, 240, 255, 0.1);">OLLAMA: --ms | GROQ: --ms</span>
+        </div>
+        <div class="telemetry-row">
           <span class="telemetry-label">TTS ENGINE</span>
           <span class="telemetry-val" style="color: var(--holo-emerald);">KOKORO-82M (LOCAL CUDA)</span>
         </div>
@@ -1095,6 +1099,15 @@
       }
       if (data.tier) {
         document.getElementById('modelTierVal').textContent = data.tier.toUpperCase();
+      }
+      if (data.latencies) {
+        const l = data.latencies;
+        const oMs = l.ollama ? `${Math.round(l.ollama)}ms` : '--';
+        const gMs = l.groq ? `${Math.round(l.groq)}ms` : '--';
+        const badge = document.getElementById('latencyBadge');
+        if (badge) {
+          badge.textContent = `OLLAMA: ${oMs} | GROQ: ${gMs}`;
+        }
       }
       if (data.is_muted !== undefined) {
         isMuted = data.is_muted;

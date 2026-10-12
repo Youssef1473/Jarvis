@@ -251,6 +251,12 @@ class JarvisUIService:
                 if callable(status_provider):
                     specialist_status = status_provider()
 
+        latencies = {"ollama": 0.0, "groq": 0.0, "gemini": 0.0}
+        if self.orchestrator and hasattr(self.orchestrator, "brain"):
+            lat_getter = getattr(self.orchestrator.brain, "get_latencies", None)
+            if callable(lat_getter):
+                latencies = lat_getter()
+
         return {
             "cpu": cpu_val,
             "ram_pct": ram_pct,
@@ -267,6 +273,7 @@ class JarvisUIService:
             "provider": provider,
             "specialists": specialist_status,
             "active_timers": timer_count,
+            "latencies": latencies,
             "is_muted": is_muted,
             "timestamp": time.strftime("%H:%M:%S"),
         }

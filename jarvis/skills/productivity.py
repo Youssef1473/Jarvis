@@ -77,15 +77,24 @@ def remember_fact(key: str, value: str, category: str = "general") -> str:
 
 @SkillRegistry.register(
     name="recall_fact",
-    description="Recalls a stored fact or user preference by keyword."
+    description="Recalls a stored fact, user preference, or personal knowledge by key or semantic topic description."
 )
 def recall_fact(key: str) -> str:
-    """Recalls a stored fact."""
+    """Recalls a stored fact using exact key match with semantic vector fallback."""
     mem = _get_memory()
     val = mem.get_fact(key)
     if val:
         return f"Stored fact for '{key}': {val}"
-    return f"No stored fact found for '{key}'."
+
+    # Semantic vector recall fallback
+    matches = mem.semantic_search_facts(key, top_k=3, min_score=0.12)
+    if matches:
+        formatted = []
+        for m in matches:
+            formatted.append(f"• [{m['category']}] {m['key']}: {m['value']} (Relevance: {m['relevance_score']:.0%})")
+        return f"Semantic memory recall for '{key}':\n" + "\n".join(formatted)
+
+    return f"No stored fact or semantic match found for '{key}'."
 
 
 @SkillRegistry.register(
@@ -97,6 +106,9 @@ def recall_past_conversation(query: str, limit: int = 5) -> str:
     mem = _get_memory()
     results = mem.search_interactions(query, limit=limit)
     if not results:
+        # Fallback to semantic vector dialogue search
+        results = mem.semantic_search_interactions(query, top_k=limit, min_score=0.10)
+    if not results:
         return f"No past conversation logs found matching '{query}', Sir."
 
     formatted = []
@@ -104,7 +116,36 @@ def recall_past_conversation(query: str, limit: int = 5) -> str:
         ts = r.get("created_at", "Unknown time")
         u_msg = r.get("user_input", "")
         j_msg = r.get("jarvis_reply", "")
-        formatted.append(f"[{ts}]\nSir: {u_msg}\nJarvis: {j_msg}")
+        score_str = f" [Match: {r['relevance_score']:.0%}]" if "relevance_score" in r else ""
+        formatted.append(f"[{ts}]{score_str}\nSir: {u_msg}\nJarvis: {j_msg}")
 
     return "Past Dialogue Logs Found:\n\n" + "\n\n---\n\n".join(formatted)
+
+
+@SkillRegistry.register(
+    name="semantic_search_memory",
+    description="Searches long-term factual memory and conversation archives using semantic vector similarity."
+)
+def semantic_search_memory(query: str, search_type: str = "all") -> str:
+    """Performs semantic vector search across facts and past conversations."""
+    mem = _get_memory()
+    outputs = []
+
+    if search_type in ("all", "facts"):
+        facts = mem.semantic_search_facts(query, top_k=3)
+        if facts:
+            f_lines = [f"• [{f['category']}] {f['key']}: {f['value']} (Score: {f['relevance_score']:.0%})" for f in facts]
+            outputs.append("Matching Facts & Knowledge:\n" + "\n".join(f_lines))
+
+    if search_type in ("all", "conversations", "dialogue"):
+        dialogues = mem.semantic_search_interactions(query, top_k=3)
+        if dialogues:
+            d_lines = []
+            for d in dialogues:
+                d_lines.append(f"[{d.get('created_at', 'Past')}] (Relevance: {d['relevance_score']:.0%})\nSir: {d['user_input']}\nJarvis: {d['jarvis_reply']}")
+            outputs.append("Matching Conversation Logs:\n" + "\n---\n".join(d_lines))
+
+    if not outputs:
+        return f"No semantic memories or dialogues found matching '{query}', Sir."
+    return "\n\n".join(outputs)
 
