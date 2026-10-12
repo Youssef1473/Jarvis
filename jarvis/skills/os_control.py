@@ -8,6 +8,8 @@ import logging
 import winreg
 import datetime
 import subprocess
+import threading
+import time
 import webbrowser
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -666,3 +668,172 @@ def take_desktop_screenshot(filename: str = "") -> str:
         return f"Screenshot saved successfully to '{save_path}' ({img.width}x{img.height}), Sir."
     except Exception as e:
         return f"Failed to save desktop screenshot: {e}"
+
+
+@SkillRegistry.register(
+    name="open_browser_tab",
+    description="Opens a new tab or navigates to a specific URL in Brave, Chrome, Edge, or the desktop browser."
+)
+def open_browser_tab(url: str = "", browser: str = "brave") -> str:
+    """Opens a new tab or URL in the requested desktop browser."""
+    browser_clean = (browser or "brave").lower().strip()
+    target_url = url.strip()
+    if target_url and not target_url.startswith(("http://", "https://", "about:", "chrome:", "brave:")):
+        target_url = "https://" + target_url
+
+    apps = _build_app_index()
+    browser_exe = None
+    for key, path in apps.items():
+        if browser_clean in key or f"{browser_clean}.exe" in key:
+            browser_exe = path
+            break
+
+    if not browser_exe:
+        browser_exe = shutil.which(f"{browser_clean}.exe") or shutil.which(browser_clean)
+
+    if not browser_exe:
+        program_files = [
+            os.environ.get("ProgramFiles", "C:\\Program Files"),
+            os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"),
+            os.environ.get("LOCALAPPDATA", "")
+        ]
+        candidates = {
+            "brave": [
+                r"BraveSoftware\Brave-Browser\Application\brave.exe",
+                r"Programs\BraveSoftware\Brave-Browser\Application\brave.exe",
+            ],
+            "chrome": [
+                r"Google\Chrome\Application\chrome.exe",
+            ],
+            "msedge": [
+                r"Microsoft\Edge\Application\msedge.exe",
+            ],
+        }
+        for base in program_files:
+            if not base:
+                continue
+            for rel in candidates.get(browser_clean, []):
+                cand = os.path.join(base, rel)
+                if os.path.exists(cand):
+                    browser_exe = cand
+                    break
+            if browser_exe:
+                break
+
+    if browser_exe:
+        try:
+            cmd = [browser_exe]
+            if target_url:
+                cmd.append(target_url)
+            else:
+                cmd.append("https://google.com")
+            subprocess.Popen(
+                cmd,
+                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+                close_fds=True,
+            )
+            dest = f"to '{target_url}'" if target_url else "with a new tab"
+            return f"Opened {browser_clean.title()} {dest}, Sir."
+        except Exception as e:
+            logger.warning(f"Failed to spawn {browser_clean}: {e}")
+
+    try:
+        webbrowser.open_new_tab(target_url or "https://google.com")
+        return f"Opened a new browser tab {('to ' + target_url) if target_url else ''}, Sir."
+    except Exception as e:
+        return f"Failed to open browser tab: {e}"
+
+
+@SkillRegistry.register(
+    name="focus_window",
+    description="Switches focus and brings an open desktop application or window to the foreground by name (e.g. 'brave', 'code', 'spotify', 'terminal')."
+)
+def focus_window(title: str) -> str:
+    """Brings matching desktop window to the foreground."""
+    target = (title or "").lower().strip()
+    if not target:
+        return "Window title or application name cannot be empty, Sir."
+
+    try:
+        import win32gui
+        import win32con
+        _ensure_desktop_access()
+
+        matched_hwnds = []
+
+        def _enum_win(hwnd, _):
+            if win32gui.IsWindowVisible(hwnd):
+                w_title = win32gui.GetWindowText(hwnd).strip()
+                if w_title and target in w_title.lower():
+                    matched_hwnds.append((hwnd, w_title))
+
+        win32gui.EnumWindows(_enum_win, None)
+
+        if not matched_hwnds:
+            return f"No open window matching '{title}' was found, Sir."
+
+        hwnd, found_title = matched_hwnds[0]
+        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        win32gui.SetForegroundWindow(hwnd)
+        return f"Switched focus to '{found_title}', Sir."
+    except Exception as e:
+        return f"Failed to focus window '{title}': {e}"
+
+
+@SkillRegistry.register(
+    name="press_hotkey",
+    description="Executes a keyboard shortcut or hotkey combination on Sir's PC (e.g. 'ctrl+t', 'ctrl+w', 'alt+tab', 'ctrl+c', 'ctrl+v', 'win+d', 'enter', 'escape')."
+)
+def press_hotkey(keys: str) -> str:
+    """Safely presses a key combination via pyautogui."""
+    raw = (keys or "").lower().strip()
+    if not raw:
+        return "Hotkey cannot be empty, Sir."
+
+    if any(bad in raw for bad in ("ctrl+alt+del", "ctrl+alt+delete")):
+        return "Execution of system-critical interrupt shortcut is prohibited, Sir."
+
+    parts = [p.strip() for p in re.split(r"[+\s]+", raw) if p.strip()]
+    if not parts:
+        return f"Invalid hotkey format: '{keys}', Sir."
+
+    try:
+        _ensure_desktop_access()
+        pyautogui.FAILSAFE = False
+        if len(parts) == 1:
+            pyautogui.press(parts[0])
+        else:
+            pyautogui.hotkey(*parts)
+        return f"Executed hotkey '{'+'.join(parts)}', Sir."
+    except Exception as e:
+        return f"Failed to press hotkey '{keys}': {e}"
+
+
+@SkillRegistry.register(
+    name="type_text",
+    description="Types text directly into the currently focused window or text input field on Sir's desktop."
+)
+def type_text(text: str) -> str:
+    """Types text cleanly into the active window."""
+    if not text:
+        return "No text provided to type, Sir."
+    try:
+        _ensure_desktop_access()
+        pyautogui.FAILSAFE = False
+        old_clip = pyperclip.paste()
+        pyperclip.copy(text)
+        pyautogui.hotkey("ctrl", "v")
+        time.sleep(0.05)
+
+        def _restore():
+            time.sleep(0.3)
+            try:
+                pyperclip.copy(old_clip)
+            except Exception:
+                pass
+
+        threading.Thread(target=_restore, daemon=True).start()
+        return f"Typed {len(text)} characters into active window, Sir."
+    except Exception as e:
+        return f"Failed to type text: {e}"
+
