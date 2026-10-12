@@ -23,32 +23,32 @@ class AntigravityBridge:
 
     # Comprehensive catalog of Antigravity models and convenient shorthand aliases
     MODEL_CATALOG: Dict[str, str] = {
-        # Gemini 3.8 Flash Tier
+        # Gemini 3.8 Flash Tier (3 variants: low, medium, high)
         "gemini-3.8-flash": "gemini-3.8-flash-low",
         "gemini-3.8-flash-low": "gemini-3.8-flash-low",
         "gemini-3.8-flash-medium": "gemini-3.8-flash-medium",
         "gemini-3.8-flash-high": "gemini-3.8-flash-high",
         "flash": "gemini-3.8-flash-low",
+        "flash-low": "gemini-3.8-flash-low",
+        "flash-medium": "gemini-3.8-flash-medium",
+        "flash-high": "gemini-3.8-flash-high",
+        "3.8": "gemini-3.8-flash-low",
+        "3.8-low": "gemini-3.8-flash-low",
+        "3.8-medium": "gemini-3.8-flash-medium",
+        "3.8-high": "gemini-3.8-flash-high",
         "gemini-flash": "gemini-3.8-flash-low",
 
-        # Gemini 3.7 Flash Tier
-        "gemini-3.7-flash": "gemini-3.7-flash-low",
-        "gemini-3.7-flash-low": "gemini-3.7-flash-low",
-        "gemini-3.7-flash-medium": "gemini-3.7-flash-medium",
-        "gemini-3.7-flash-high": "gemini-3.7-flash-high",
-
-        # Gemini 3.6 Flash Tier
-        "gemini-3.6-flash": "gemini-3.6-flash-low",
-        "gemini-3.6-flash-low": "gemini-3.6-flash-low",
-        "gemini-3.6-flash-medium": "gemini-3.6-flash-medium",
-        "gemini-3.6-flash-high": "gemini-3.6-flash-high",
-
-        # Gemini 3.1 Pro Tier (Google AI Pro Flagship)
+        # Gemini 3.1 Pro Tier (2 variants: low, high)
         "gemini-3.1-pro": "gemini-3.1-pro-low",
         "gemini-3.1-pro-low": "gemini-3.1-pro-low",
         "gemini-3.1-pro-high": "gemini-3.1-pro-high",
-        "gemini-pro": "gemini-3.1-pro-low",
         "pro": "gemini-3.1-pro-low",
+        "pro-low": "gemini-3.1-pro-low",
+        "pro-high": "gemini-3.1-pro-high",
+        "3.1": "gemini-3.1-pro-low",
+        "3.1-low": "gemini-3.1-pro-low",
+        "3.1-high": "gemini-3.1-pro-high",
+        "gemini-pro": "gemini-3.1-pro-low",
 
         # Claude Frontier Tier (Available in Antigravity)
         "claude-sonnet-4-6": "claude-sonnet-4-6",
@@ -66,8 +66,6 @@ class AntigravityBridge:
 
     TIER_FLASH = [
         "gemini-3.8-flash-low",
-        "gemini-3.7-flash-low",
-        "gemini-3.6-flash-low",
         "gemini-3.8-flash-medium",
         "gemini-3.8-flash-high",
     ]

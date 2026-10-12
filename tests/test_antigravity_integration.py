@@ -28,10 +28,15 @@ class TestAntigravityIntegration(unittest.TestCase):
         """Verifies Antigravity CLI binary discovery and model catalog mappings."""
         self.assertTrue(self.bridge.is_available(), "agy binary should be discoverable in PATH")
         models = self.bridge.list_models()
-        self.assertGreaterEqual(len(models), 10)
+        self.assertGreaterEqual(len(models), 8)
         self.assertIn("gemini-3.1-pro-low", models)
+        self.assertIn("gemini-3.1-pro-high", models)
         self.assertIn("gemini-3.8-flash-low", models)
+        self.assertIn("gemini-3.8-flash-medium", models)
+        self.assertIn("gemini-3.8-flash-high", models)
         self.assertIn("claude-sonnet-4-6", models)
+        self.assertNotIn("gemini-3.7-flash-low", models)
+        self.assertNotIn("gemini-3.6-flash-low", models)
 
         # Verify aliases
         self.assertEqual(self.bridge.resolve_model("pro"), "gemini-3.1-pro-low")
@@ -86,14 +91,18 @@ class TestAntigravityIntegration(unittest.TestCase):
         self.assertIn("25", reply)
 
     def test_cascade_pool_building(self):
-        """Verifies candidate fallback pools are constructed properly."""
+        """Verifies candidate fallback pools only contain Gemini 3.8 Flash and Gemini 3.1 Pro variants."""
         flash_cascade = self.bridge.get_candidate_cascade("flash")
         self.assertEqual(flash_cascade[0], "gemini-3.8-flash-low")
-        self.assertIn("gemini-3.7-flash-low", flash_cascade)
-        self.assertIn("gemini-3.6-flash-low", flash_cascade)
+        self.assertIn("gemini-3.8-flash-medium", flash_cascade)
+        self.assertIn("gemini-3.8-flash-high", flash_cascade)
+        # Ensure 3.7 and 3.6 are NOT present
+        self.assertNotIn("gemini-3.7-flash-low", flash_cascade)
+        self.assertNotIn("gemini-3.6-flash-low", flash_cascade)
 
         pro_cascade = self.bridge.get_candidate_cascade("pro")
         self.assertEqual(pro_cascade[0], "gemini-3.1-pro-low")
+        self.assertIn("gemini-3.1-pro-high", pro_cascade)
         self.assertIn("gemini-3.8-flash-low", pro_cascade)
 
         claude_cascade = self.bridge.get_candidate_cascade("claude")
@@ -107,14 +116,20 @@ class TestAntigravityIntegration(unittest.TestCase):
         self.assertEqual(self.bridge.classify_prompt_tier("hello jarvis what time is it"), "gemini-3.8-flash-low")
 
     def test_voice_model_switching_commands(self):
-        """Verifies voice commands dynamically switch models and auto-tiering."""
+        """Verifies voice commands dynamically switch models and auto-tiering with punctuation resilience."""
         brain = JarvisBrain(self.config, self.memory, self.safety)
         
-        # Test switch to pro
-        res_pro = brain.process_query("switch to pro")
+        # Test switch to pro with trailing period
+        res_pro = brain.process_query("Switch to Pro.")
         self.assertIn("gemini-3.1-pro-low", res_pro)
         self.assertFalse(brain.antigravity_auto_tiering)
+        self.assertEqual(brain.provider, "antigravity")
         self.assertEqual(brain.antigravity_model, "gemini-3.1-pro-low")
+
+        # Test switch to pro high
+        res_pro_high = brain.process_query("switch to pro high")
+        self.assertIn("gemini-3.1-pro-high", res_pro_high)
+        self.assertEqual(brain.antigravity_model, "gemini-3.1-pro-high")
 
         # Test switch to flash
         res_flash = brain.process_query("switch to flash")
@@ -122,24 +137,34 @@ class TestAntigravityIntegration(unittest.TestCase):
         self.assertFalse(brain.antigravity_auto_tiering)
         self.assertEqual(brain.antigravity_model, "gemini-3.8-flash-low")
 
+        # Test switch to flash medium
+        res_flash_med = brain.process_query("switch to flash medium.")
+        self.assertIn("gemini-3.8-flash-medium", res_flash_med)
+        self.assertEqual(brain.antigravity_model, "gemini-3.8-flash-medium")
+
+        # Test switch to flash high
+        res_flash_hi = brain.process_query("switch to flash high")
+        self.assertIn("gemini-3.8-flash-high", res_flash_hi)
+        self.assertEqual(brain.antigravity_model, "gemini-3.8-flash-high")
+
         # Test switch to claude
-        res_claude = brain.process_query("switch to claude")
+        res_claude = brain.process_query("switch to claude.")
         self.assertIn("claude-sonnet-4-6", res_claude)
         self.assertFalse(brain.antigravity_auto_tiering)
         self.assertEqual(brain.antigravity_model, "claude-sonnet-4-6")
 
         # Test switch to auto
-        res_auto = brain.process_query("switch to auto")
+        res_auto = brain.process_query("switch to auto.")
         self.assertIn("Dynamic model tiering activated", res_auto)
         self.assertTrue(brain.antigravity_auto_tiering)
 
         # Test switch to hybrid
-        res_hybrid = brain.process_query("switch to hybrid")
+        res_hybrid = brain.process_query("switch to hybrid.")
         self.assertIn("Hybrid token-shield mode activated", res_hybrid)
         self.assertEqual(brain.provider, "hybrid")
 
         # Test what model is active in hybrid mode
-        res_active_hybrid = brain.process_query("what model are you using")
+        res_active_hybrid = brain.process_query("what model are you using?")
         self.assertIn("Hybrid Token-Shield mode", res_active_hybrid)
 
     def test_hybrid_token_shield_routing(self):

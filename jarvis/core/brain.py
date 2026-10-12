@@ -592,47 +592,70 @@ Universal Document & PDF Ingestion:
 
     def process_query(self, user_text: str, sentence_callback: Any = None) -> str:
         """Routes normal conversation to the configured primary model; consultations are explicit."""
+        # Strip leading/trailing punctuation and whitespace for robust voice command recognition
+        norm_text = re.sub(r"^[\s,;:.]+|[\s,!?:.]+$", "", (user_text or "").strip()).strip()
+
         # Voice model switching commands for Google AI Pro fleet & Hybrid token shield
         hybrid_match = re.match(
-            r"^\s*(?:switch to|use|activate|enable|turn on)\s+(?:hybrid|hybrid mode|token shield|token saver)\s*$",
-            user_text,
+            r"^(?:switch to|use|activate|enable|turn on)\s+(?:hybrid|hybrid mode|token shield|token saver)$",
+            norm_text,
             re.IGNORECASE,
         )
         if hybrid_match:
             self.provider = "hybrid"
+            self.antigravity_auto_tiering = True
             reply = "Hybrid token-shield mode activated, Sir. Local commands run offline at zero tokens, casual chat on free Groq LPU, and deep reasoning routed to your Google AI Pro fleet."
             if sentence_callback:
                 sentence_callback(reply)
             return reply
 
         auto_match = re.match(
-            r"^\s*(?:switch to|use|activate|set model to|enable)\s+(?:auto|automatic|dynamic)\s*(?:tiering|mode|model)?\s*$",
-            user_text,
+            r"^(?:switch to|use|activate|set model to|enable)\s+(?:auto|automatic|dynamic)(?:\s+(?:tiering|mode|model))?$",
+            norm_text,
             re.IGNORECASE,
         )
         if auto_match and getattr(self, "antigravity_bridge", None) and self.antigravity_bridge.is_available():
             self.antigravity_auto_tiering = True
-            reply = "Dynamic model tiering activated, Sir. Routing automatically between Gemini Flash for speed, Gemini Pro for reasoning, and Claude for code."
+            reply = "Dynamic model tiering activated, Sir. Routing automatically between Gemini 3.8 Flash for speed, Gemini 3.1 Pro for reasoning, and Claude for code."
             if sentence_callback:
                 sentence_callback(reply)
             return reply
 
         switch_match = re.match(
-            r"^\s*(?:switch to|use|activate|set model to|enable)\s+(pro|flash|claude|sonnet|opus|gemini|3\.8|3\.7|3\.6)\s*(?:mode|model)?\s*$",
-            user_text,
+            r"^(?:switch to|use|activate|set model to|enable)\s+(pro|flash|claude|sonnet|opus|gemini|3\.8|3\.1)(?:\s+(low|medium|med|high))?(?:\s+(?:mode|model))?$",
+            norm_text,
             re.IGNORECASE,
         )
         if switch_match and getattr(self, "antigravity_bridge", None) and self.antigravity_bridge.is_available():
-            target = switch_match.group(1).lower().strip()
-            new_model = self.antigravity_bridge.resolve_model(target)
+            base_model = switch_match.group(1).lower().strip()
+            variant = (switch_match.group(2) or "").lower().strip()
+
+            if base_model in ("pro", "3.1", "gemini-pro"):
+                eff = "high" if variant == "high" else "low"
+                new_model = f"gemini-3.1-pro-{eff}"
+            elif base_model in ("flash", "3.8", "gemini-flash"):
+                if variant in ("high",):
+                    new_model = "gemini-3.8-flash-high"
+                elif variant in ("medium", "med"):
+                    new_model = "gemini-3.8-flash-medium"
+                else:
+                    new_model = "gemini-3.8-flash-low"
+            elif base_model in ("claude", "sonnet"):
+                new_model = "claude-sonnet-4-6"
+            elif base_model in ("opus",):
+                new_model = "claude-opus-4-6-thinking"
+            else:
+                new_model = self.antigravity_bridge.resolve_model(f"{base_model} {variant}".strip())
+
             self.antigravity_model = new_model
             self.antigravity_auto_tiering = False
+            self.provider = "antigravity"
             reply = f"Cognitive link locked to {new_model}, Sir. Ready for your command."
             if sentence_callback:
                 sentence_callback(reply)
             return reply
 
-        if any(user_text.lower().strip() == p for p in ["what model are you using", "what is your active model", "current model", "active model", "what model is active", "what provider is active"]):
+        if any(norm_text.lower() == p for p in ["what model are you using", "what is your active model", "current model", "active model", "what model is active", "what provider is active", "which model are you using"]):
             if self.provider in ("hybrid", "auto"):
                 auto_tier_txt = "dynamic auto-tiering" if getattr(self, "antigravity_auto_tiering", True) else f"locked to {self.antigravity_model}"
                 reply = (
