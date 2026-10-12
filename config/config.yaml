@@ -1,25 +1,27 @@
 # ==============================================================================
-# Jarvis 2.0 Configuration
+# Jarvis 3.0 Configuration
 # ==============================================================================
 
 llm:
-  provider: "omniroute"           # Primary LLM provider: "omniroute" (gateway to 1200+ models), "groq", "gemini", or "grok"
-  omniroute_base_url: "http://127.0.0.1:20128/v1" # Local OmniRoute proxy endpoint
-  omniroute_model: "antigravity/claude-sonnet-4-6" # Primary active model (frontier intelligence)
-  dynamic_tiering: true           # Smart Tiering: route routine OS/voice commands to fast LPU, deep tasks to Claude Sonnet
-  fast_model: "groq/qwen/qwen3.8-27b" # Sub-200ms instant voice tier (volume, apps, device status, quick banter)
-  deep_model: "antigravity/claude-sonnet-4-6" # Frontier intellect tier (coding, reasoning, analysis, planning)
-  omniroute_fallback_models:      # Auto-switching cascade when quota / rate limits are hit:
-    - "antigravity/claude-sonnet-4-6" # Tier 1: Claude Sonnet (Antigravity)
-    - "kr/claude-sonnet-4.5"          # Tier 2: Claude Sonnet (Kiro)
-    - "groq/qwen/qwen3.8-27b"         # Tier 3: Qwen 3.8 (Groq Cloud LPU)
-  groq_model: "qwen/qwen3.8-27b"  # Groq Cloud model (instant 300ms inference)
-  groq_fallback_models:           # Auto-switching cascade within Groq:
-    - "qwen/qwen3.8-27b"
-    - "llama-3.3-70b-versatile"
-    - "llama-3.1-8b-instant"
-  grok_model: "grok-2-latest"     # xAI Grok model ("grok-2-latest", "grok-2-vision-1212")
-  model: "gemini-3.1-flash-lite"  # Google Gemini model (Ultimate fallback)
+  provider: "hybrid"              # Tri-Tier Hybrid: Local Ollama for OS actions, Groq 27B for fast conversation, Gemini for screen vision
+  ollama_base_url: "http://127.0.0.1:11434/v1"
+  ollama_model: "qwen3.5:2b-q4_K_M" # Compact local vision/tool model for 4 GB GPUs
+  ollama_timeout_seconds: 180
+  ollama_code_reasoning_effort: "low" # Extra reasoning for multi-step code work; regular voice turns stay fast
+  stop_existing_local_services_on_exit: true # Adopt matching local model/gateway services used by Jarvis and stop them on exit
+  omniroute_base_url: "http://127.0.0.1:20128/v1" # Optional hosted-provider gateway
+  omniroute_model: "antigravity/claude-sonnet-4-6" # Existing OmniRoute route; used only if selected as primary
+  groq_model: "qwen/qwen3.8-27b" # Legacy optional Groq provider; not used in local mode
+  grok_model: "grok-4.6"         # Optional xAI provider; metered API
+  model: "gemini-3.8-flash"      # Gemini model for explicit provider mode
+  specialists:
+    enabled: true                # Specialists are invoked only with "consult <provider>: ..."
+    allow_metered_api_calls: false # Grok/Claude developer APIs are not assumed free
+    models:
+      gemini: "gemini-3.8-flash" # Free tier is rate-limited; use a Free-tier API project
+      groq: "qwen/qwen3.8-27b"
+      grok: "grok-4.6"
+      claude: "claude-sonnet-4-6"
   temperature: 0.3
   max_output_tokens: 1024
 
@@ -41,6 +43,7 @@ stt:
   language: "en"
   beam_size: 1                    # 1 for turbo real-time (sub-10ms), 3-5 for maximum beam search
   trim_silence: true              # Pre-trim leading/trailing silence before Whisper
+  vad_filter: false               # Wake/PTT capture already trims silence; skip duplicate VAD work for faster commands
 
 tts:
   engine: "kokoro"                # "kokoro" (movie-grade neural voice), "sapi5", or "edge"
@@ -64,6 +67,10 @@ safety:
 
 memory:
   db_path: "data/jarvis_memory.db"
+  background_learning: false      # Avoid a competing second local LLM generation after each reply
+
+performance:
+  aggressive_working_set_trim: false # Keep Ollama and TTS pages resident for faster next-turn latency
 
 mcp:
   config_path: "config/mcp_servers.json"

@@ -24,6 +24,7 @@ import jarvis.skills.calendar_manager
 import jarvis.skills.browser_agent
 import jarvis.skills.email_manager
 import jarvis.skills.screen_vision
+import jarvis.skills.timers
 from jarvis.vision.screen_capture import ScreenPerception
 from jarvis.core.memory import MemoryManager
 from jarvis.core.safety import SafetyGate
@@ -80,6 +81,15 @@ Persistent Episodic Memory & Dialogue Recall:
 
     GEMINI_CANDIDATE_MODELS = [
         "gemini-3.8-flash",
+        "gemini-3.7-flash",
+        "gemini-3.5-flash",
+        "gemini-flash-latest",
+        "gemini-3.1-flash-lite",
+        "gemini-3.5-flash-lite",
+        "gemini-flash-lite-latest",
+        "gemini-3-flash-preview",
+        "gemini-2.5-pro",
+        "gemini-pro-latest",
     ]
 
     CODE_TOOL_NAMES = {
@@ -118,6 +128,7 @@ Persistent Episodic Memory & Dialogue Recall:
         (("clipboard", "copy", "copied", "paste"), {"read_clipboard", "copy_to_clipboard"}),
         (("lock", "lock pc", "lock computer", "lock workstation"), {"lock_workstation"}),
         (("screenshot", "snapshot", "capture screen"), {"take_desktop_screenshot", "inspect_screen"}),
+        (("timer", "countdown", "stopwatch", "alarm", "how much time left"), {"start_timer", "cancel_timer", "list_active_timers"}),
     )
 
     def __init__(
@@ -138,7 +149,13 @@ Persistent Episodic Memory & Dialogue Recall:
         # Use local inference by default; hosted providers are opt-in.
         self.provider = config.get("llm", {}).get("provider", "ollama").lower()
 
-        # OpenAI-compatible (OmniRoute / Groq / xAI) state
+        # Multi-provider hybrid references
+        self.ollama_client = None
+        self.ollama_model = config.get("llm", {}).get("ollama_model", "qwen3.5:2b-q4_K_M")
+        self.groq_client = None
+        self.groq_model = config.get("llm", {}).get("groq_model", "qwen/qwen3.8-27b")
+
+        # OpenAI-compatible (OmniRoute / Groq / xAI / Ollama) state
         self.openai_client = None
         self.openai_model = ""
         self.openai_messages: List[Dict[str, Any]] = []
@@ -154,12 +171,16 @@ Persistent Episodic Memory & Dialogue Recall:
         self.gemini_tool_names: frozenset[str] = frozenset()
 
         # Initialize requested provider
-        if self.provider in ("ollama", "omniroute", "groq", "grok"):
+        if self.provider in ("hybrid", "auto"):
+            self._init_hybrid_providers()
+        elif self.provider in ("ollama", "omniroute", "groq", "grok"):
             self._init_openai_compatible()
         elif self.provider == "gemini":
             self._init_gemini()
         else:
-            logger.error("Unknown configured LLM provider '%s'; refusing to route to a different provider.", self.provider)
+            logger.warning("Unknown configured LLM provider '%s'; defaulting to hybrid tri-tier.", self.provider)
+            self.provider = "hybrid"
+            self._init_hybrid_providers()
 
     def _get_system_instruction(self) -> str:
         """Assembles runtime capabilities and relevant persistent memory."""
@@ -209,6 +230,66 @@ Persistent Episodic Memory & Dialogue Recall:
             if any(keyword in query for keyword in keywords):
                 selected.update(tools)
         return frozenset(selected)
+
+    def _init_hybrid_providers(self) -> None:
+        """Initializes Tri-Tier Hybrid Providers: Local Ollama, Groq LPU, and Gemini Multimodal."""
+        from openai import OpenAI
+        llm_cfg = self.config.get("llm", {})
+
+        # 1. Local Ollama (Tier 1: private, offline, fast local OS actions)
+        ollama_base = llm_cfg.get("ollama_base_url", "http://127.0.0.1:11434/v1")
+        self._ensure_local_ollama(ollama_base)
+        try:
+            self.ollama_client = OpenAI(
+                api_key="ollama",
+                base_url=ollama_base,
+                max_retries=0,
+                timeout=float(llm_cfg.get("ollama_timeout_seconds", 180)),
+            )
+            logger.info(f"Hybrid Tier 1 (Local Ollama) active with model: {self.ollama_model}")
+        except Exception as e:
+            logger.warning(f"Could not connect to local Ollama: {e}")
+
+        # 2. Groq Cloud LPU (Tier 2: ultra-fast 500+ tok/s 27B intellect for spoken dialogue & code)
+        groq_key = os.getenv("GROQ_API_KEY", "").strip()
+        if groq_key:
+            try:
+                self.groq_client = OpenAI(
+                    api_key=groq_key,
+                    base_url="https://api.groq.com/openai/v1",
+                    max_retries=0,
+                    timeout=12.0,
+                )
+                logger.info(f"Hybrid Tier 2 (Groq LPU) active with model: {self.groq_model}")
+            except Exception as e:
+                logger.warning(f"Could not initialize Groq client: {e}")
+
+        # 3. Google Gemini (Tier 3: multimodal vision & deep context reasoning)
+        gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+        if gemini_key:
+            try:
+                self._init_gemini()
+                logger.info(f"Hybrid Tier 3 (Gemini Multimodal) active with {len(self.gemini_candidates)} candidate models")
+            except Exception as e:
+                logger.warning(f"Could not initialize Gemini client: {e}")
+
+        # Set default active OpenAI client for general queries
+        self.openai_client = self.groq_client if self.groq_client else self.ollama_client
+        self.openai_model = self.groq_model if self.groq_client else self.ollama_model
+
+        self.openai_messages = [
+            {"role": "system", "content": self._get_system_instruction()}
+        ]
+        recent_turns = self.memory.get_recent_interactions(limit=6)
+        for turn in recent_turns:
+            u_text = turn.get("user_input", "").strip()
+            j_text = turn.get("jarvis_reply", "").strip()
+            if u_text and j_text:
+                if any(bad in j_text.lower() for bad in ("limit for tool steps", "cannot launch applications", "not a web browser or an os")):
+                    continue
+                self.openai_messages.append({"role": "user", "content": u_text})
+                self.openai_messages.append({"role": "assistant", "content": j_text})
+        logger.info(f"Jarvis Tri-Tier Hybrid Core active ({len(recent_turns)} prior turns restored).")
 
     def _init_openai_compatible(self) -> bool:
         """Initializes one explicitly selected OpenAI-compatible provider."""
@@ -453,6 +534,51 @@ Persistent Episodic Memory & Dialogue Recall:
             else "general"
         )
         self.active_tool_names = self._select_tools_for_query(user_text)
+
+        # Smart Tri-Tier Hybrid Dispatch
+        if self.provider in ("hybrid", "auto"):
+            # 1. Screen Vision queries -> Route directly to Gemini Multimodal
+            if self.should_capture_screen(user_text) and self.gemini_client:
+                logger.info("Hybrid Routing: Screen vision requested -> GEMINI MULTIMODAL")
+                reply = self._process_gemini_query(user_text, sentence_callback)
+                if not any(bad in reply.lower() for bad in ("anomaly in my cognitive circuits", "temporarily congested", "experiencing high network congestion")):
+                    return reply
+                logger.warning("Gemini vision query encountered error. Falling back to local Ollama vision...")
+
+            # 2. Local OS & workstation device actions -> Route to local Ollama (0ms network latency)
+            os_action_tools = {
+                "launch_application", "close_application", "adjust_volume", "control_media",
+                "minimize_all_windows", "lock_workstation", "get_system_vitals", "get_battery_status",
+                "take_desktop_screenshot", "start_timer", "cancel_timer", "list_active_timers"
+            }
+            if any(t in self.active_tool_names for t in os_action_tools) and getattr(self, "ollama_client", None):
+                logger.info("Hybrid Routing: OS / Device command -> LOCAL OLLAMA (0ms network latency)")
+                self.openai_client = self.ollama_client
+                self.openai_model = self.ollama_model
+                return self._process_openai_compatible_query(user_text, sentence_callback)
+
+            # 3. Conversational speech, code, planning -> Route to Groq LPU (500+ tok/s)
+            if getattr(self, "groq_client", None):
+                try:
+                    logger.info(f"Hybrid Routing: Conversational / Reasoning query -> GROQ LPU ({self.groq_model})")
+                    self.openai_client = self.groq_client
+                    self.openai_model = self.groq_model
+                    return self._process_openai_compatible_query(user_text, sentence_callback)
+                except Exception as e:
+                    logger.warning(f"Groq query failed ({e}). Seamlessly falling back to LOCAL OLLAMA...")
+                    if getattr(self, "ollama_client", None):
+                        self.openai_client = self.ollama_client
+                        self.openai_model = self.ollama_model
+                        return self._process_openai_compatible_query(user_text, sentence_callback)
+
+            # 4. Default fallback to Ollama or Gemini
+            if getattr(self, "ollama_client", None):
+                self.openai_client = self.ollama_client
+                self.openai_model = self.ollama_model
+                return self._process_openai_compatible_query(user_text, sentence_callback)
+            elif self.gemini_client:
+                return self._process_gemini_query(user_text, sentence_callback)
+
         if self.provider == "ollama" and not self.openai_client:
             return "My local Ollama link is unavailable. Start Ollama and confirm the configured model is installed."
         if self.provider == "groq" and not self.openai_client:
@@ -472,9 +598,10 @@ Persistent Episodic Memory & Dialogue Recall:
         enabled = specialists.get("enabled", True)
         metered_enabled = specialists.get("allow_metered_api_calls", False)
         return {
-            "ollama": "ACTIVE" if self.provider == "ollama" and self.openai_client else "LOCAL PRIMARY",
-            "gemini": "KEY SET" if enabled and os.getenv("GEMINI_API_KEY", "").strip() else "ADD KEY",
-            "groq": "KEY SET" if enabled and os.getenv("GROQ_API_KEY", "").strip() else "ADD KEY",
+            "hybrid": "ACTIVE" if self.provider in ("hybrid", "auto") else "STANDBY",
+            "ollama": "ACTIVE" if (getattr(self, "ollama_client", None) or (self.provider == "ollama" and self.openai_client)) else "LOCAL PRIMARY",
+            "gemini": "ACTIVE" if self.gemini_client else ("KEY SET" if os.getenv("GEMINI_API_KEY") else "ADD KEY"),
+            "groq": "ACTIVE" if (getattr(self, "groq_client", None) or (self.provider == "groq" and self.openai_client)) else ("KEY SET" if os.getenv("GROQ_API_KEY") else "ADD KEY"),
             "grok": "READY" if enabled and metered_enabled and (os.getenv("XAI_API_KEY", "").strip() or os.getenv("GROK_API_KEY", "").strip()) else "METERED / OFF",
             "claude": "READY" if enabled and metered_enabled and os.getenv("ANTHROPIC_API_KEY", "").strip() else "METERED / OFF",
         }
@@ -805,7 +932,7 @@ Persistent Episodic Memory & Dialogue Recall:
                 action_tools = {
                     "launch_application", "open_url_in_desktop_browser", "close_application",
                     "adjust_volume", "control_media", "minimize_all_windows", "lock_workstation",
-                    "take_desktop_screenshot", "shutdown_jarvis"
+                    "take_desktop_screenshot", "shutdown_jarvis", "start_timer", "cancel_timer"
                 }
 
                 # Step 2: Handle tool calls if invoked
@@ -1118,11 +1245,14 @@ Persistent Episodic Memory & Dialogue Recall:
 
             except Exception as e:
                 err_str = str(e)
-                if ("503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str or "429" in err_str) and attempt < attempts - 1:
+                is_quota_or_congestion = any(
+                    k in err_str.lower() for k in ("503", "unavailable", "high demand", "429", "resource_exhausted", "quota", "limit", "rate")
+                )
+                if is_quota_or_congestion and attempt < attempts - 1:
                     time.sleep(0.5)
                     next_idx = (self.gemini_model_idx + 1) % len(self.gemini_candidates)
                     next_model = self.gemini_candidates[next_idx]
-                    logger.warning(f"Model '{active_model}' is busy (503/429). Seamlessly switching cognitive link to '{next_model}'...")
+                    logger.warning(f"Model '{active_model}' quota/rate limit reached or busy ({err_str[:80]}). Seamlessly switching cognitive link to '{next_model}'...")
                     self.gemini_model_idx = next_idx
                     self.gemini_model = next_model
                     self._init_gemini(next_model)
