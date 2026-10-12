@@ -253,6 +253,30 @@ def _send_smtp_email(
         return False, f"SMTP transmission failed: {e}"
 
 
+def _normalize_account_type(account: Optional[str]) -> str:
+    """Normalizes arbitrary user, email address, or LLM account strings into 'gmail', 'outlook', or 'all'."""
+    if not account:
+        return "all"
+    acc = str(account).lower().strip()
+    if acc in ("all", "both", "inbox", "my email", "default", "none"):
+        return "all"
+    if "gmail" in acc or "google" in acc or "@gmail" in acc:
+        return "gmail"
+    if "outlook" in acc or "microsoft" in acc or "hotmail" in acc or "office365" in acc or "@outlook" in acc or "@hotmail" in acc:
+        return "outlook"
+    gmail_addr = os.getenv("GMAIL_ADDRESS", "").lower().strip()
+    if gmail_addr and acc == gmail_addr:
+        return "gmail"
+    outlook_addr = os.getenv("OUTLOOK_ADDRESS", "").lower().strip()
+    if outlook_addr and acc == outlook_addr:
+        return "outlook"
+    if "@" in acc and "gmail" in acc:
+        return "gmail"
+    if gmail_addr:
+        return "gmail"
+    return "all"
+
+
 def _get_credentials(account: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str], int, bool]:
     """Returns (username, password, imap_host, smtp_host, smtp_port, use_ssl) for requested provider."""
     try:
@@ -261,12 +285,12 @@ def _get_credentials(account: str) -> Tuple[Optional[str], Optional[str], Option
     except Exception:
         pass
 
-    acc = account.lower().strip()
-    if acc in ("gmail", "google", "all"):
+    acc = _normalize_account_type(account)
+    if acc in ("gmail", "all"):
         user = os.getenv("GMAIL_ADDRESS", "").strip()
         pwd = os.getenv("GMAIL_APP_PASSWORD", "").strip().replace(" ", "")
         return user, pwd, "imap.gmail.com", "smtp.gmail.com", 465, True
-    elif acc in ("outlook", "microsoft", "hotmail", "office365"):
+    elif acc == "outlook":
         user = os.getenv("OUTLOOK_ADDRESS", "").strip()
         pwd = os.getenv("OUTLOOK_APP_PASSWORD", "").strip().replace(" ", "")
         return user, pwd, "outlook.office365.com", "smtp.office365.com", 587, False
@@ -275,18 +299,18 @@ def _get_credentials(account: str) -> Tuple[Optional[str], Optional[str], Option
 
 @SkillRegistry.register(
     name="check_unread_emails",
-    description="Checks and summarizes unread emails from your Gmail and/or Outlook inboxes."
+    description="Checks and summarizes unread emails from your Gmail and/or Outlook inboxes. account parameter can be 'all', 'gmail', 'outlook', or your email address."
 )
 def check_unread_emails(account: str = "all", max_emails: int = 5) -> str:
     """Checks unread emails from configured Gmail and Outlook accounts."""
-    account = account.lower().strip()
+    norm_acc = _normalize_account_type(account)
     summaries = []
 
     # 1. Gmail
-    if account in ("all", "gmail", "google"):
+    if norm_acc in ("all", "gmail"):
         user, pwd, host, _, _, _ = _get_credentials("gmail")
         if not user or not pwd:
-            if account in ("gmail", "google"):
+            if norm_acc == "gmail":
                 return "Gmail is not configured yet, Sir. Please add GMAIL_ADDRESS and GMAIL_APP_PASSWORD to your .env file."
         else:
             try:
@@ -303,10 +327,10 @@ def check_unread_emails(account: str = "all", max_emails: int = 5) -> str:
                 summaries.append(f"Gmail connection error: {e}")
 
     # 2. Outlook
-    if account in ("all", "outlook", "microsoft", "hotmail", "office365"):
+    if norm_acc in ("all", "outlook"):
         user, pwd, host, _, _, _ = _get_credentials("outlook")
         if not user or not pwd:
-            if account in ("outlook", "microsoft", "hotmail", "office365"):
+            if norm_acc == "outlook":
                 return "Outlook is not configured yet, Sir. Please add OUTLOOK_ADDRESS and OUTLOOK_APP_PASSWORD to your .env file."
         else:
             try:
@@ -339,14 +363,16 @@ def check_unread_emails(account: str = "all", max_emails: int = 5) -> str:
 )
 def search_emails(query: str, account: str = "gmail", max_emails: int = 5) -> str:
     """Searches emails matching query."""
-    user, pwd, host, _, _, _ = _get_credentials(account)
+    norm_acc = _normalize_account_type(account)
+    user, pwd, host, _, _, _ = _get_credentials(norm_acc)
+    display_name = "Gmail" if norm_acc == "gmail" else norm_acc.capitalize()
     if not user or not pwd:
-        return f"{account.capitalize()} is not configured yet, Sir. Please add credentials to your .env file."
+        return f"{display_name} is not configured yet, Sir. Please add credentials to your .env file."
 
     try:
         results = _search_imap(host, user, pwd, query, max_emails)
         if not results:
-            return f"No emails found matching '{query}' in your {account.capitalize()} inbox, Sir."
+            return f"No emails found matching '{query}' in your {display_name} inbox, Sir."
 
         formatted = [f"Found {len(results)} email(s) matching '{query}':\n"]
         for m in results:
@@ -360,7 +386,7 @@ def search_emails(query: str, account: str = "gmail", max_emails: int = 5) -> st
         return "\n".join(formatted)
     except Exception as e:
         logger.error(f"Search emails error: {e}")
-        return f"Unable to search {account.capitalize()} emails: {e}"
+        return f"Unable to search {display_name} emails: {e}"
 
 
 @SkillRegistry.register(
@@ -369,14 +395,16 @@ def search_emails(query: str, account: str = "gmail", max_emails: int = 5) -> st
 )
 def read_email_details(email_id: str, account: str = "gmail") -> str:
     """Reads full content of a specific email."""
-    user, pwd, host, _, _, _ = _get_credentials(account)
+    norm_acc = _normalize_account_type(account)
+    user, pwd, host, _, _, _ = _get_credentials(norm_acc)
+    display_name = "Gmail" if norm_acc == "gmail" else norm_acc.capitalize()
     if not user or not pwd:
-        return f"{account.capitalize()} is not configured yet, Sir. Please add credentials to your .env file."
+        return f"{display_name} is not configured yet, Sir. Please add credentials to your .env file."
 
     try:
         details = _fetch_email_details(host, user, pwd, email_id)
         if not details:
-            return f"Could not find email #{email_id} in your {account.capitalize()} inbox, Sir."
+            return f"Could not find email #{email_id} in your {display_name} inbox, Sir."
 
         return (
             f"--- Email Details [ID: {details['id']}] ---\n"
@@ -405,9 +433,11 @@ def send_email(
     confirm: bool = False
 ) -> str:
     """Prepares and dispatches an outbound email with safety review."""
-    user, pwd, _, smtp_host, smtp_port, use_ssl = _get_credentials(account)
+    norm_acc = _normalize_account_type(account)
+    user, pwd, _, smtp_host, smtp_port, use_ssl = _get_credentials(norm_acc)
+    display_name = "Gmail" if norm_acc == "gmail" else norm_acc.capitalize()
     if not user or not pwd:
-        return f"{account.capitalize()} is not configured yet, Sir. Please add credentials to your .env file."
+        return f"{display_name} is not configured yet, Sir. Please add credentials to your .env file."
 
     to_clean = to_address.strip()
     subj_clean = subject.strip()
@@ -417,7 +447,7 @@ def send_email(
         return (
             f"Draft Email Prepared for Sir's Review:\n"
             f"=====================================\n"
-            f"Provider: {account.capitalize()} ({user})\n"
+            f"Provider: {display_name} ({user})\n"
             f"To:       {to_clean}\n"
             f"Subject:  {subj_clean}\n"
             f"Body:\n{body_clean}\n"
