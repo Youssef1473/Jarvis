@@ -179,6 +179,8 @@ Autonomous Self-Building & Dynamic Feature Creation:
         "create_or_update_custom_skill",
         "list_custom_skills",
         "delete_custom_skill",
+        "inspect_screen",
+        "see_screen",
     }
 
     TOOL_INTENT_GROUPS = (
@@ -203,11 +205,12 @@ Autonomous Self-Building & Dynamic Feature Creation:
         (("http://", "https://", "webpage", "website", "open url"), {"browse_and_read_webpage", "open_url_in_desktop_browser", "capture_webpage_screenshot"}),
         (("open", "launch", "start", "software", "program", "browser", "app"), {"launch_application"}),
         (("close", "terminate", "exit app", "kill app", "quit app"), {"close_application"}),
-        (("running", "open apps", "open windows", "active window", "focused window", "what am i looking at", "on my screen", "on screen", "my screen", "what is open"), {"get_active_window", "list_running_applications"}),
+        (("see my screen", "see the screen", "see screen", "look at my screen", "look at the screen", "inspect my screen", "inspect screen", "what's on my screen", "what is on my screen", "describe my screen", "read my screen", "read the screen", "screen vision"), {"inspect_screen", "see_screen", "get_active_window"}),
+        (("running", "open apps", "open windows", "active window", "focused window", "what am i looking at", "on my screen", "on screen", "my screen", "what is open"), {"get_active_window", "list_running_applications", "inspect_screen"}),
         (("vitals", "cpu", "ram", "memory usage", "hardware", "system status", "specs", "gpu"), {"get_system_vitals", "get_battery_status"}),
         (("clipboard", "copy", "copied", "paste"), {"read_clipboard", "copy_to_clipboard"}),
         (("lock", "lock pc", "lock computer", "lock workstation"), {"lock_workstation"}),
-        (("screenshot", "snapshot", "capture screen"), {"take_desktop_screenshot", "inspect_screen"}),
+        (("screenshot", "snapshot", "capture screen"), {"take_desktop_screenshot", "inspect_screen", "see_screen"}),
         (("timer", "countdown", "stopwatch", "alarm", "how much time left"), {"start_timer", "cancel_timer", "list_active_timers"}),
         (("protocol", "work protocol", "lockdown", "relax protocol", "night protocol", "coding mode", "focus mode"), {"execute_protocol"}),
         (("briefing", "morning briefing", "daily briefing", "morning protocol", "good morning"), {"get_daily_briefing"}),
@@ -335,8 +338,10 @@ Autonomous Self-Building & Dynamic Feature Creation:
         if self.active_task_mode == "code":
             return frozenset(self.CODE_TOOL_NAMES)
         if self.should_capture_screen(user_text):
-            # The vision request embeds the current screenshot directly.
-            return frozenset()
+            if self.provider == "gemini":
+                # The direct Gemini API session embeds the current screenshot directly.
+                return frozenset()
+            return frozenset({"inspect_screen", "see_screen"})
 
         query = user_text.lower()
         selected: set[str] = set()
@@ -737,6 +742,8 @@ Autonomous Self-Building & Dynamic Feature Creation:
             return f"Closing {app}, Sir."
         elif name == "take_desktop_screenshot":
             return "Capturing a screenshot of your screen now, Sir."
+        elif name in ("inspect_screen", "see_screen"):
+            return "Visually analyzing your screen display now, Sir."
         elif name == "adjust_volume":
             return "Adjusting the system volume, Sir."
         elif name == "control_media":
@@ -1175,18 +1182,35 @@ Autonomous Self-Building & Dynamic Feature Creation:
 
     @staticmethod
     def _extract_next_speech_chunk(buffer: str) -> tuple[Optional[str], str]:
-        """Extracts the next natural spoken clause or sentence from the streaming buffer."""
-        # 1. Prefer sentence terminal punctuation (. ! ? or newline)
-        m = re.search(r'(?<!\d)(?<!\b[A-Za-z])[.!?\n]+(?!\d)(\s+|$)', buffer)
-        if m and m.start() >= 2:
-            idx = m.end()
-            return buffer[:idx].strip(), buffer[idx:]
-        # 2. Natural pause clause (, ; :) if buffer exceeds 65 characters (ignoring colons between digits)
-        if len(buffer) > 65:
-            m_clause = re.search(r'(?:[,;]|(?<!\d):(?!\d))\s+', buffer[25:])
-            if m_clause:
-                cut_idx = 25 + m_clause.end()
-                return buffer[:cut_idx].strip(), buffer[cut_idx:]
+        """Extracts the next natural spoken clause or sentence from the streaming buffer
+        with speculative punctuation boundary emission for sub-100ms voice reflex latency."""
+        # Terminal punctuation (. ! ? \n)
+        m_term = re.search(r'(?<!\d)(?<!\b[A-Za-z])[.!?\n]+(?!\d)(\s+|$)', buffer)
+        # Speculative clause punctuation (, ; : — –) guarding colons/commas between digits
+        m_clause = re.search(r'(?:[,;—–]|(?<!\d):(?!\d))(\s+|$)', buffer)
+
+        candidates = []
+        if m_term and m_term.start() >= 2:
+            candidates.append((m_term.end(), m_term.start()))
+        if m_clause and m_clause.start() >= 3:
+            prefix_candidate = buffer[:m_clause.start()].strip()
+            if prefix_candidate and len(prefix_candidate.split()) >= 1:
+                candidates.append((m_clause.end(), m_clause.start()))
+
+        if candidates:
+            # Sort by earliest boundary in stream
+            candidates.sort(key=lambda x: x[1])
+            cut_idx = candidates[0][0]
+            prefix = buffer[:cut_idx].strip()
+            if prefix:
+                return prefix, buffer[cut_idx:]
+
+        # Fallback if buffer grows long without punctuation
+        if len(buffer) >= 80:
+            last_space = buffer.rfind(' ')
+            if last_space > 20:
+                return buffer[:last_space].strip(), buffer[last_space:]
+
         return None, buffer
 
     def classify_query_tier(self, query: str) -> str:

@@ -8,12 +8,29 @@ import re
 import sys
 import threading
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import sounddevice as sd
 import soundfile as sf
 import win32com.client
 
+from jarvis.audio.chunker import StreamingSentenceChunker
+from jarvis.audio.ring_buffer import AudioRingBuffer
+
 logger = logging.getLogger("Jarvis.TTS")
+
+__all__ = ["TextToSpeech", "StreamingSentenceChunker", "AudioRingBuffer"]
+
+
+def _set_thread_realtime_priority():
+    """Sets current thread priority to THREAD_PRIORITY_HIGHEST on Windows for zero audio jitter."""
+    try:
+        import ctypes
+        if sys.platform == "win32":
+            k32 = ctypes.windll.kernel32
+            k32.SetThreadPriority.argtypes = [ctypes.c_void_p, ctypes.c_int]
+            k32.SetThreadPriority(ctypes.c_void_p(-2), 2)  # THREAD_PRIORITY_HIGHEST = 2
+    except Exception as e:
+        logger.debug(f"Could not set thread real-time priority: {e}")
 
 
 class TextToSpeech:
@@ -46,12 +63,17 @@ class TextToSpeech:
         self._is_speaking = False
         self._stop_event = threading.Event()
         
-        # Streaming worker state (Double-buffered: text queue -> audio queue)
+        # Streaming worker state & Speculative Voice Reflex pipeline
         self._sentence_queue: queue.Queue = queue.Queue()
         self._audio_queue: queue.Queue = queue.Queue()
         self._synth_thread: Optional[threading.Thread] = None
         self._playback_thread: Optional[threading.Thread] = None
+        self._output_stream: Optional[sd.OutputStream] = None
         self._stream_active = False
+
+        # Speculative token chunker & high-throughput lock-free audio ring buffer
+        self._chunker = StreamingSentenceChunker()
+        self._ring_buffer = AudioRingBuffer(capacity_samples=24000 * 30)
 
         # Kokoro engine instance
         self._kokoro = None
@@ -65,11 +87,21 @@ class TextToSpeech:
     def _init_kokoro(self):
         """Initializes Kokoro neural engine with constrained CPU threading to prevent CPU spikes."""
         try:
-            # Silence phonemizer stderr mismatch warnings
+            # Silence phonemizer stderr mismatch warnings and protect Windows atexit teardown
             try:
                 import phonemizer.logger
                 phonemizer.logger.get_logger("quiet")
                 logging.getLogger("phonemizer").setLevel(logging.ERROR)
+                from phonemizer.backend.espeak.api import EspeakAPI
+                _orig_del = getattr(EspeakAPI, "_delete_win32", None)
+                if _orig_del:
+                    def _safe_del_win32(self):
+                        try:
+                            if getattr(self, "_library", None) and getattr(self._library, "_handle", None):
+                                _orig_del(self)
+                        except Exception:
+                            pass
+                    EspeakAPI._delete_win32 = _safe_del_win32
             except Exception:
                 pass
 
@@ -118,6 +150,14 @@ class TextToSpeech:
         self._stop_event.set()
         self._stream_active = False
 
+        # Reset speculative token chunker
+        if hasattr(self, "_chunker"):
+            self._chunker.reset()
+
+        # Clear audio ring buffer (< 1 microsecond atomic reset)
+        if hasattr(self, "_ring_buffer"):
+            self._ring_buffer.clear()
+
         # Empty queues
         while not self._sentence_queue.empty():
             try:
@@ -131,14 +171,24 @@ class TextToSpeech:
             except Exception:
                 break
 
-        # Halt sounddevice audio stream
-        try:
-            sd.stop()
-        except Exception:
-            pass
+        # Halt & close continuous sounddevice hardware output stream immediately via abort
+        stream = getattr(self, "_output_stream", None)
+        if stream:
+            try:
+                stream.abort()
+                stream.close()
+            except Exception:
+                pass
+            self._output_stream = None
+        else:
+            # Fallback halt for default sounddevice stream
+            try:
+                sd.stop()
+            except Exception:
+                pass
 
-        # Halt SAPI5 speech via SVSFPurgeBeforeSpeak (flag 2)
-        if self._sapi:
+        # Halt SAPI5 speech only if sapi engine was active
+        if self.engine == "sapi5" and self._sapi:
             try:
                 self._sapi.Speak("", 2)
             except Exception:
@@ -195,6 +245,11 @@ class TextToSpeech:
         self._is_speaking = True
         self._stream_active = True
 
+        if hasattr(self, "_chunker"):
+            self._chunker.reset()
+        if hasattr(self, "_ring_buffer"):
+            self._ring_buffer.clear()
+
         if self.engine == "kokoro" and self._kokoro:
             while not self._sentence_queue.empty():
                 try:
@@ -208,11 +263,12 @@ class TextToSpeech:
                 except Exception:
                     break
 
-            # Stage 1: Synthesis Producer Worker (Computes next sentence audio in background)
+            # Stage 1: Dedicated Synthesis Producer Worker with Real-Time Priority
             def _synth_worker():
+                _set_thread_realtime_priority()
                 while self._stream_active and not self._stop_event.is_set():
                     try:
-                        sentence = self._sentence_queue.get(timeout=0.1)
+                        sentence = self._sentence_queue.get(timeout=0.05)
                     except queue.Empty:
                         continue
 
@@ -236,32 +292,70 @@ class TextToSpeech:
                                 lang=self.kokoro_lang
                             )
                             if not self._stop_event.is_set():
+                                # Write directly to the audio ring buffer for gapless WASAPI playback
+                                self._ring_buffer.write(samples)
+                                # Keep legacy audio queue populated for backwards compatibility
                                 self._audio_queue.put((samples, sr))
                         except Exception as e:
                             logger.error(f"Kokoro synth error on '{chunk}': {e}")
 
-            # Stage 2: Audio Playback Consumer Worker (Plays pre-buffered audio seamlessly)
+            # Audio callback reading from lock-free audio ring buffer
+            def _audio_callback(outdata, frames, time_info, status):
+                if self._stop_event.is_set():
+                    outdata.fill(0.0)
+                    return
+                samples, n = self._ring_buffer.read(frames)
+                if n > 0:
+                    if outdata.ndim == 2 and outdata.shape[1] >= 2:
+                        outdata[:n, 0] = samples[:n]
+                        outdata[:n, 1] = samples[:n]
+                    elif outdata.ndim == 2:
+                        outdata[:n, 0] = samples[:n]
+                    else:
+                        outdata[:n] = samples[:n]
+                if n < frames:
+                    if outdata.ndim == 2:
+                        outdata[n:, :].fill(0.0)
+                    else:
+                        outdata[n:].fill(0.0)
+
+            # Stage 2: Hardware WASAPI / sounddevice Output Stream
+            use_stream_callback = True
+            try:
+                self._output_stream = sd.OutputStream(
+                    samplerate=24000,
+                    channels=2,
+                    dtype='float32',
+                    callback=_audio_callback
+                )
+                self._output_stream.start()
+            except Exception as e:
+                logger.warning(f"Could not open hardware OutputStream callback: {e}. Falling back to standard playback.")
+                use_stream_callback = False
+                self._output_stream = None
+
             def _playback_worker():
                 while self._stream_active and not self._stop_event.is_set():
                     try:
-                        item = self._audio_queue.get(timeout=0.1)
+                        item = self._audio_queue.get(timeout=0.05)
                     except queue.Empty:
                         continue
 
                     if item is None or self._stop_event.is_set():
                         break
 
-                    samples, sr = item
-                    try:
-                        sd.play(samples, sr)
-                        sd.wait()
-                    except Exception as e:
-                        logger.error(f"Playback error: {e}")
+                    if not use_stream_callback:
+                        samples, sr = item
+                        try:
+                            sd.play(samples, sr)
+                            sd.wait()
+                        except Exception as e:
+                            logger.error(f"Playback error: {e}")
 
                 self._is_speaking = False
 
-            self._synth_thread = threading.Thread(target=_synth_worker, daemon=True)
-            self._playback_thread = threading.Thread(target=_playback_worker, daemon=True)
+            self._synth_thread = threading.Thread(target=_synth_worker, daemon=True, name="Jarvis-TTS-Synth")
+            self._playback_thread = threading.Thread(target=_playback_worker, daemon=True, name="Jarvis-TTS-Play")
             self._synth_thread.start()
             self._playback_thread.start()
 
@@ -280,6 +374,27 @@ class TextToSpeech:
                             break
             except Exception as e:
                 logger.error(f"Failed to start streaming SAPI session: {e}")
+
+    def feed_token(self, token: str) -> List[str]:
+        """Streams an incremental LLM token into the speculative chunker.
+        Immediately dispatches newly-delimited phoneme clauses to the real-time synthesis queue."""
+        if not self._stream_active or self._stop_event.is_set():
+            return []
+
+        emitted_chunks = self._chunker.feed(token)
+        for chunk in emitted_chunks:
+            self.queue_sentence(chunk)
+        return emitted_chunks
+
+    def flush_tokens(self) -> List[str]:
+        """Flushes any remaining text in the speculative chunker into the synthesis queue."""
+        if not self._stream_active or self._stop_event.is_set():
+            return []
+
+        remaining_chunks = self._chunker.flush()
+        for chunk in remaining_chunks:
+            self.queue_sentence(chunk)
+        return remaining_chunks
 
     def queue_sentence(self, sentence: str):
         """Enqueues and immediately begins pre-synthesizing a sentence in real time."""
@@ -300,6 +415,9 @@ class TextToSpeech:
     def finish_streaming_session(self) -> bool:
         """Waits for all queued speech to finish; returns False only on a drain timeout."""
         if self.engine == "kokoro" and self._kokoro:
+            # Flush any un-emitted text in the speculative chunker
+            self.flush_tokens()
+
             self._sentence_queue.put(None)  # Signal synth worker
 
             # Do not declare the HUD idle while queued synthesis or audio is
@@ -308,15 +426,39 @@ class TextToSpeech:
             deadline = time.monotonic() + self.stream_timeout_seconds
             workers = [self._synth_thread, self._playback_thread]
             timed_out = False
-            for worker in workers:
-                while worker and worker.is_alive():
+
+            # Wait for synthesis thread to finish
+            if self._synth_thread:
+                while self._synth_thread.is_alive():
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         timed_out = True
                         break
-                    worker.join(timeout=min(0.1, remaining))
-                if timed_out:
+                    self._synth_thread.join(timeout=min(0.05, remaining))
+
+            # Wait for audio ring buffer / hardware output stream to drain
+            while (not self._ring_buffer.is_empty) and not self._stop_event.is_set() and not timed_out:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    timed_out = True
                     break
+                time.sleep(0.01)
+
+            # Brief cushion for DMA hardware buffer flush
+            if not self._stop_event.is_set() and not timed_out:
+                time.sleep(0.05)
+
+            # Stop and close the hardware output stream
+            if self._output_stream:
+                try:
+                    self._output_stream.stop()
+                    self._output_stream.close()
+                except Exception:
+                    pass
+                self._output_stream = None
+
+            if self._playback_thread and self._playback_thread.is_alive():
+                self._playback_thread.join(timeout=0.2)
 
             if timed_out:
                 logger.error(

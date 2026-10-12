@@ -12,11 +12,17 @@ __pycache__/
 .env
 
 # Data & database
-data/*.db
-data/test_memory.db
+data/*.db*
+data/test_memory.db*
 data/notes/
 data/research/
 data/screenshots/
+data/photos/
+data/intake/
+data/evolution_scratch/
+*.png
+jarvis/skills/custom/*.py
+!jarvis/skills/custom/__init__.py
 
 # Models cache
 *.onnx
