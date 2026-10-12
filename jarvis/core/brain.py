@@ -635,64 +635,75 @@ Autonomous Self-Building & Dynamic Feature Creation:
         Bypasses slow cloud round-trips for instant physical and spoken execution.
         """
         lower = norm_text.lower().strip()
+        # Strip common leading fillers: "no,", "hey jarvis,", "jarvis,", "okay jarvis,", "ok jarvis,", "please"
+        clean = re.sub(r"^(?:no[,.]?|hey jarvis[,.]?|jarvis[,.]?|okay jarvis[,.]?|ok jarvis[,.]?|please)\s+", "", lower).strip()
+        clean = re.sub(r"[.!?,]+$", "", clean).strip()
+
         # Disallow reflex execution if Sir is asking a question or self-evolution
-        if any(lower.startswith(w) for w in ("how ", "why ", "what is ", "what are ", "who is ", "can you explain", "explain ")) or any(
-            t in lower for t in ("add feature", "create feature", "build yourself", "create a skill", "add a skill", "create command", "add command", "teach yourself")
+        if any(clean.startswith(w) for w in ("how ", "why ", "what is ", "what are ", "who is ", "can you explain", "explain ")) or any(
+            t in clean for t in ("add feature", "create feature", "build yourself", "create a skill", "add a skill", "create command", "add command", "teach yourself")
         ):
             return None
 
         # 1. Master Volume
-        if re.search(r"^(?:please\s+)?(?:mute|unmute)(?:\s+(?:volume|audio|sound|workstation|pc))?$", lower):
+        if re.search(r"^(?:mute|unmute)(?:\s+(?:volume|audio|sound|workstation|pc))?$", clean):
             return SkillRegistry.execute("adjust_volume", action="mute")
-        if re.search(r"^(?:please\s+)?(?:volume up|turn up the volume|louder|increase volume|raise volume)$", lower):
+        if re.search(r"^(?:volume up|turn up the volume|louder|increase volume|raise volume)$", clean):
             return SkillRegistry.execute("adjust_volume", action="up")
-        if re.search(r"^(?:please\s+)?(?:volume down|turn down the volume|quieter|decrease volume|lower volume)$", lower):
+        if re.search(r"^(?:volume down|turn down the volume|quieter|decrease volume|lower volume)$", clean):
             return SkillRegistry.execute("adjust_volume", action="down")
-        vol_match = re.search(r"^(?:please\s+)?(?:set volume to|volume to|set volume|volume)\s+(\d{1,3})(?:%)?$", lower)
+        vol_match = re.search(r"^(?:set volume to|volume to|set volume|volume)\s+(\d{1,3})(?:%)?$", clean)
         if vol_match:
             return SkillRegistry.execute("adjust_volume", percent=int(vol_match.group(1)))
 
         # 2. Media Playback
-        if re.search(r"^(?:please\s+)?(?:play|pause|play pause|resume)(?:\s+(?:music|song|media|playback|spotify))?$", lower):
+        if re.search(r"^(?:play|pause|play pause|resume)(?:\s+(?:music|song|media|playback|spotify))?$", clean):
             return SkillRegistry.execute("control_media", action="playpause")
-        if re.search(r"^(?:please\s+)?(?:next song|next track|skip song|skip track|skip)(?:\s+song|\s+track)?$", lower):
+        if re.search(r"^(?:next song|next track|skip song|skip track|skip)(?:\s+song|\s+track)?$", clean):
             return SkillRegistry.execute("control_media", action="next")
-        if re.search(r"^(?:please\s+)?(?:previous song|previous track|prev song|prev track|back track)$", lower):
+        if re.search(r"^(?:previous song|previous track|prev song|prev track|back track)$", clean):
             return SkillRegistry.execute("control_media", action="previous")
 
         # 3. Workstation & Window Management
-        if re.search(r"^(?:please\s+)?(?:show desktop|minimize all|minimize all windows|minimize windows|go to desktop)$", lower):
+        if re.search(r"^(?:show desktop|minimize all|minimize all windows|minimize windows|go to desktop)$", clean):
             return SkillRegistry.execute("minimize_all_windows")
-        if re.search(r"^(?:please\s+)?(?:lock workstation|lock pc|lock computer|lock screen|lock the pc)$", lower):
+        if re.search(r"^(?:lock workstation|lock pc|lock computer|lock screen|lock the pc)$", clean):
             return SkillRegistry.execute("lock_workstation")
-        if re.search(r"^(?:please\s+)?(?:take screenshot|take a screenshot|capture screenshot|capture screen)$", lower):
+        if re.search(r"^(?:take screenshot|take a screenshot|capture screenshot|capture screen)$", clean):
             return SkillRegistry.execute("take_desktop_screenshot")
-        if re.search(r"^(?:what is the\s+)?(?:active window|focused window|what window is this|what am i looking at)$", lower):
+        if re.search(r"^(?:what is the\s+)?(?:active window|focused window|what window is this|what am i looking at)$", clean):
             return SkillRegistry.execute("get_active_window")
-        if re.search(r"^(?:list\s+)?(?:running applications|running apps|open windows|what apps are open|what is open)$", lower):
+        if re.search(r"^(?:list\s+)?(?:running applications|running apps|open windows|what apps are open|what is open)$", clean):
             return SkillRegistry.execute("list_running_applications")
-        if re.search(r"^(?:system vitals|workstation vitals|hardware vitals|system status|hardware status)$", lower):
+        if re.search(r"^(?:system vitals|workstation vitals|hardware vitals|system status|hardware status)$", clean):
             return SkillRegistry.execute("get_system_vitals")
-        if re.search(r"^(?:battery status|battery level|battery percentage|check battery|how much battery)$", lower):
+        if re.search(r"^(?:battery status|battery level|battery percentage|check battery|how much battery)$", clean):
             return SkillRegistry.execute("get_battery_status")
 
         # 4. Browser Tabs & Browsers
-        if re.search(r"^(?:please\s+)?(?:open|launch|start|open a|new)\s+(?:brave\s+tab|brave|brave browser)$", lower):
+        # Brave variations (e.g. "open a tab in brave", "open a tab and brave", "open brave", "new brave tab")
+        if re.search(r"^(?:open|launch|start|new)?\s*(?:a\s+)?(?:new\s+)?tab\s+(?:in|and|on|for)\s+brave$|^(?:open|launch|start|open a|new)\s+(?:brave\s+tab|brave|brave browser)$|^brave\s+tab$", clean):
             return SkillRegistry.execute("open_browser_tab", browser="brave")
-        if re.search(r"^(?:please\s+)?(?:open|launch|start|open a|new)\s+(?:chrome\s+tab|chrome|chrome browser)$", lower):
+
+        # Chrome variations
+        if re.search(r"^(?:open|launch|start|new)?\s*(?:a\s+)?(?:new\s+)?tab\s+(?:in|and|on|for)\s+chrome$|^(?:open|launch|start|open a|new)\s+(?:chrome\s+tab|chrome|chrome browser)$|^chrome\s+tab$", clean):
             return SkillRegistry.execute("open_browser_tab", browser="chrome")
-        if re.search(r"^(?:please\s+)?(?:open|launch|start|open a|new)\s+(?:edge\s+tab|edge|msedge)$", lower):
+
+        # Edge variations
+        if re.search(r"^(?:open|launch|start|new)?\s*(?:a\s+)?(?:new\s+)?tab\s+(?:in|and|on|for)\s+edge$|^(?:open|launch|start|open a|new)\s+(?:edge\s+tab|edge|msedge)$|^edge\s+tab$", clean):
             return SkillRegistry.execute("open_browser_tab", browser="msedge")
-        if re.search(r"^(?:please\s+)?(?:open a new tab|new tab|open new tab)$", lower):
+
+        # Generic new tab
+        if re.search(r"^(?:open|launch|new)?\s*(?:a\s+)?(?:new\s+)?tab$", clean):
             return SkillRegistry.execute("open_browser_tab")
 
         # 5. Window Switching / Focus
-        focus_match = re.search(r"^(?:please\s+)?(?:switch to|focus|bring up)\s+(brave|chrome|discord|spotify|code|vs code|terminal|notepad|calculator|explorer|files)$", lower)
+        focus_match = re.search(r"^(?:switch to|focus|bring up)\s+(brave|chrome|discord|spotify|code|vs code|terminal|notepad|calculator|explorer|files)$", clean)
         if focus_match:
             return SkillRegistry.execute("focus_window", title=focus_match.group(1))
 
         # 6. Direct Application Launching
-        app_match = re.search(r"^(?:please\s+)?(?:open|launch)\s+(calculator|calc|notepad|spotify|discord|terminal|task manager|settings)$", lower)
+        app_match = re.search(r"^(?:open|launch)\s+(calculator|calc|notepad|spotify|discord|terminal|task manager|settings)$", clean)
         if app_match:
             return SkillRegistry.execute("launch_application", app_name=app_match.group(1))
 

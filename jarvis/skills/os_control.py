@@ -52,7 +52,38 @@ def _build_app_index() -> Dict[str, str]:
 
     apps: Dict[str, str] = {}
 
-    # 1. Start Menu shortcuts
+    # 1. Windows App Paths registry (Direct .exe executable paths)
+    for root_key in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        try:
+            with winreg.OpenKey(root_key, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths") as key:
+                num_subkeys, _, _ = winreg.QueryInfoKey(key)
+                for i in range(num_subkeys):
+                    try:
+                        subkey_name = winreg.EnumKey(key, i)
+                        with winreg.OpenKey(key, subkey_name) as subkey:
+                            app_path, _ = winreg.QueryValueEx(subkey, "")
+                            if app_path and os.path.exists(app_path):
+                                base_name = os.path.splitext(subkey_name)[0].lower()
+                                apps[base_name] = app_path
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
+    # 1b. Direct standard browser paths in LocalAppData / Program Files
+    known_direct = {
+        "brave": os.path.expandvars(r"%LOCALAPPDATA%\BraveSoftware\Brave-Browser\Application\brave.exe"),
+        "chrome": os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+        "chrome_user": os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        "msedge": os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+    }
+    for b_key, b_path in known_direct.items():
+        if os.path.exists(b_path):
+            clean_k = b_key.split("_")[0]
+            if clean_k not in apps or not apps[clean_k].lower().endswith(".exe"):
+                apps[clean_k] = b_path
+
+    # 2. Start Menu shortcuts (.lnk files as secondary fallback)
     start_dirs = [
         os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs"),
         os.path.expandvars(r"%PROGRAMDATA%\Microsoft\Windows\Start Menu\Programs"),
@@ -66,29 +97,11 @@ def _build_app_index() -> Dict[str, str]:
                     if f.lower().endswith(".lnk"):
                         name = os.path.splitext(f)[0].lower().strip()
                         full_path = os.path.join(root, f)
+                        # Only register shortcut if not already indexed as an .exe
                         if name not in apps:
                             apps[name] = full_path
         except Exception as e:
             logger.debug(f"Start Menu scan notice for '{s_dir}': {e}")
-
-    # 2. Windows App Paths registry
-    for root_key in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
-        try:
-            with winreg.OpenKey(root_key, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths") as key:
-                num_subkeys, _, _ = winreg.QueryInfoKey(key)
-                for i in range(num_subkeys):
-                    try:
-                        subkey_name = winreg.EnumKey(key, i)
-                        with winreg.OpenKey(key, subkey_name) as subkey:
-                            app_path, _ = winreg.QueryValueEx(subkey, "")
-                            if app_path and os.path.exists(app_path):
-                                base_name = os.path.splitext(subkey_name)[0].lower()
-                                if base_name not in apps:
-                                    apps[base_name] = app_path
-                    except Exception:
-                        continue
-        except Exception:
-            pass
 
     _app_index_cache = apps
     _app_index_initialized = True
@@ -721,21 +734,28 @@ def open_browser_tab(url: str = "", browser: str = "brave") -> str:
                 break
 
     if browser_exe:
-        try:
-            cmd = [browser_exe]
-            if target_url:
-                cmd.append(target_url)
-            else:
-                cmd.append("https://google.com")
-            subprocess.Popen(
-                cmd,
-                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-                close_fds=True,
-            )
-            dest = f"to '{target_url}'" if target_url else "with a new tab"
-            return f"Opened {browser_clean.title()} {dest}, Sir."
-        except Exception as e:
-            logger.warning(f"Failed to spawn {browser_clean}: {e}")
+        if browser_exe.lower().endswith(".lnk"):
+            try:
+                os.startfile(browser_exe)
+                return f"Opened {browser_clean.title()} with a new tab, Sir."
+            except Exception as e:
+                logger.warning(f"Failed to start shortcut {browser_exe}: {e}")
+        else:
+            try:
+                cmd = [browser_exe]
+                if target_url:
+                    cmd.append(target_url)
+                else:
+                    cmd.append("--new-tab")
+                subprocess.Popen(
+                    cmd,
+                    creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+                    close_fds=True,
+                )
+                dest = f"to '{target_url}'" if target_url else "with a new tab"
+                return f"Opened {browser_clean.title()} {dest}, Sir."
+            except Exception as e:
+                logger.warning(f"Failed to spawn {browser_clean}: {e}")
 
     try:
         webbrowser.open_new_tab(target_url or "https://google.com")
