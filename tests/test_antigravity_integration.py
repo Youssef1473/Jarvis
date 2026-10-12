@@ -85,6 +85,58 @@ class TestAntigravityIntegration(unittest.TestCase):
         reply = ag_brain.process_query("What is 10 plus 15? Answer with only the number.")
         self.assertIn("25", reply)
 
+    def test_cascade_pool_building(self):
+        """Verifies candidate fallback pools are constructed properly."""
+        flash_cascade = self.bridge.get_candidate_cascade("flash")
+        self.assertEqual(flash_cascade[0], "gemini-3.8-flash-low")
+        self.assertIn("gemini-3.7-flash-low", flash_cascade)
+        self.assertIn("gemini-3.6-flash-low", flash_cascade)
+
+        pro_cascade = self.bridge.get_candidate_cascade("pro")
+        self.assertEqual(pro_cascade[0], "gemini-3.1-pro-low")
+        self.assertIn("gemini-3.8-flash-low", pro_cascade)
+
+        claude_cascade = self.bridge.get_candidate_cascade("claude")
+        self.assertEqual(claude_cascade[0], "claude-sonnet-4-6")
+        self.assertIn("gemini-3.1-pro-low", claude_cascade)
+
+    def test_prompt_complexity_auto_tiering(self):
+        """Verifies prompt classification routes correctly to Flash, Pro, and Claude."""
+        self.assertEqual(self.bridge.classify_prompt_tier("def refactor_code(): return True"), "claude-sonnet-4-6")
+        self.assertEqual(self.bridge.classify_prompt_tier("analyze the strategy and architecture of the codebase"), "gemini-3.1-pro-low")
+        self.assertEqual(self.bridge.classify_prompt_tier("hello jarvis what time is it"), "gemini-3.8-flash-low")
+
+    def test_voice_model_switching_commands(self):
+        """Verifies voice commands dynamically switch models and auto-tiering."""
+        brain = JarvisBrain(self.config, self.memory, self.safety)
+        
+        # Test switch to pro
+        res_pro = brain.process_query("switch to pro")
+        self.assertIn("gemini-3.1-pro-low", res_pro)
+        self.assertFalse(brain.antigravity_auto_tiering)
+        self.assertEqual(brain.antigravity_model, "gemini-3.1-pro-low")
+
+        # Test switch to flash
+        res_flash = brain.process_query("switch to flash")
+        self.assertIn("gemini-3.8-flash-low", res_flash)
+        self.assertFalse(brain.antigravity_auto_tiering)
+        self.assertEqual(brain.antigravity_model, "gemini-3.8-flash-low")
+
+        # Test switch to claude
+        res_claude = brain.process_query("switch to claude")
+        self.assertIn("claude-sonnet-4-6", res_claude)
+        self.assertFalse(brain.antigravity_auto_tiering)
+        self.assertEqual(brain.antigravity_model, "claude-sonnet-4-6")
+
+        # Test switch to auto
+        res_auto = brain.process_query("switch to auto")
+        self.assertIn("Dynamic model tiering activated", res_auto)
+        self.assertTrue(brain.antigravity_auto_tiering)
+
+        # Test what model is active
+        res_active = brain.process_query("what model are you using")
+        self.assertIn("auto-tiering", res_active)
+
 
 if __name__ == "__main__":
     unittest.main()

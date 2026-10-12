@@ -229,6 +229,7 @@ Universal Document & PDF Ingestion:
             m for m in self.ANTIGRAVITY_CANDIDATE_MODELS if m != configured_ag_model
         ]
         self.antigravity_model = self.antigravity_candidates[0]
+        self.antigravity_auto_tiering = config.get("llm", {}).get("antigravity_auto_tiering", True)
 
         # Dynamic round-trip latency tracking in milliseconds
         self.last_latencies: Dict[str, float] = {
@@ -591,6 +592,43 @@ Universal Document & PDF Ingestion:
 
     def process_query(self, user_text: str, sentence_callback: Any = None) -> str:
         """Routes normal conversation to the configured primary model; consultations are explicit."""
+        # Voice model switching commands for Google AI Pro fleet
+        auto_match = re.match(
+            r"^\s*(?:switch to|use|activate|set model to|enable)\s+(?:auto|automatic|dynamic)\s*(?:tiering|mode|model)?\s*$",
+            user_text,
+            re.IGNORECASE,
+        )
+        if auto_match and getattr(self, "antigravity_bridge", None) and self.antigravity_bridge.is_available():
+            self.antigravity_auto_tiering = True
+            reply = "Dynamic model tiering activated, Sir. Routing automatically between Gemini Flash for speed, Gemini Pro for reasoning, and Claude for code."
+            if sentence_callback:
+                sentence_callback(reply)
+            return reply
+
+        switch_match = re.match(
+            r"^\s*(?:switch to|use|activate|set model to|enable)\s+(pro|flash|claude|sonnet|opus|gemini|3\.8|3\.7|3\.6)\s*(?:mode|model)?\s*$",
+            user_text,
+            re.IGNORECASE,
+        )
+        if switch_match and getattr(self, "antigravity_bridge", None) and self.antigravity_bridge.is_available():
+            target = switch_match.group(1).lower().strip()
+            new_model = self.antigravity_bridge.resolve_model(target)
+            self.antigravity_model = new_model
+            self.antigravity_auto_tiering = False
+            reply = f"Cognitive link locked to {new_model}, Sir. Ready for your command."
+            if sentence_callback:
+                sentence_callback(reply)
+            return reply
+
+        if any(user_text.lower().strip() == p for p in ["what model are you using", "what is your active model", "current model", "active model", "what model is active"]):
+            if getattr(self, "antigravity_auto_tiering", True):
+                reply = f"My cognitive uplink is in dynamic auto-tiering mode (defaulting to {self.antigravity_model}), Sir."
+            else:
+                reply = f"My active cognitive uplink is currently locked to {self.antigravity_model}, Sir."
+            if sentence_callback:
+                sentence_callback(reply)
+            return reply
+
         consultation = re.match(
             r"^\s*(?:/consult|consult)\s+(gemini|gemini-pro|gemini-flash|pro|flash|groq|grok|claude|sonnet|opus|gpt-oss|antigravity|agy)\s*:?\s*(.+)$",
             user_text,
@@ -1495,11 +1533,17 @@ Universal Document & PDF Ingestion:
             )
             prompt = tools_block + f"Sir asks: {user_text}"
 
+        # Determine target model dynamically if auto-tiering is active
+        if getattr(self, "antigravity_auto_tiering", True):
+            target_model = self.antigravity_bridge.classify_prompt_tier(user_text)
+        else:
+            target_model = self.antigravity_model
+
         # Stream directly if no tools needed
         stream_cb = sentence_callback if not has_tools else None
         res = self.antigravity_bridge.generate_response(
             prompt=prompt,
-            model=self.antigravity_model,
+            model=target_model,
             system_instruction=system_instruction,
             sentence_callback=stream_cb,
             timeout=90.0,
@@ -1537,7 +1581,7 @@ Universal Document & PDF Ingestion:
             )
             followup_res = self.antigravity_bridge.generate_response(
                 prompt=followup_prompt,
-                model=self.antigravity_model,
+                model=target_model,
                 system_instruction=system_instruction,
                 sentence_callback=sentence_callback,
                 timeout=60.0,
@@ -1549,6 +1593,6 @@ Universal Document & PDF Ingestion:
         self.memory.log_interaction(user_text, reply, None)
         self.memory.auto_learn_from_interaction(user_text, reply, provider=self.provider)
         elapsed_ms = round((time.perf_counter() - t_start) * 1000, 1)
-        logger.info("Inference latency (antigravity - %s): %sms", self.antigravity_model, elapsed_ms)
+        logger.info("Inference latency (antigravity - %s): %sms", target_model, elapsed_ms)
         return reply
 

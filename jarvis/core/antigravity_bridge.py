@@ -64,6 +64,22 @@ class AntigravityBridge:
         "gpt-oss": "gpt-oss-120b-medium",
     }
 
+    TIER_FLASH = [
+        "gemini-3.8-flash-low",
+        "gemini-3.7-flash-low",
+        "gemini-3.6-flash-low",
+        "gemini-3.8-flash-medium",
+        "gemini-3.8-flash-high",
+    ]
+    TIER_PRO = [
+        "gemini-3.1-pro-low",
+        "gemini-3.1-pro-high",
+    ]
+    TIER_CLAUDE = [
+        "claude-sonnet-4-6",
+        "claude-opus-4-6-thinking",
+    ]
+
     DEFAULT_MODEL = "gemini-3.1-pro-low"
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -124,6 +140,38 @@ class AntigravityBridge:
                 models.append(v)
         return models
 
+    def get_candidate_cascade(self, model: str) -> List[str]:
+        """Builds a priority fallback cascade within the Google AI Pro fleet."""
+        resolved = self.resolve_model(model)
+        if "flash" in resolved:
+            pool = list(self.TIER_FLASH)
+        elif "pro" in resolved:
+            pool = list(self.TIER_PRO) + ["gemini-3.8-flash-low"]
+        elif "claude" in resolved:
+            pool = list(self.TIER_CLAUDE) + ["gemini-3.1-pro-low", "gemini-3.8-flash-low"]
+        else:
+            pool = [resolved, "gemini-3.8-flash-low", "gemini-3.1-pro-low"]
+
+        # Ensure requested model is first
+        ordered = [resolved] + [m for m in pool if m != resolved]
+        return ordered
+
+    def classify_prompt_tier(self, prompt: str) -> str:
+        """Determines optimal Google AI Pro model tier based on task complexity."""
+        p = prompt.lower().strip()
+        # 1. Code & Technical Engineering -> Claude Sonnet 4.6
+        code_words = ["def ", "class ", "function", "refactor", "bug", "traceback", "git ", "compile", "script", "syntax", "patch", "pytest", "unittest", "repo", "import "]
+        if any(w in p for w in code_words):
+            return "claude-sonnet-4-6"
+
+        # 2. Hard Reasoning, Math, Logic, Planning -> Gemini 3.1 Pro
+        reasoning_words = ["analyze", "plan", "strategy", "why does", "math", "calculate", "solve", "syllabus", "timetable", "essay", "architecture", "compare", "proof"]
+        if any(w in p for w in reasoning_words) or len(p.split()) > 25:
+            return "gemini-3.1-pro-low"
+
+        # 3. Fast Voice, Banter, Greetings, Device control -> Gemini 3.8 Flash
+        return "gemini-3.8-flash-low"
+
     def generate_response(
         self,
         prompt: str,
@@ -132,9 +180,10 @@ class AntigravityBridge:
         sentence_callback: Optional[Callable[[str], None]] = None,
         timeout: float = 90.0,
         conversation_id: Optional[str] = None,
+        candidates: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Generates an LLM response using the authenticated Antigravity CLI.
-        Supports both single-turn batch JSON and real-time streaming to Kokoro TTS.
+        Supports automatic cascading pool failover within the Google AI Pro fleet.
         """
         if not self.is_available():
             return {
@@ -149,22 +198,43 @@ class AntigravityBridge:
         if system_instruction and system_instruction.strip():
             full_prompt = f"[System Context & Directives]\n{system_instruction.strip()}\n\n[User Request]\n{full_prompt}"
 
-        # If sentence_callback is supplied, use real-time stream-json for lowest Time-to-First-Audio
-        if sentence_callback:
-            return self._generate_streaming(
-                prompt=full_prompt,
-                model=target_model,
-                sentence_callback=sentence_callback,
-                timeout=timeout,
-                conversation_id=conversation_id,
+        # Cascade through candidate models in priority order
+        cascade_models = candidates or self.get_candidate_cascade(target_model)
+        last_error_res = None
+
+        for attempt_model in cascade_models:
+            if sentence_callback:
+                res = self._generate_streaming(
+                    prompt=full_prompt,
+                    model=attempt_model,
+                    sentence_callback=sentence_callback,
+                    timeout=timeout,
+                    conversation_id=conversation_id,
+                )
+            else:
+                res = self._generate_batch(
+                    prompt=full_prompt,
+                    model=attempt_model,
+                    timeout=timeout,
+                    conversation_id=conversation_id,
+                )
+
+            if res.get("status") == "SUCCESS":
+                return res
+
+            last_error_res = res
+            logger.warning(
+                "Antigravity model candidate '%s' failed (%s). Cascading to next candidate in pool...",
+                attempt_model,
+                res.get("response", "")[:80]
             )
-        else:
-            return self._generate_batch(
-                prompt=full_prompt,
-                model=target_model,
-                timeout=timeout,
-                conversation_id=conversation_id,
-            )
+
+        return last_error_res or {
+            "status": "ERROR",
+            "response": "All Antigravity candidate models failed, Sir.",
+            "duration_seconds": 0.0,
+            "usage": {},
+        }
 
     def _generate_batch(
         self,
