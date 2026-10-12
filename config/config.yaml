@@ -3,10 +3,10 @@
 # ==============================================================================
 
 llm:
-  provider: "hybrid"              # Providers: "hybrid", "antigravity" (Google AI Pro), "ollama", "groq", "gemini"
-  antigravity_model: "gemini-3.1-pro-low" # Google AI Pro Models: "gemini-3.1-pro-low", "gemini-3.8-flash-low", "claude-sonnet-4-6", "claude-opus-4-6-thinking"
+  provider: "antigravity"              # Providers: "hybrid", "antigravity" (Google AI Pro), "ollama", "groq", "gemini"
+  antigravity_model: "gemini-3.8-flash-low" # Google AI Pro Models: "gemini-3.1-pro-low", "gemini-3.8-flash-low", "claude-sonnet-4-6", "claude-opus-4-6-thinking"
   antigravity_effort: "low"        # Reasoning effort: "low", "medium", "high"
-  antigravity_auto_tiering: true   # Automatically route prompt to Flash (chat), Pro (reasoning), Claude (code)
+  antigravity_auto_tiering: false  # Automatically route prompt to Flash (chat), Pro (reasoning), Claude (code)
   ollama_base_url: "http://127.0.0.1:11434/v1"
   ollama_model: "qwen3.5:2b-q4_K_M" # Compact local vision/tool model for 4 GB GPUs
   ollama_timeout_seconds: 180

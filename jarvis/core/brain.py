@@ -57,10 +57,11 @@ Your Persona & Demeanor:
 
 Do not assume personal details, preferences, hardware, or account information unless they are provided in the current conversation or returned by a memory tool.
 
-Voice & Audio Optimization:
-- You speak aloud via Text-to-Speech.
-- Keep your answers CONCISE, conversational, and direct. Avoid reading out raw URLs, long markdown tables, or massive code walls.
-- Deliver the core answer or action taken first, then offer further assistance if appropriate.
+Interactive Conversational Partner & Real-Time Presence:
+- You are Jarvis: Tony Stark's brilliant, articulate, and deeply collaborative AI partner.
+- Talk with Sir like a genuine partner: keep him actively briefed on what you are thinking, your ideas, and your strategy as you work.
+- Never act as a silent black box that leaves Sir waiting in silence. When tackling complex tasks, investigating files, or engineering new capabilities, outline your thinking, observations, and ideas conversationally.
+- Voice delivery: You speak aloud via Text-to-Speech. Keep phrasing natural, sharp, engaging, and direct. Avoid reading raw URLs, markdown tables, or massive code dumps. Deliver spoken answers with charisma, warmth, and technical clarity.
 
 Capabilities & Workstation Desktop Control:
 - You run natively with full integration into Sir's Windows desktop and operating system.
@@ -709,6 +710,84 @@ Autonomous Self-Building & Dynamic Feature Creation:
 
         return None
 
+    @staticmethod
+    def _narrate_tool_action(fn_name: str, fn_args: Dict[str, Any]) -> str:
+        """Returns a natural, safe spoken phrase describing an action before execution."""
+        from pathlib import Path
+        name = fn_name.lower().strip()
+
+        # Browser
+        if name == "open_browser_tab":
+            b = fn_args.get("browser") or "your browser"
+            return f"Opening a new tab in {b}, Sir."
+        elif name == "focus_window":
+            title = fn_args.get("title") or "the application"
+            return f"Switching to {title}, Sir."
+        elif name == "launch_application":
+            app = fn_args.get("app_name") or "the requested application"
+            return f"Launching {app}, Sir."
+        elif name == "close_application":
+            app = fn_args.get("app_name") or "the application"
+            return f"Closing {app}, Sir."
+        elif name == "take_desktop_screenshot":
+            return "Capturing a screenshot of your screen now, Sir."
+        elif name == "adjust_volume":
+            return "Adjusting the system volume, Sir."
+        elif name == "control_media":
+            return "Updating media playback, Sir."
+        elif name == "minimize_all_windows":
+            return "Minimizing windows to reveal your desktop, Sir."
+        elif name == "lock_workstation":
+            return "Locking the workstation, Sir."
+        elif name == "get_system_vitals":
+            return "Checking system vitals and hardware telemetry, Sir."
+        elif name == "get_battery_status":
+            return "Checking battery levels, Sir."
+
+        # Self-Evolution & Code Building
+        elif name == "create_or_update_custom_skill":
+            skill = fn_args.get("skill_name", "").replace("_", " ").strip()
+            return f"Engineering the '{skill}' capability now, Sir. Validating syntax and compiling it into memory."
+        elif name == "list_custom_skills":
+            return "Retrieving your custom engineered capabilities, Sir."
+        elif name == "delete_custom_skill":
+            skill = fn_args.get("skill_name", "").replace("_", " ").strip()
+            return f"Removing custom skill '{skill}', Sir."
+
+        # Dev & Codebase Stewardship
+        elif name == "search_codebase":
+            query = fn_args.get("query", "")
+            return f"Searching the repository for {query}, Sir." if query else "Scanning the codebase, Sir."
+        elif name == "read_file":
+            fname = Path(fn_args.get("file_path", "the file")).name
+            return f"Reading {fname}, Sir."
+        elif name == "write_file":
+            fname = Path(fn_args.get("file_path", "the file")).name
+            return f"Writing updates to {fname}, Sir."
+        elif name == "patch_file":
+            fname = Path(fn_args.get("file_path", "the file")).name
+            return f"Patching {fname}, Sir."
+        elif name == "execute_powershell":
+            return "Executing command in the terminal, Sir."
+        elif name == "run_project_tests":
+            return "Running the test suite to verify our changes, Sir."
+
+        # Calendar & Documents
+        elif name == "list_calendar_events":
+            return "Consulting your calendar schedule, Sir."
+        elif name == "add_calendar_event":
+            return "Adding the event to your schedule, Sir."
+        elif name == "cancel_calendar_event":
+            return "Updating your schedule and cancelling the event, Sir."
+        elif name == "process_staged_document":
+            return "Parsing and extracting details from your document, Sir."
+        elif name == "recall_past_conversation":
+            return "Consulting our past conversation records, Sir."
+
+        # Generic / dynamic custom skill
+        humanized = name.replace("_", " ").capitalize()
+        return f"Executing {humanized}, Sir."
+
     def process_query(self, user_text: str, sentence_callback: Any = None) -> str:
         """Routes normal conversation to the configured primary model; consultations are explicit."""
         # Strip leading/trailing punctuation and whitespace for robust voice command recognition
@@ -1315,9 +1394,15 @@ Autonomous Self-Building & Dynamic Feature Creation:
                             fn_args = {}
 
                         logger.info(f"{self.provider.upper()} Tool call: {fn_name}({fn_args})")
+                        if sentence_callback:
+                            narrative = self._narrate_tool_action(fn_name, fn_args)
+                            sentence_callback(narrative)
+
                         is_safe, warning = self.safety.check_tool_call(fn_name, fn_args)
                         if not is_safe:
                             tool_result = f"Action halted: {warning}"
+                            if sentence_callback:
+                                sentence_callback(f"Action halted: {warning}")
                         else:
                             tool_result = SkillRegistry.execute(fn_name, **fn_args)
                             last_tool_result = str(tool_result)
@@ -1635,10 +1720,15 @@ Autonomous Self-Building & Dynamic Feature Creation:
                         tool_name = call.name
                         tool_args = dict(call.args) if call.args else {}
                         logger.info(f"Tool call: {tool_name}({tool_args})")
+                        if sentence_callback:
+                            narrative = self._narrate_tool_action(tool_name, tool_args)
+                            sentence_callback(narrative)
 
                         is_safe, warning = self.safety.check_tool_call(tool_name, tool_args)
                         if not is_safe:
                             tool_result = f"Action halted: {warning}"
+                            if sentence_callback:
+                                sentence_callback(f"Action halted: {warning}")
                         else:
                             tool_result = SkillRegistry.execute(tool_name, **tool_args)
 
@@ -1774,10 +1864,29 @@ Autonomous Self-Building & Dynamic Feature Creation:
                 nonlocal is_tool_chunk, streamed_to_tts
                 if is_tool_chunk:
                     return
-                stripped = chunk.strip()
-                if stripped.startswith("{") or '"tool"' in stripped or "```" in stripped:
+                # Look for tool call JSON boundary in chunk
+                tool_marker_idx = -1
+                for marker in ('{"tool"', '{"tool', '{ "tool"', '{ "tool'):
+                    pos = chunk.find(marker)
+                    if pos != -1:
+                        tool_marker_idx = pos
+                        break
+                if tool_marker_idx == -1 and chunk.strip().startswith("{"):
+                    tool_marker_idx = chunk.find("{")
+
+                if tool_marker_idx != -1:
+                    is_tool_chunk = True
+                    # If model provided conversational thought or explanation before tool call, stream it!
+                    spoken_prefix = chunk[:tool_marker_idx].strip()
+                    if spoken_prefix and len(spoken_prefix.split()) >= 2 and sentence_callback:
+                        streamed_to_tts = True
+                        sentence_callback(spoken_prefix)
+                    return
+
+                if "```" in chunk:
                     is_tool_chunk = True
                     return
+
                 streamed_to_tts = True
                 if sentence_callback:
                     sentence_callback(chunk)
@@ -1812,9 +1921,15 @@ Autonomous Self-Building & Dynamic Feature Creation:
                 fn_args = {}
 
             logger.info("ANTIGRAVITY Tool call [%d/%d]: %s(%s)", iterations, max_tool_iterations, fn_name, fn_args)
+            if sentence_callback:
+                narrative = self._narrate_tool_action(fn_name, fn_args)
+                sentence_callback(narrative)
+
             is_safe, warning = self.safety.check_tool_call(fn_name, fn_args)
             if not is_safe:
                 tool_result = f"Action halted: {warning}"
+                if sentence_callback:
+                    sentence_callback(f"Action halted: {warning}")
             else:
                 tool_result = SkillRegistry.execute(fn_name, **fn_args)
             last_tool_result = str(tool_result)

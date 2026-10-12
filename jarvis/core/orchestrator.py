@@ -353,17 +353,40 @@ class JarvisOrchestrator:
         is_model_switch = bool(re.match(r"^(?:switch to|use|activate|set model to|enable)\s+(pro|flash|claude|sonnet|opus|gemini|3\.8|3\.1)", norm_query, re.I))
 
         queued_ack = None
-        # For non-reflex cognitive tasks, speak an immediate acknowledgment (<200ms) so Sir is never left in silence
-        if not is_fast_reflex and not is_model_switch and len(norm_query.split()) >= 3:
-            import random
-            queued_ack = random.choice(["Right away, Sir.", "On it, Sir."])
-            self.tts.queue_sentence(queued_ack)
+        # For non-reflex cognitive tasks, speak an immediate contextual intent update (<150ms) so Sir is never left in silence
+        if not is_fast_reflex and not is_model_switch:
+            lower = norm_query.lower()
+            if any(k in lower for k in ["teach yourself", "add a feature", "create a feature", "create a skill", "build a skill", "learn how", "learn to"]):
+                queued_ack = "On it, Sir. Conceptualizing the architecture and writing the capability now."
+            elif any(lower.startswith(k) for k in ["search", "find", "locate", "where is", "where are", "lookup", "look up", "scan"]):
+                queued_ack = "Scanning through the codebase now, Sir."
+            elif any(k in lower for k in ["fix this", "patch this", "write code", "implement", "refactor", "run tests"]):
+                queued_ack = "Analyzing the implementation and preparing the changes, Sir."
+            elif any(k in lower for k in ["read that", "process that pdf", "ingest", "parse that"]):
+                queued_ack = "Parsing the document details now, Sir."
+            elif any(lower.startswith(k) for k in ["why", "explain", "analyze", "compare", "break down"]):
+                queued_ack = "Analyzing that now, Sir. Here is my assessment."
+            elif len(norm_query.split()) >= 2:
+                queued_ack = random.choice([
+                    "Right away, Sir. Looking into that now.",
+                    "On it, Sir. Working on your request.",
+                    "Understood, Sir. Assessing the options now.",
+                ])
+
+            if queued_ack:
+                self.tts.queue_sentence(queued_ack)
 
         def queue_speech(sentence: str):
             nonlocal queued_ack
             s_clean = sentence.strip()
-            if queued_ack and s_clean.lower().startswith(queued_ack.lower()[:7]):
-                s_clean = re.sub(r"^(?:right away,?\s+sir\.?|on it,?\s+sir\.?)\s*", "", s_clean, flags=re.I).strip()
+            # Strip standard prefix repetitions if immediate ack was already delivered
+            if queued_ack:
+                s_clean = re.sub(
+                    r"^(?:right away,?\s+sir\.?|on it,?\s+sir\.?|certainly,?\s+sir\.?|understood,?\s+sir\.?)\s*",
+                    "",
+                    s_clean,
+                    flags=re.I
+                ).strip()
             if s_clean:
                 self.tts.queue_sentence(s_clean)
 
