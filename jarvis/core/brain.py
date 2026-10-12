@@ -35,6 +35,7 @@ import jarvis.skills.system_watchdog
 import jarvis.skills.deep_research
 import jarvis.skills.document_ingest
 import jarvis.skills.self_evolution
+import jarvis.skills.photo_manager
 from jarvis.vision.screen_capture import ScreenPerception
 from jarvis.core.memory import MemoryManager
 from jarvis.core.safety import SafetyGate
@@ -673,6 +674,10 @@ Autonomous Self-Building & Dynamic Feature Creation:
             return SkillRegistry.execute("lock_workstation")
         if re.search(r"^(?:take screenshot|take a screenshot|capture screenshot|capture screen)$", clean):
             return SkillRegistry.execute("take_desktop_screenshot")
+        if re.search(r"^(?:save|capture|store)?\s*(?:photo|image|picture|screenshot)\s+(?:from|on)?\s*clipboard$|^save\s+clipboard\s+(?:photo|image|picture)$", clean):
+            return SkillRegistry.execute("save_clipboard_photo")
+        if re.search(r"^(?:list|show|view)\s+(?:saved\s+|my\s+)?photos$|^photo\s+gallery$", clean):
+            return SkillRegistry.execute("list_photos")
         if re.search(r"^(?:what is the\s+)?(?:active window|focused window|what window is this|what am i looking at)$", clean):
             return SkillRegistry.execute("get_active_window")
         if re.search(r"^(?:list\s+)?(?:running applications|running apps|open windows|what apps are open|what is open)$", clean):
@@ -772,6 +777,16 @@ Autonomous Self-Building & Dynamic Feature Creation:
             return "Executing command in the terminal, Sir."
         elif name == "run_project_tests":
             return "Running the test suite to verify our changes, Sir."
+
+        # Photos & Visual Perception
+        elif name == "save_photo":
+            return "Archiving and scrubbing photo metadata now, Sir."
+        elif name == "save_clipboard_photo":
+            return "Archiving screenshot from clipboard now, Sir."
+        elif name == "list_photos":
+            return "Accessing your archived photo gallery, Sir."
+        elif name == "describe_photo":
+            return "Analyzing visual features via cloud vision stream, Sir."
 
         # Calendar & Documents
         elif name == "list_calendar_events":
