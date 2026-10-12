@@ -30,6 +30,9 @@ import jarvis.skills.system_maintenance
 import jarvis.skills.media_dj
 import jarvis.skills.briefing
 import jarvis.skills.project_manager
+import jarvis.skills.notes
+import jarvis.skills.system_watchdog
+import jarvis.skills.deep_research
 from jarvis.vision.screen_capture import ScreenPerception
 from jarvis.core.memory import MemoryManager
 from jarvis.core.safety import SafetyGate
@@ -141,6 +144,9 @@ Persistent Episodic Memory & Dialogue Recall:
         (("youtube", "play song", "play video", "play music", "soundtrack"), {"play_youtube_media"}),
         (("open project", "launch project", "open repo"), {"open_project"}),
         (("open folder", "downloads folder", "screenshots folder", "documents folder", "desktop folder"), {"open_user_folder"}),
+        (("note", "notes", "take note", "take a note", "note down", "write down", "jot down", "save note", "record note", "my notes", "read notes", "search notes"), {"take_quick_note", "read_recent_notes", "search_notes"}),
+        (("hardware watchdog", "thermal monitor", "watchdog", "system health check", "hardware health", "check hardware"), {"check_hardware_health", "start_hardware_watchdog", "stop_hardware_watchdog"}),
+        (("deep research", "research topic", "investigate", "in-depth research", "compile report"), {"deep_research", "web_search"}),
     )
 
     def __init__(
@@ -563,7 +569,9 @@ Persistent Episodic Memory & Dialogue Recall:
                 "minimize_all_windows", "lock_workstation", "get_system_vitals", "get_battery_status",
                 "take_desktop_screenshot", "start_timer", "cancel_timer", "list_active_timers",
                 "execute_protocol", "get_daily_briefing", "inspect_ram_hogs", "optimize_workstation",
-                "play_youtube_media", "open_project", "open_user_folder"
+                "play_youtube_media", "open_project", "open_user_folder",
+                "take_quick_note", "read_recent_notes", "search_notes",
+                "check_hardware_health", "start_hardware_watchdog", "stop_hardware_watchdog"
             }
             if any(t in self.active_tool_names for t in os_action_tools) and getattr(self, "ollama_client", None):
                 logger.info("Hybrid Routing: OS / Device command -> LOCAL OLLAMA (0ms network latency)")
@@ -948,7 +956,10 @@ Persistent Episodic Memory & Dialogue Recall:
                     "adjust_volume", "control_media", "minimize_all_windows", "lock_workstation",
                     "take_desktop_screenshot", "shutdown_jarvis", "start_timer", "cancel_timer",
                     "execute_protocol", "get_daily_briefing", "inspect_ram_hogs", "optimize_workstation",
-                    "play_youtube_media", "open_project", "open_user_folder"
+                    "play_youtube_media", "open_project", "open_user_folder",
+                    "take_quick_note", "read_recent_notes", "search_notes",
+                    "check_hardware_health", "start_hardware_watchdog", "stop_hardware_watchdog",
+                    "deep_research"
                 }
 
                 # Step 2: Handle tool calls if invoked

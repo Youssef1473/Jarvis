@@ -14,6 +14,9 @@ __pycache__/
 # Data & database
 data/*.db
 data/test_memory.db
+data/notes/
+data/research/
+data/screenshots/
 
 # Models cache
 *.onnx
