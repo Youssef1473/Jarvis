@@ -108,7 +108,7 @@ Persistent Episodic Memory & Dialogue Recall:
         (("news", "headlines"), {"web_search", "get_tech_news_headlines"}),
         (("search", "latest", "current", "look up", "lookup"), {"web_search", "get_wikipedia_summary"}),
         (("http://", "https://", "webpage", "website", "open url"), {"browse_and_read_webpage", "open_url_in_desktop_browser", "capture_webpage_screenshot"}),
-        (("open", "launch", "start", "software", "program", "browser", "app"), {"launch_application", "open_url_in_desktop_browser"}),
+        (("open", "launch", "start", "software", "program", "browser", "app"), {"launch_application"}),
         (("close", "terminate", "exit app", "kill app", "quit app"), {"close_application"}),
         (("running", "open apps", "open windows", "active window", "focused window", "what am i looking at"), {"get_active_window", "list_running_applications"}),
         (("vitals", "cpu", "ram", "memory usage", "hardware", "system status", "specs", "gpu"), {"get_system_vitals", "get_battery_status"}),
@@ -781,7 +781,14 @@ Persistent Episodic Memory & Dialogue Recall:
 
                 had_tool_call = False
                 tool_iterations = 0
-                max_tool_iterations = 16 if self.active_task_mode == "code" else 10
+                max_tool_iterations = 16 if self.active_task_mode == "code" else 2
+                executed_tool_signatures = set()
+
+                action_tools = {
+                    "launch_application", "open_url_in_desktop_browser", "close_application",
+                    "adjust_volume", "control_media", "minimize_all_windows", "lock_workstation",
+                    "take_desktop_screenshot", "shutdown_jarvis"
+                }
 
                 # Step 2: Handle tool calls if invoked
                 while tool_calls_map and tool_iterations < max_tool_iterations:
@@ -798,6 +805,20 @@ Persistent Episodic Memory & Dialogue Recall:
                             "function": {"name": tc_data["name"], "arguments": tc_data["arguments"]}
                         })
 
+                    # Cycle detection: check if any tool call in this batch has already been executed
+                    has_repeated_call = False
+                    for tc in tool_calls_list:
+                        sig = (tc["function"]["name"], tc["function"]["arguments"].strip())
+                        if sig in executed_tool_signatures:
+                            logger.warning(f"Detected repeated tool call loop: {sig}. Halting tool iterations.")
+                            has_repeated_call = True
+                            break
+                        executed_tool_signatures.add(sig)
+
+                    if has_repeated_call:
+                        tool_calls_map = {}
+                        break
+
                     assistant_msg = {
                         "role": "assistant",
                         "content": "".join(full_content_chunks) or None,
@@ -805,6 +826,7 @@ Persistent Episodic Memory & Dialogue Recall:
                     }
                     self.openai_messages.append(assistant_msg)
 
+                    has_action_completed = False
                     for tc in tool_calls_list:
                         fn_name = tc["function"]["name"]
                         try:
@@ -818,6 +840,8 @@ Persistent Episodic Memory & Dialogue Recall:
                             tool_result = f"Action halted: {warning}"
                         else:
                             tool_result = SkillRegistry.execute(fn_name, **fn_args)
+                            if fn_name in action_tools:
+                                has_action_completed = True
 
                         logger.info(f"{self.provider.upper()} Tool result: {tool_result}")
                         self.openai_messages.append({
@@ -831,12 +855,18 @@ Persistent Episodic Memory & Dialogue Recall:
                     full_content_chunks = []
                     text_buffer = ""
 
-                    # Keep tools enabled so the model can use a result to choose
-                    # another tool. The outer loop bounds the number of rounds.
+                    # For routine voice queries or when an OS action has completed, disable further tools
+                    # on the follow-up request so small models (Qwen 2B) respond with conversational speech.
+                    allow_further_tools = (
+                        self.active_task_mode == "code"
+                        or (not has_action_completed and tool_iterations < 2)
+                    )
+                    followup_tools = tools if (allow_further_tools and tools) else None
+
                     followup_stream = self.openai_client.chat.completions.create(
                         model=self.openai_model,
                         messages=self.openai_messages,
-                        tools=tools if tools else None,
+                        tools=followup_tools,
                         temperature=self.temperature,
                         stream=True,
                         **request_options,
@@ -846,7 +876,7 @@ Persistent Episodic Memory & Dialogue Recall:
                         if not chunk.choices:
                             continue
                         delta = chunk.choices[0].delta
-                        if delta.tool_calls:
+                        if delta.tool_calls and allow_further_tools:
                             for tc in delta.tool_calls:
                                 idx = tc.index
                                 if idx not in tool_calls_map:
@@ -873,13 +903,32 @@ Persistent Episodic Memory & Dialogue Recall:
                                         sentence_callback(clean_clause)
                                     s_clause, text_buffer = self._extract_next_speech_chunk(text_buffer)
 
-                # Fallback for inline pseudo-XML tool calls (e.g. Qwen formatting)
-                if tool_calls_map:
-                    logger.warning("Tool-use round limit reached before the model finished its requested actions.")
-                    full_content_chunks = [
-                        "I reached the limit for tool steps on this request, so I stopped before completing the remaining actions."
-                    ]
-                    text_buffer = full_content_chunks[0]
+                # Fallback if loop was halted while the model still generated pending tool calls:
+                # Request a final conversational spoken reply with tools=None
+                if tool_calls_map and not full_content_chunks:
+                    tool_calls_map = {}
+                    followup_stream = self.openai_client.chat.completions.create(
+                        model=self.openai_model,
+                        messages=self.openai_messages,
+                        tools=None,
+                        temperature=self.temperature,
+                        stream=True,
+                        **request_options,
+                    )
+                    for chunk in followup_stream:
+                        if not chunk.choices:
+                            continue
+                        delta = chunk.choices[0].delta
+                        if delta.content:
+                            full_content_chunks.append(delta.content)
+                            if sentence_callback:
+                                text_buffer += delta.content
+                                s_clause, text_buffer = self._extract_next_speech_chunk(text_buffer)
+                                while s_clause:
+                                    clean_clause = self._clean_speech_clause(s_clause)
+                                    if clean_clause:
+                                        sentence_callback(clean_clause)
+                                    s_clause, text_buffer = self._extract_next_speech_chunk(text_buffer)
 
                 raw_content = "".join(full_content_chunks).strip()
                 if not had_tool_call and "<tool_call>" in raw_content:
