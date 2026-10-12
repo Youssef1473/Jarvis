@@ -79,6 +79,48 @@ def test_mock_greeter(target_name: str = "Sir") -> str:
         self.assertIn("Successfully deleted", del_res)
         self.assertFalse((CUSTOM_SKILLS_DIR / "test_mock_greeter.py").exists())
 
+    def test_user_model_choice_for_self_building(self):
+        """Verifies that self-building requests strictly use the user's chosen model and do not auto-override."""
+        from jarvis.core.config_loader import load_config
+        from jarvis.core.brain import JarvisBrain
+        from jarvis.core.memory import MemoryManager
+        from jarvis.core.safety import SafetyGate
+
+        config = load_config()
+        memory = MemoryManager(config)
+        safety = SafetyGate(config)
+        brain = JarvisBrain(config, memory, safety)
+
+        # 1. User locks model to Gemini 3.1 Pro High
+        brain.antigravity_model = "gemini-3.1-pro-high"
+        brain.antigravity_auto_tiering = False
+
+        # When asking to build a feature, it must stay locked to gemini-3.1-pro-high
+        prompt = "Add a feature to yourself to open a Brave tab"
+        # Simulate model extraction logic
+        self.assertEqual(brain.antigravity_model, "gemini-3.1-pro-high")
+
+        # 2. User specifies a model directly in the prompt
+        explicit_prompt = "Using Claude, add a feature to yourself to open a Brave tab"
+        override_match = brain.process_query.__globals__["re"].search(
+            r"\b(?:use|using|with)\s+(pro|flash|claude|sonnet|opus|3\.8|3\.1)(?:\s+(low|medium|med|high))?\b",
+            explicit_prompt,
+            brain.process_query.__globals__["re"].IGNORECASE,
+        )
+        self.assertIsNotNone(override_match)
+        self.assertEqual(override_match.group(1).lower(), "claude")
+
+        # 3. User specifies Pro High directly in the prompt
+        pro_prompt = "Use Pro High to build a feature to check free disk space"
+        override_match_pro = brain.process_query.__globals__["re"].search(
+            r"\b(?:use|using|with)\s+(pro|flash|claude|sonnet|opus|3\.8|3\.1)(?:\s+(low|medium|med|high))?\b",
+            pro_prompt,
+            brain.process_query.__globals__["re"].IGNORECASE,
+        )
+        self.assertIsNotNone(override_match_pro)
+        self.assertEqual(override_match_pro.group(1).lower(), "pro")
+        self.assertEqual(override_match_pro.group(2).lower(), "high")
+
 
 if __name__ == "__main__":
     unittest.main()

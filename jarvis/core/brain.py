@@ -1599,11 +1599,46 @@ Autonomous Self-Building & Dynamic Feature Creation:
             )
             prompt = tools_block + f"Sir asks: {user_text}"
 
-        # Determine target model dynamically if auto-tiering is active
-        if getattr(self, "antigravity_auto_tiering", True):
-            target_model = self.antigravity_bridge.classify_prompt_tier(user_text)
-        else:
+        # Determine target model: honor explicit user prompt directives, active user model selection, and self-build rules
+        model_override_match = re.search(
+            r"\b(?:use|using|with)\s+(pro|flash|claude|sonnet|opus|3\.8|3\.1)(?:\s+(low|medium|med|high))?\b",
+            user_text,
+            re.IGNORECASE,
+        )
+        if model_override_match:
+            base = model_override_match.group(1).lower().strip()
+            var = (model_override_match.group(2) or "").lower().strip()
+            if base in ("pro", "3.1"):
+                eff = "high" if var == "high" else "low"
+                target_model = f"gemini-3.1-pro-{eff}"
+            elif base in ("flash", "3.8"):
+                if var == "high":
+                    target_model = "gemini-3.8-flash-high"
+                elif var in ("medium", "med"):
+                    target_model = "gemini-3.8-flash-medium"
+                else:
+                    target_model = "gemini-3.8-flash-low"
+            elif base in ("claude", "sonnet"):
+                target_model = "claude-sonnet-4-6"
+            elif base == "opus":
+                target_model = "claude-opus-4-6-thinking"
+            else:
+                target_model = self.antigravity_bridge.resolve_model(f"{base} {var}".strip())
+        elif not getattr(self, "antigravity_auto_tiering", True):
+            # User has explicitly chosen/locked a model (e.g. "switch to pro", "switch to flash", etc.)
             target_model = self.antigravity_model
+        else:
+            # When Sir asks to add a feature or build yourself, NEVER automatically change model on your own.
+            # Strictly use the model Sir has chosen/active (self.antigravity_model).
+            self_build_triggers = (
+                "add feature", "create feature", "build yourself", "create a skill", "add a skill",
+                "create command", "add command", "teach yourself", "build a command", "create tool",
+                "add tool", "new tool", "new skill", "evolve", "self build", "build a feature"
+            )
+            if any(t in user_text.lower() for t in self_build_triggers):
+                target_model = self.antigravity_model
+            else:
+                target_model = self.antigravity_bridge.classify_prompt_tier(user_text)
 
         # Multi-turn tool execution loop
         max_tool_iterations = 12 if self.active_task_mode == "code" else 4
