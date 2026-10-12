@@ -307,16 +307,28 @@ class JarvisOrchestrator:
             "exit", "quit", "goodbye", "good bye", "bye",
         }:
             return True
+
+        # Programming instructions and technical directives must never trigger shutdown
+        code_markers = {"def", "class", "import", "python", "code", "script", "step", "execute", "directive", "permission", "server"}
+        query_words = set(normalized.split())
+        if query_words & code_markers:
+            return False
+
+        # Guard against long technical sentences accidentally triggering departure
+        if len(normalized.split()) > 7:
+            return False
+
+        import re
         triggers = [
-            "goodbye", "good bye", "bye", "shutdown", "shut down",
-            "exit", "quit", "thats it for now", "that is it for now",
-            "thats all for now", "that is all for now",
-            "power down", "deactivate", "go to sleep", "sleep now",
-            "power off", "go offline", "terminate", "close jarvis", "stop jarvis",
-            "stop listening", "stop working", "stop all services", "stop all the services",
-            "stop every service", "shut yourself down"
+            r"\bgoodbye\b", r"\bgood bye\b", r"\bbye\b", r"\bshutdown\b", r"\bshut down\b",
+            r"\bexit\b", r"\bquit\b", r"\bthats it for now\b", r"\bthat is it for now\b",
+            r"\bthats all for now\b", r"\bthat is all for now\b",
+            r"\bpower down\b", r"\bdeactivate\b", r"\bgo to sleep\b", r"\bsleep now\b",
+            r"\bpower off\b", r"\bgo offline\b", r"\bterminate\b", r"\bclose jarvis\b", r"\bstop jarvis\b",
+            r"\bstop listening\b", r"\bstop working\b", r"\bstop all services\b", r"\bstop all the services\b",
+            r"\bstop every service\b", r"\bshut yourself down\b"
         ]
-        return any(t in normalized for t in triggers)
+        return any(re.search(t, normalized) for t in triggers)
 
     def handle_command(self, query: str):
         """Processes a text query, executes tools, and speaks the reply."""

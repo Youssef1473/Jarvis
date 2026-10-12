@@ -255,9 +255,12 @@
 
     .meter-bar {
       height: 100%;
+      width: 100%;
       background: linear-gradient(90deg, var(--holo-blue), var(--holo-cyan));
-      width: 0%;
-      transition: width 0.4s ease;
+      transform: scaleX(0);
+      transform-origin: left;
+      will-change: transform;
+      transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
       box-shadow: 0 0 8px var(--holo-cyan);
     }
 
@@ -1086,6 +1089,342 @@
       border-color: rgba(255, 51, 102, 0.4);
       background: rgba(255, 51, 102, 0.15);
     }
+
+    /* Zero-CLS Performance Utilities & Reflow Guards */
+    .tabular-nums {
+      font-variant-numeric: tabular-nums;
+      font-feature-settings: "tnum";
+    }
+    .w-14 {
+      width: 3.5rem;
+      min-width: 3.5rem;
+      max-width: 3.5rem;
+    }
+    .text-right {
+      text-align: right;
+    }
+    .inline-block {
+      display: inline-block;
+    }
+    .origin-left {
+      transform-origin: left;
+    }
+    .will-change-transform {
+      will-change: transform;
+    }
+    .h-\[640px\] {
+      height: 640px;
+    }
+    .max-h-\[90vh\] {
+      max-height: 90vh;
+    }
+    .aspect-square {
+      aspect-ratio: 1 / 1;
+    }
+
+    /* Holographic Photo Gallery Modal Viewport (Zero-CLS Component) */
+    .photo-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(3, 7, 14, 0.88);
+      backdrop-filter: blur(14px);
+      z-index: 2450;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      opacity: 0;
+      transition: opacity 0.25s ease;
+    }
+    .photo-modal-backdrop.open {
+      display: flex;
+      opacity: 1;
+    }
+    .photo-modal-dialog {
+      width: 100%;
+      max-width: 1200px;
+      height: 640px;
+      max-height: 90vh;
+      background: rgba(7, 12, 22, 0.95);
+      border: 1px solid var(--holo-cyan);
+      box-shadow: 0 0 50px rgba(0, 240, 255, 0.3), inset 0 0 25px rgba(0, 240, 255, 0.06);
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      animation: modal-appear 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .photo-modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 20px;
+      background: rgba(0, 240, 255, 0.05);
+      border-bottom: 1px solid var(--panel-border);
+      flex: 0 0 auto;
+    }
+    .photo-header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .photo-status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--holo-cyan);
+      box-shadow: 0 0 8px var(--holo-cyan);
+      animation: pulse-staged 2s infinite ease-in-out;
+    }
+    .photo-modal-title {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--holo-cyan);
+      letter-spacing: 2px;
+      text-shadow: var(--glow-cyan);
+    }
+    .photo-modal-subtitle {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      letter-spacing: 1px;
+    }
+    .photo-counter-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem;
+      padding: 3px 8px;
+      border-radius: 3px;
+      background: rgba(0, 240, 255, 0.1);
+      border: 1px solid rgba(0, 240, 255, 0.3);
+      color: var(--holo-cyan);
+    }
+    .photo-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .photo-scroll-viewport {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      position: relative;
+      min-height: 0;
+    }
+    .photo-empty-state {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+      color: rgba(0, 240, 255, 0.5);
+    }
+    .photo-empty-state.hidden {
+      display: none;
+    }
+    .photo-empty-title {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.9rem;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .photo-empty-sub {
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      max-width: 360px;
+    }
+    .photo-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 12px;
+    }
+    .photo-tile {
+      position: relative;
+      aspect-ratio: 1 / 1;
+      width: 100%;
+      border-radius: 4px;
+      overflow: hidden;
+      border: 1px solid rgba(0, 240, 255, 0.25);
+      background: rgba(8, 14, 26, 0.8);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      will-change: transform;
+    }
+    .photo-tile:hover {
+      border-color: var(--holo-cyan);
+      box-shadow: 0 0 15px rgba(0, 240, 255, 0.35);
+      transform: translateY(-2px);
+    }
+    .photo-tile img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      opacity: 0;
+      transition: opacity 0.3s ease-out;
+      will-change: opacity;
+      display: block;
+    }
+    .photo-tile img.loaded, .photo-tile img.opacity-100 {
+      opacity: 1;
+    }
+    .photo-tile-badge {
+      position: absolute;
+      bottom: 0;
+      inset-x: 0;
+      background: linear-gradient(to top, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0.4) 70%, transparent 100%);
+      padding: 4px 6px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.65rem;
+      color: var(--holo-cyan);
+      display: flex;
+      justify-content: space-between;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+      pointer-events: none;
+    }
+    .photo-tile:hover .photo-tile-badge {
+      opacity: 1;
+    }
+    .photo-modal-footer {
+      padding: 8px 18px;
+      background: rgba(0, 0, 0, 0.4);
+      border-top: 1px solid var(--panel-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem;
+      color: rgba(0, 240, 255, 0.7);
+      flex: 0 0 auto;
+    }
+    .photo-footer-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .photo-footer-status {
+      color: rgba(0, 240, 255, 0.9);
+      font-weight: 600;
+    }
+    /* Lightbox Modal */
+    .lightbox-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 2600;
+      background: rgba(0, 0, 0, 0.88);
+      backdrop-filter: blur(12px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .lightbox-modal-backdrop.hidden {
+      display: none;
+    }
+    .lightbox-dialog {
+      background: rgba(8, 14, 26, 0.96);
+      border: 1px solid rgba(0, 240, 255, 0.4);
+      box-shadow: 0 0 40px rgba(0, 240, 255, 0.25);
+      border-radius: 8px;
+      max-width: 760px;
+      width: 100%;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .lightbox-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 16px;
+      background: rgba(0, 240, 255, 0.06);
+      border-bottom: 1px solid var(--panel-border);
+    }
+    .lightbox-title {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.8rem;
+      letter-spacing: 1.5px;
+      color: var(--holo-cyan);
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .lightbox-preview {
+      flex: 1;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+      overflow: hidden;
+      min-height: 280px;
+    }
+    .lightbox-img {
+      max-width: 100%;
+      max-height: 52vh;
+      object-fit: contain;
+      border-radius: 4px;
+      border: 1px solid rgba(0, 240, 255, 0.2);
+    }
+    .lightbox-details {
+      padding: 14px 16px;
+      border-top: 1px solid var(--panel-border);
+      background: linear-gradient(to top, rgba(0, 240, 255, 0.05), transparent);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .lightbox-meta-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.74rem;
+    }
+    .lightbox-meta-cell {
+      padding: 6px 8px;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(0, 240, 255, 0.15);
+      border-radius: 4px;
+    }
+    .meta-label {
+      color: var(--text-dim);
+      font-size: 0.65rem;
+      display: block;
+      margin-bottom: 2px;
+    }
+    .meta-val {
+      color: var(--holo-cyan);
+      display: block;
+    }
+    .lightbox-caption-box {
+      padding: 10px 12px;
+      background: rgba(0, 240, 255, 0.05);
+      border: 1px solid rgba(0, 240, 255, 0.2);
+      border-radius: 4px;
+      font-size: 0.82rem;
+    }
+    .caption-label {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.7rem;
+      color: var(--holo-cyan);
+      display: block;
+      margin-bottom: 4px;
+    }
+    .caption-text {
+      color: var(--text-main);
+      font-style: italic;
+    }
+    .lightbox-actions {
+      display: flex;
+      justify-content: flex-end;
+    }
   </style>
 </head>
 <body>
@@ -1105,6 +1444,9 @@
       <div class="pill">
         <span>ROUTING:</span>
         <span style="color: var(--holo-emerald); font-weight: bold;">LOCAL FIRST // CLOUD BY REQUEST</span>
+      </div>
+      <div class="pill" onclick="openPhotoGalleryModal()" style="cursor: pointer; border-color: var(--holo-cyan);" title="Open Archived Visual Intel Matrix">
+        <span style="color: var(--holo-cyan);">🖼️ INTEL MATRIX</span>
       </div>
       <div class="pill" onclick="openCalendarModal()" style="cursor: pointer; border-color: var(--holo-cyan);" title="Open Holographic Tactical Calendar">
         <span style="color: var(--holo-cyan);">📅 CALENDAR</span>
@@ -1136,34 +1478,34 @@
           <span class="telemetry-label">GPU STATUS</span>
           <div style="display: flex; gap: 6px; align-items: center;">
             <span class="telemetry-val" id="gpuVal" style="font-size: 0.8rem;">RTX 3050</span>
-            <span class="thermal-badge" id="gpuTempBadge">--°C</span>
+            <span class="thermal-badge tabular-nums inline-block" id="gpuTempBadge">--°C</span>
           </div>
         </div>
         <div class="telemetry-row" style="flex-direction: column; align-items: flex-start; gap: 4px;">
           <div style="display: flex; justify-content: space-between; width: 100%;">
             <span class="telemetry-label">CPU LOAD</span>
-            <span class="telemetry-val" id="cpuVal">-- %</span>
+            <span class="telemetry-val tabular-nums w-14 text-right inline-block" id="cpuVal">-- %</span>
           </div>
           <div class="meter-bar-container">
-            <div class="meter-bar" id="cpuMeter" style="background: linear-gradient(90deg, var(--holo-cyan), var(--holo-amber));"></div>
+            <div class="meter-bar origin-left will-change-transform" id="cpuMeter" style="background: linear-gradient(90deg, var(--holo-cyan), var(--holo-amber));"></div>
           </div>
         </div>
         <div class="telemetry-row" style="flex-direction: column; align-items: flex-start; gap: 4px;">
           <div style="display: flex; justify-content: space-between; width: 100%;">
             <span class="telemetry-label">SYSTEM RAM</span>
-            <span class="telemetry-val" id="ramVal">-- GB (-- %)</span>
+            <span class="telemetry-val tabular-nums text-right inline-block" id="ramVal">-- GB (-- %)</span>
           </div>
           <div class="meter-bar-container">
-            <div class="meter-bar" id="ramMeter" style="background: linear-gradient(90deg, var(--holo-blue), var(--holo-cyan));"></div>
+            <div class="meter-bar origin-left will-change-transform" id="ramMeter" style="background: linear-gradient(90deg, var(--holo-blue), var(--holo-cyan));"></div>
           </div>
         </div>
         <div class="telemetry-row" style="flex-direction: column; align-items: flex-start; gap: 4px;">
           <div style="display: flex; justify-content: space-between; width: 100%;">
             <span class="telemetry-label">SYSTEM BATTERY</span>
-            <span class="telemetry-val" id="batteryVal">-- %</span>
+            <span class="telemetry-val tabular-nums w-14 text-right inline-block" id="batteryVal">-- %</span>
           </div>
           <div class="meter-bar-container">
-            <div class="meter-bar" id="batteryMeter"></div>
+            <div class="meter-bar origin-left will-change-transform" id="batteryMeter"></div>
           </div>
         </div>
 
@@ -1258,6 +1600,9 @@
             <span>📄</span> IMPORT PDF
           </button>
           <input type="file" id="pdfFileInput" accept=".pdf,application/pdf" style="display:none;" onchange="handlePdfUpload(event)">
+          <button class="btn-action" id="btnGallery" onclick="openPhotoGalleryModal()" style="border-color: rgba(0, 240, 255, 0.5); color: var(--holo-cyan);" title="Open Archived Visual Intel Matrix">
+            <span>🖼️</span> GALLERY
+          </button>
           <button class="btn-action" id="btnCalendar" onclick="openCalendarModal()" style="border-color: rgba(0, 240, 255, 0.5); color: var(--holo-cyan);" title="Open Holographic Tactical Calendar">
             <span>📅</span> CALENDAR
           </button>
@@ -1397,6 +1742,104 @@
     </div>
   </div>
 
+  <!-- Holographic Photo Gallery Modal Viewport (Zero-CLS Component) -->
+  <div id="photoGalleryModalBackdrop" class="photo-modal-backdrop" onclick="if(event.target === this) closePhotoGalleryModal()">
+    <div class="photo-modal-dialog h-[640px] max-h-[90vh]">
+      <!-- Header Deck -->
+      <div class="photo-modal-header">
+        <div class="photo-header-left">
+          <div class="photo-status-dot"></div>
+          <div>
+            <div class="photo-modal-title">// ARCHIVED VISUAL INTEL MATRIX</div>
+            <div class="photo-modal-subtitle">ZERO-VRAM INTEL STREAMING &middot; ETAG 304 CACHED</div>
+          </div>
+          <span id="photoCounterBadge" class="photo-counter-badge">0 ASSETS</span>
+        </div>
+        <div class="photo-header-actions">
+          <button class="cal-btn-outline" onclick="if(photoGallery) photoGallery.refresh()" title="Sync Archives from Database">
+            <span>🔄</span> SYNC
+          </button>
+          <button class="cal-btn-outline" style="border-color: var(--holo-emerald); color: var(--holo-emerald);" onclick="if(photoGallery) photoGallery.pasteClipboard()" title="Capture from Windows Clipboard">
+            <span>📋</span> PASTE CLIPBOARD
+          </button>
+          <button class="cal-close-btn" onclick="closePhotoGalleryModal()">
+            ✕ CLOSE
+          </button>
+        </div>
+      </div>
+
+      <!-- Virtualized Scroll Viewport Container (Clamped Zero-CLS) -->
+      <main id="photoScrollContainer" class="photo-scroll-viewport custom-scrollbar">
+        <!-- Empty State -->
+        <div id="photoEmptyState" class="photo-empty-state hidden">
+          <div style="font-size: 2.5rem; opacity: 0.4; margin-bottom: 8px;">📷</div>
+          <p class="photo-empty-title">VISUAL DATABASE EMPTY</p>
+          <p class="photo-empty-sub">Capture clipboard screenshots with "save clipboard photo" or import visual assets via voice.</p>
+        </div>
+
+        <!-- Dynamic Virtual Grid Matrix -->
+        <div id="photoGrid" class="photo-grid">
+          <!-- Injected dynamically by photoGallery.render() -->
+        </div>
+      </main>
+
+      <!-- Tactical Footer -->
+      <footer class="photo-modal-footer">
+        <div class="photo-footer-left">
+          <span class="stat-bullet" style="color: var(--holo-emerald);">●</span>
+          <span>ETAG CACHE: <strong style="color: var(--holo-cyan);">HTTP 304 ACTIVE</strong></span>
+          <span>&middot;</span>
+          <span>VRAM OVERHEAD: <strong style="color: var(--holo-emerald);">0.0 MB</strong></span>
+        </div>
+        <div id="galleryStatusMsg" class="photo-footer-status">
+          SYSTEM READY
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Lightbox Detail Inspection Modal -->
+  <div id="photoLightboxModal" class="lightbox-modal-backdrop hidden" onclick="if(event.target === this) if(photoGallery) photoGallery.closeLightbox()">
+    <div class="lightbox-dialog">
+      <div class="lightbox-header">
+        <span id="modalPhotoTitle" class="lightbox-title">INTEL INSPECTION</span>
+        <button onclick="if(photoGallery) photoGallery.closeLightbox()" class="cal-close-btn">&times;</button>
+      </div>
+      <div class="lightbox-preview">
+        <img id="modalPhotoImg" src="" alt="Detail Preview" class="lightbox-img">
+      </div>
+      <div class="lightbox-details">
+        <div class="lightbox-meta-grid">
+          <div class="lightbox-meta-cell">
+            <span class="meta-label">RESOLUTION</span>
+            <strong id="modalDim" class="meta-val">-</strong>
+          </div>
+          <div class="lightbox-meta-cell">
+            <span class="meta-label">FILE SIZE</span>
+            <strong id="modalSize" class="meta-val">-</strong>
+          </div>
+          <div class="lightbox-meta-cell">
+            <span class="meta-label">TIMESTAMP</span>
+            <strong id="modalDate" class="meta-val truncate">-</strong>
+          </div>
+          <div class="lightbox-meta-cell">
+            <span class="meta-label">PHOTO ID</span>
+            <strong id="modalId" class="meta-val truncate">-</strong>
+          </div>
+        </div>
+        <div id="modalCaptionBox" class="lightbox-caption-box">
+          <span class="caption-label">SEMANTIC ANALYSIS // GEMINI CLOUD VISION:</span>
+          <p id="modalCaptionText" class="caption-text">No visual description indexed. Click 'ANALYZE WITH VISION' to evaluate.</p>
+        </div>
+        <div class="lightbox-actions">
+          <button id="analyzeVisionBtn" onclick="if(photoGallery) photoGallery.analyzeCurrentPhoto()" class="cal-btn-outline" style="border-color: var(--holo-amber); color: var(--holo-amber);">
+            <span>👁️</span> ANALYZE WITH VISION
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Interactive HUD Script -->
   <script>
     // System & Animation State
@@ -1408,11 +1851,84 @@
     let audioReactiveLevel = 0.0;
     let isMuted = false;
     let ws = null;
+    let reconnectTimeout = null;
+    let reconnectAttempts = 0;
+    const INITIAL_RECONNECT_DELAY_MS = 1000;
+    const MAX_RECONNECT_DELAY_MS = 16000;
+    const BACKOFF_MULTIPLIER = 1.6;
+
+    // DOM Reference Cache (Zero-Lookup Overhead)
+    const domRefs = {};
+
+    function initDomReferences() {
+      domRefs.clockDisplay = document.getElementById('clockDisplay');
+      domRefs.reactorCanvas = document.getElementById('reactorCanvas');
+      domRefs.socketStatusDot = document.getElementById('socketStatusDot');
+      domRefs.socketStatusText = document.getElementById('socketStatusText');
+      domRefs.statusBadge = document.getElementById('statusBadge');
+      domRefs.subStatus = document.getElementById('subStatus');
+      domRefs.stagedDocPill = document.getElementById('stagedDocPill');
+      domRefs.stagedDocText = document.getElementById('stagedDocText');
+      domRefs.osVal = document.getElementById('osVal');
+      domRefs.gpuVal = document.getElementById('gpuVal');
+      domRefs.gpuTempBadge = document.getElementById('gpuTempBadge');
+      domRefs.cpuVal = document.getElementById('cpuVal');
+      domRefs.cpuMeter = document.getElementById('cpuMeter');
+      domRefs.ramVal = document.getElementById('ramVal');
+      domRefs.ramMeter = document.getElementById('ramMeter');
+      domRefs.batteryVal = document.getElementById('batteryVal');
+      domRefs.batteryMeter = document.getElementById('batteryMeter');
+      domRefs.modelTierVal = document.getElementById('modelTierVal');
+      domRefs.activeModelVal = document.getElementById('activeModelVal');
+      domRefs.latencyBadge = document.getElementById('latencyBadge');
+      domRefs.memoryCountVal = document.getElementById('memoryCountVal');
+      domRefs.activeTimersVal = document.getElementById('activeTimersVal');
+      domRefs.telemetryStagedVal = document.getElementById('telemetryStagedVal');
+      domRefs.chatContainer = document.getElementById('chatContainer');
+      domRefs.msgCount = document.getElementById('msgCount');
+      domRefs.btnMute = document.getElementById('btnMute');
+      domRefs.muteText = document.getElementById('muteText');
+      domRefs.muteIcon = document.getElementById('muteIcon');
+      domRefs.cmdInput = document.getElementById('cmdInput');
+      domRefs.hudDrawer = document.getElementById('hudDrawer');
+      domRefs.drawerBody = document.getElementById('drawerBody');
+      domRefs.drawerTimerCount = document.getElementById('drawerTimerCount');
+      domRefs.drawerStagedCount = document.getElementById('drawerStagedCount');
+      domRefs.tabTimersBtn = document.getElementById('tabTimersBtn');
+      domRefs.tabNotesBtn = document.getElementById('tabNotesBtn');
+      domRefs.tabStagedBtn = document.getElementById('tabStagedBtn');
+      domRefs.tabAgendaBtn = document.getElementById('tabAgendaBtn');
+      domRefs.pdfFileInput = document.getElementById('pdfFileInput');
+      domRefs.calendarModalBackdrop = document.getElementById('calendarModalBackdrop');
+      domRefs.calConfirmBackdrop = document.getElementById('calConfirmBackdrop');
+      // Photo Gallery Viewport & Lightbox References
+      domRefs.photoGalleryModalBackdrop = document.getElementById('photoGalleryModalBackdrop');
+      domRefs.photoScrollContainer = document.getElementById('photoScrollContainer');
+      domRefs.photoGrid = document.getElementById('photoGrid');
+      domRefs.photoCounterBadge = document.getElementById('photoCounterBadge');
+      domRefs.photoEmptyState = document.getElementById('photoEmptyState');
+      domRefs.galleryStatusMsg = document.getElementById('galleryStatusMsg');
+      domRefs.photoLightboxModal = document.getElementById('photoLightboxModal');
+      domRefs.modalPhotoTitle = document.getElementById('modalPhotoTitle');
+      domRefs.modalPhotoImg = document.getElementById('modalPhotoImg');
+      domRefs.modalDim = document.getElementById('modalDim');
+      domRefs.modalSize = document.getElementById('modalSize');
+      domRefs.modalDate = document.getElementById('modalDate');
+      domRefs.modalId = document.getElementById('modalId');
+      domRefs.modalCaptionText = document.getElementById('modalCaptionText');
+      domRefs.analyzeVisionBtn = document.getElementById('analyzeVisionBtn');
+    }
+    initDomReferences();
 
     // Clock display
     function updateClock() {
       const now = new Date();
-      document.getElementById('clockDisplay').textContent = now.toLocaleTimeString('en-GB');
+      if (domRefs.clockDisplay) {
+        domRefs.clockDisplay.textContent = now.toLocaleTimeString('en-GB');
+      } else {
+        const el = document.getElementById('clockDisplay');
+        if (el) el.textContent = now.toLocaleTimeString('en-GB');
+      }
     }
     setInterval(updateClock, 1000);
     updateClock();
@@ -1567,17 +2083,40 @@
     }
     requestAnimationFrame(renderArcReactor);
 
-    // WebSocket Management
+    // Resilient WebSocket Client with Exponential Backoff
     function initWebSocket() {
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
+      }
+
       const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
       const wsUrl = `${proto}//${window.location.host}/ws`;
-      
-      ws = new WebSocket(wsUrl);
+
+      try {
+        ws = new WebSocket(wsUrl);
+      } catch (err) {
+        console.warn("[WS] Init failed, scheduling reconnect:", err);
+        scheduleWsReconnect();
+        return;
+      }
 
       ws.onopen = () => {
-        document.getElementById('socketStatusDot').style.background = "var(--holo-emerald)";
-        document.getElementById('socketStatusDot').style.boxShadow = "0 0 8px var(--holo-emerald)";
-        document.getElementById('socketStatusText').textContent = "NEURAL LINK ACTIVE";
+        reconnectAttempts = 0;
+        if (reconnectTimeout) {
+          clearTimeout(reconnectTimeout);
+          reconnectTimeout = null;
+        }
+        if (domRefs.socketStatusDot) {
+          domRefs.socketStatusDot.style.background = "var(--holo-emerald)";
+          domRefs.socketStatusDot.style.boxShadow = "0 0 8px var(--holo-emerald)";
+        }
+        if (domRefs.socketStatusText) {
+          domRefs.socketStatusText.textContent = "NEURAL LINK ACTIVE";
+        }
       };
 
       ws.onmessage = (event) => {
@@ -1590,10 +2129,14 @@
       };
 
       ws.onclose = () => {
-        document.getElementById('socketStatusDot').style.background = "var(--holo-crimson)";
-        document.getElementById('socketStatusDot').style.boxShadow = "0 0 8px var(--holo-crimson)";
-        document.getElementById('socketStatusText').textContent = "DISCONNECTED // RECONNECTING";
-        setTimeout(initWebSocket, 2000);
+        if (domRefs.socketStatusDot) {
+          domRefs.socketStatusDot.style.background = "var(--holo-crimson)";
+          domRefs.socketStatusDot.style.boxShadow = "0 0 8px var(--holo-crimson)";
+        }
+        if (domRefs.socketStatusText) {
+          domRefs.socketStatusText.textContent = "DISCONNECTED // RECONNECTING";
+        }
+        scheduleWsReconnect();
       };
 
       ws.onerror = (err) => {
@@ -1601,10 +2144,26 @@
       };
     }
 
+    function scheduleWsReconnect() {
+      if (reconnectTimeout) return;
+      const delay = Math.min(
+        MAX_RECONNECT_DELAY_MS,
+        INITIAL_RECONNECT_DELAY_MS * Math.pow(BACKOFF_MULTIPLIER, reconnectAttempts)
+      );
+      reconnectAttempts++;
+      if (domRefs.socketStatusText) {
+        domRefs.socketStatusText.textContent = `LINK DOWN // RETRYING (${Math.round(delay / 1000)}s)`;
+      }
+      reconnectTimeout = setTimeout(() => {
+        reconnectTimeout = null;
+        initWebSocket();
+      }, delay);
+    }
+
     function handleServerMessage(data) {
       if (data.type === "state") {
         updateHUDState(data.state);
-      } else if (data.type === "telemetry") {
+      } else if (data.type === "telemetry" || data.c !== undefined || data.cpu !== undefined) {
         updateTelemetry(data);
       } else if (data.type === "chat") {
         appendChatMessage(data.sender, data.text, data.timestamp);
@@ -1618,8 +2177,9 @@
 
     function updateHUDState(state) {
       currentState = state;
-      const badge = document.getElementById('statusBadge');
-      const sub = document.getElementById('subStatus');
+      const badge = domRefs.statusBadge || document.getElementById('statusBadge');
+      const sub = domRefs.subStatus || document.getElementById('subStatus');
+      if (!badge || !sub) return;
 
       if (isMuted) {
         badge.textContent = "MUTED // SENSORS OFFLINE";
@@ -1657,72 +2217,138 @@
       }
     }
 
+    // Telemetry Batching via requestAnimationFrame & Zero-CLS GPU Compositor Updates
+    let pendingTelemetry = null;
+    let telemetryRafScheduled = false;
+
     function updateTelemetry(data) {
-      if (data.cpu !== undefined) {
-        document.getElementById('cpuVal').textContent = `${data.cpu}%`;
-        const cpuMeter = document.getElementById('cpuMeter');
-        if (cpuMeter) cpuMeter.style.width = `${Math.min(100, Math.max(0, data.cpu))}%`;
+      if (!data) return;
+      if (!pendingTelemetry) {
+        pendingTelemetry = { ...data };
+      } else {
+        Object.assign(pendingTelemetry, data);
       }
-      if (data.ram_pct !== undefined) {
-        document.getElementById('ramVal').textContent = `${data.ram_used_gb} / ${data.ram_total_gb} GB (${data.ram_pct}%)`;
-        const ramMeter = document.getElementById('ramMeter');
-        if (ramMeter) ramMeter.style.width = `${Math.min(100, Math.max(0, data.ram_pct))}%`;
+
+      if (!telemetryRafScheduled) {
+        telemetryRafScheduled = true;
+        requestAnimationFrame(renderTelemetryFrame);
       }
-      if (data.gpu_temp !== undefined && data.gpu_temp > 0) {
-        const tempBadge = document.getElementById('gpuTempBadge');
-        if (tempBadge) {
-          tempBadge.textContent = `${data.gpu_temp}°C`;
-          if (data.gpu_temp > 80) {
-            tempBadge.style.color = 'var(--holo-crimson)';
-            tempBadge.style.borderColor = 'var(--holo-crimson)';
-          } else {
-            tempBadge.style.color = 'var(--holo-amber)';
-            tempBadge.style.borderColor = 'var(--holo-amber)';
-          }
+    }
+
+    function renderTelemetryFrame() {
+      telemetryRafScheduled = false;
+      if (!pendingTelemetry) return;
+      const data = pendingTelemetry;
+      pendingTelemetry = null;
+
+      // 1. CPU Load (Single-char 'c' with fallback to 'cpu')
+      const cpu = data.c !== undefined ? data.c : data.cpu;
+      if (cpu !== undefined) {
+        if (domRefs.cpuVal) domRefs.cpuVal.textContent = `${cpu}%`;
+        if (domRefs.cpuMeter) {
+          const ratio = Math.min(1, Math.max(0, cpu / 100));
+          domRefs.cpuMeter.style.transform = `scaleX(${ratio})`;
         }
       }
-      if (data.gpu) {
-        document.getElementById('gpuVal').textContent = data.gpu;
+
+      // 2. RAM Load (Single-char 'rp', 'ru', 'rt' with fallbacks to 'ram_pct', 'ram_used_gb', etc.)
+      const ramPct = data.rp !== undefined ? data.rp : data.ram_pct;
+      if (ramPct !== undefined) {
+        let ramText = `${ramPct}%`;
+        if (data.ru !== undefined && data.rt !== undefined) {
+          const usedGb = (data.ru / 1024).toFixed(1);
+          const totalGb = (data.rt / 1024).toFixed(1);
+          ramText = `${usedGb} / ${totalGb} GB (${ramPct}%)`;
+        } else if (data.ram_used_gb !== undefined && data.ram_total_gb !== undefined) {
+          ramText = `${data.ram_used_gb} / ${data.ram_total_gb} GB (${ramPct}%)`;
+        }
+        if (domRefs.ramVal) domRefs.ramVal.textContent = ramText;
+        if (domRefs.ramMeter) {
+          const ratio = Math.min(1, Math.max(0, ramPct / 100));
+          domRefs.ramMeter.style.transform = `scaleX(${ratio})`;
+        }
       }
+
+      // 3. System Battery
       if (data.battery !== undefined) {
-        const bText = `${data.battery}% ${data.charging ? '⚡ CHARGING' : ''}`;
-        document.getElementById('batteryVal').textContent = bText;
-        document.getElementById('batteryMeter').style.width = `${data.battery}%`;
+        const bText = `${data.battery}% ${data.charging ? '⚡' : ''}`;
+        if (domRefs.batteryVal) domRefs.batteryVal.textContent = bText;
+        if (domRefs.batteryMeter) {
+          const ratio = Math.min(1, Math.max(0, data.battery / 100));
+          domRefs.batteryMeter.style.transform = `scaleX(${ratio})`;
+        }
       }
-      if (data.active_timers !== undefined) {
-        document.getElementById('activeTimersVal').textContent = `${data.active_timers} ACTIVE`;
-        const dtCount = document.getElementById('drawerTimerCount');
-        if (dtCount) dtCount.textContent = data.active_timers;
+
+      // 4. GPU Thermals & Load (Single-char 'gt', 'gp', 'gl' with fallbacks)
+      const gpuTemp = data.gt !== undefined ? data.gt : data.gpu_temp;
+      if (gpuTemp !== undefined && gpuTemp > 0 && domRefs.gpuTempBadge) {
+        domRefs.gpuTempBadge.textContent = `${gpuTemp}°C`;
+        if (gpuTemp > 80) {
+          domRefs.gpuTempBadge.style.color = 'var(--holo-crimson)';
+          domRefs.gpuTempBadge.style.borderColor = 'var(--holo-crimson)';
+        } else {
+          domRefs.gpuTempBadge.style.color = 'var(--holo-amber)';
+          domRefs.gpuTempBadge.style.borderColor = 'var(--holo-amber)';
+        }
       }
-      if (data.model) {
-        document.getElementById('activeModelVal').textContent = data.model;
+
+      const gpuLoad = data.gp !== undefined ? data.gp : (data.gl !== undefined ? data.gl : data.gpu_load);
+      const gpuName = data.gpu || data.gpu_name;
+      if (domRefs.gpuVal) {
+        if (gpuName && gpuLoad !== undefined && gpuLoad > 0) {
+          domRefs.gpuVal.textContent = `${gpuName} (${gpuLoad}%)`;
+        } else if (gpuName) {
+          domRefs.gpuVal.textContent = gpuName;
+        }
       }
-      if (data.tier) {
-        document.getElementById('modelTierVal').textContent = data.tier.toUpperCase();
+
+      // 5. Cognitive Model & Tier (Single-char 'md', 'st')
+      const modelVal = data.md !== undefined ? data.md : data.model;
+      if (modelVal && domRefs.activeModelVal) {
+        domRefs.activeModelVal.textContent = modelVal;
       }
-      if (data.latencies) {
+
+      if (data.tier && domRefs.modelTierVal) {
+        domRefs.modelTierVal.textContent = data.tier.toUpperCase();
+      }
+
+      // 6. State synchronization (Single-char 'st' with fallback to 'state')
+      const stateVal = data.st !== undefined ? data.st : data.state;
+      if (stateVal && stateVal !== currentState) {
+        updateHUDState(stateVal);
+      }
+
+      // 7. Latencies
+      if (data.latencies && domRefs.latencyBadge) {
         const l = data.latencies;
         const oMs = l.ollama ? `${Math.round(l.ollama)}ms` : '--';
         const gMs = l.groq ? `${Math.round(l.groq)}ms` : '--';
-        const badge = document.getElementById('latencyBadge');
-        if (badge) {
-          badge.textContent = `OLLAMA: ${oMs} | GROQ: ${gMs}`;
-        }
+        domRefs.latencyBadge.textContent = `OLLAMA: ${oMs} | GROQ: ${gMs}`;
       }
-      if (data.memory_label) {
-        const memCount = document.getElementById('memoryCountVal');
-        if (memCount) memCount.textContent = data.memory_label;
+
+      // 8. Memory Label
+      if (data.memory_label && domRefs.memoryCountVal) {
+        domRefs.memoryCountVal.textContent = data.memory_label;
       }
-      if (data.is_muted !== undefined) {
-        isMuted = data.is_muted;
-        const btnMute = document.getElementById('btnMute');
-        const muteText = document.getElementById('muteText');
-        if (isMuted) {
-          btnMute.classList.add('muted');
-          muteText.textContent = "UNMUTE VOX";
-        } else {
-          btnMute.classList.remove('muted');
-          muteText.textContent = "MUTE VOX";
+
+      // 9. Active Timers
+      if (data.active_timers !== undefined) {
+        if (domRefs.activeTimersVal) domRefs.activeTimersVal.textContent = `${data.active_timers} ACTIVE`;
+        if (domRefs.drawerTimerCount) domRefs.drawerTimerCount.textContent = data.active_timers;
+      }
+
+      // 10. Mute State (Single-char 'm' [0 or 1] with fallback to 'is_muted')
+      const muteVal = data.m !== undefined ? Boolean(data.m === 1 || data.m === true) : data.is_muted;
+      if (muteVal !== undefined && muteVal !== isMuted) {
+        isMuted = muteVal;
+        if (domRefs.btnMute && domRefs.muteText) {
+          if (isMuted) {
+            domRefs.btnMute.classList.add('muted');
+            domRefs.muteText.textContent = "UNMUTE VOX";
+          } else {
+            domRefs.btnMute.classList.remove('muted');
+            domRefs.muteText.textContent = "MUTE VOX";
+          }
         }
         updateHUDState(currentState);
       }
@@ -1903,6 +2529,221 @@
         }
       }
 
+    // Holographic Photo Gallery Virtualized Controller (Zero-CLS & Zero-VRAM)
+    const ERROR_FALLBACK_SVG = "data:image/svg+xml;utf8," + encodeURIComponent(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 100 100" fill="none">` +
+      `<rect width="100" height="100" fill="#0f1420"/>` +
+      `<path d="M50 30v25M50 68h.01" stroke="#ff3366" stroke-width="5" stroke-linecap="round"/>` +
+      `<circle cx="50" cy="50" r="42" stroke="#ff3366" stroke-width="2" stroke-dasharray="4 4"/>` +
+      `<text x="50" y="86" fill="#ff3366" font-size="8" font-family="monospace" text-anchor="middle">PAYLOAD ERROR</text>` +
+      `</svg>`
+    );
+
+    class HolographicPhotoGallery {
+      constructor() {
+        this.photos = [];
+        this.currentPhoto = null;
+        this.observer = null;
+        this.initObserver();
+      }
+
+      initObserver() {
+        // 10% rootMargin as required by Council invariants
+        const options = {
+          root: domRefs.photoScrollContainer || document.getElementById('photoScrollContainer'),
+          rootMargin: "10%",
+          threshold: 0.01
+        };
+
+        this.observer = new IntersectionObserver((entries, observer) => {
+          entries.forEach(entry => {
+            if (entry.isIntersecting) {
+              const img = entry.target;
+              const targetSrc = img.dataset.src;
+              if (targetSrc) {
+                img.src = targetSrc;
+                img.removeAttribute("data-src");
+              }
+              observer.unobserve(img);
+            }
+          });
+        }, options);
+      }
+
+      async loadGallery() {
+        this.setStatus("FETCHING INTEL ARCHIVES...");
+        try {
+          const resp = await fetch("/api/photos");
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json();
+          this.photos = data.photos || [];
+          if (domRefs.photoCounterBadge) {
+            domRefs.photoCounterBadge.textContent = `${this.photos.length} ASSETS`;
+          }
+          this.render();
+          this.setStatus(`SYNC COMPLETE (${this.photos.length} INDEXED)`);
+        } catch (err) {
+          console.error("[PhotoGallery] Failed to fetch archives:", err);
+          this.setStatus("DATABASE SYNC ERROR");
+        }
+      }
+
+      render() {
+        const grid = domRefs.photoGrid || document.getElementById('photoGrid');
+        if (!grid) return;
+        grid.innerHTML = "";
+
+        const emptyState = domRefs.photoEmptyState || document.getElementById('photoEmptyState');
+        if (this.photos.length === 0) {
+          if (emptyState) emptyState.classList.remove("hidden");
+          return;
+        }
+        if (emptyState) emptyState.classList.add("hidden");
+
+        const fragment = document.createDocumentFragment();
+
+        this.photos.forEach(photo => {
+          const tile = document.createElement("div");
+          tile.className = "photo-tile aspect-square";
+          tile.onclick = () => this.openLightbox(photo);
+
+          const img = document.createElement("img");
+          img.alt = photo.caption || photo.file_name || "Archived photo";
+          img.dataset.src = `/api/photos/${photo.photo_id}`;
+          img.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E";
+
+          img.onload = () => {
+            img.classList.add("loaded");
+          };
+
+          img.onerror = () => {
+            img.src = ERROR_FALLBACK_SVG;
+            img.classList.add("loaded");
+            tile.style.borderColor = "rgba(255, 51, 102, 0.4)";
+          };
+
+          tile.appendChild(img);
+
+          const badge = document.createElement("div");
+          badge.className = "photo-tile-badge";
+          const dim = photo.dimensions || "IMG";
+          const sizeK = Math.round((photo.file_size || 0) / 1024);
+          badge.innerHTML = `<span>${escapeHtml(dim)}</span><span>${sizeK}K</span>`;
+          tile.appendChild(badge);
+
+          fragment.appendChild(tile);
+
+          if (this.observer) {
+            this.observer.observe(img);
+          }
+        });
+
+        grid.appendChild(fragment);
+      }
+
+      openLightbox(photo) {
+        this.currentPhoto = photo;
+        if (domRefs.modalPhotoTitle) domRefs.modalPhotoTitle.textContent = `INTEL // ${photo.file_name || photo.photo_id}`;
+        if (domRefs.modalDim) domRefs.modalDim.textContent = photo.dimensions || "Unknown";
+        if (domRefs.modalSize) domRefs.modalSize.textContent = `${Math.round((photo.file_size || 0) / 1024)} KB`;
+        if (domRefs.modalDate) domRefs.modalDate.textContent = photo.created_at || "Recent";
+        if (domRefs.modalId) domRefs.modalId.textContent = photo.photo_id;
+
+        if (domRefs.modalCaptionText) {
+          domRefs.modalCaptionText.textContent = photo.caption || "No visual description indexed. Click 'ANALYZE WITH VISION' to evaluate.";
+        }
+
+        if (domRefs.modalPhotoImg) {
+          domRefs.modalPhotoImg.src = `/api/photos/${photo.photo_id}`;
+          domRefs.modalPhotoImg.onerror = () => {
+            domRefs.modalPhotoImg.src = ERROR_FALLBACK_SVG;
+          };
+        }
+
+        if (domRefs.photoLightboxModal) {
+          domRefs.photoLightboxModal.classList.remove("hidden");
+        }
+      }
+
+      closeLightbox() {
+        if (domRefs.photoLightboxModal) domRefs.photoLightboxModal.classList.add("hidden");
+        if (domRefs.modalPhotoImg) domRefs.modalPhotoImg.src = "";
+        this.currentPhoto = null;
+      }
+
+      async analyzeCurrentPhoto() {
+        if (!this.currentPhoto) return;
+        const btn = domRefs.analyzeVisionBtn;
+        const captionText = domRefs.modalCaptionText;
+
+        if (btn) {
+          btn.disabled = true;
+          btn.style.opacity = "0.5";
+        }
+        if (captionText) captionText.textContent = "Streaming visual tokens to Gemini Cloud Vision...";
+
+        try {
+          const resp = await fetch("/api/command", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ command: `describe photo ${this.currentPhoto.photo_id}` })
+          });
+          const data = await resp.json();
+          if (captionText) captionText.textContent = `Analysis request dispatched (${data.status || 'queued'}). Listening for voice debrief...`;
+        } catch (e) {
+          if (captionText) captionText.textContent = `Vision analysis request failed: ${e.message}`;
+        } finally {
+          if (btn) {
+            btn.disabled = false;
+            btn.style.opacity = "1";
+          }
+        }
+      }
+
+      async pasteClipboard() {
+        this.setStatus("EXTRACTING CLIPBOARD STREAM...");
+        try {
+          const resp = await fetch("/api/command", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ command: "save clipboard photo" })
+          });
+          this.setStatus("CLIPBOARD COMMAND SENT");
+          setTimeout(() => this.loadGallery(), 1000);
+        } catch (e) {
+          this.setStatus("CLIPBOARD FAILED");
+        }
+      }
+
+      refresh() {
+        this.loadGallery();
+      }
+
+      setStatus(msg) {
+        if (domRefs.galleryStatusMsg) domRefs.galleryStatusMsg.textContent = msg;
+      }
+    }
+
+    let photoGallery = null;
+
+    function openPhotoGalleryModal() {
+      const backdrop = domRefs.photoGalleryModalBackdrop || document.getElementById('photoGalleryModalBackdrop');
+      if (backdrop) {
+        backdrop.classList.add('open');
+        if (!photoGallery) {
+          photoGallery = new HolographicPhotoGallery();
+        }
+        photoGallery.loadGallery();
+      }
+    }
+
+    function closePhotoGalleryModal() {
+      const backdrop = domRefs.photoGalleryModalBackdrop || document.getElementById('photoGalleryModalBackdrop');
+      if (backdrop) {
+        backdrop.classList.remove('open');
+      }
+    }
+
     // Holographic Tactical Calendar Modal Controller
     let currentCalendarFilter = null;
     let cachedCalendarData = null;
@@ -1925,6 +2766,9 @@
     document.addEventListener('keydown', function(e) {
       if (e.key === 'Escape') {
         closeCalendarModal();
+        if (typeof closeConfirmModal === 'function') closeConfirmModal();
+        closePhotoGalleryModal();
+        if (photoGallery) photoGallery.closeLightbox();
       }
     });
 
@@ -2377,6 +3221,7 @@
     }
 
     window.addEventListener('load', () => {
+      initDomReferences();
       initWebSocket();
       fetchInitialTelemetry();
       checkStagedDocuments();
@@ -2386,7 +3231,7 @@
         if (!ws || ws.readyState !== WebSocket.OPEN) {
           fetchInitialTelemetry();
         }
-      }, 2000);
+      }, 3000);
 
       // Periodic check for staged documents
       setInterval(() => {

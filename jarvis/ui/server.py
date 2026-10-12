@@ -18,24 +18,324 @@ from jarvis.skills.os_control import get_raw_battery_info
 
 logger = logging.getLogger("Jarvis.UI")
 
-_gpu_telemetry_cache = {"data": None, "timestamp": 0.0}
+class WorkstationMetricsCollector:
+    """Collects system vitals via psutil and native NVML bindings strictly off the event loop."""
+
+    _nvml_initialized: bool = False
+    _device_handle: Any = None
+    _nvml_module: Any = None
+    _nvml_lock: threading.Lock = threading.Lock()
+
+    _DEFAULT_GPU_METRICS: Dict[str, Any] = {
+        "gpu_name": "NVIDIA GeForce RTX 3050 Laptop GPU",
+        "gpu_load": 0,
+        "vram_used_mb": 0,
+        "vram_total_mb": 4096,
+        "gpu_temp_c": 0,
+    }
+
+    @classmethod
+    def _init_nvml(cls) -> bool:
+        """Initializes NVML and acquires device handle 0 inside a thread-safe singleton gate."""
+        with cls._nvml_lock:
+            if cls._nvml_initialized and cls._device_handle is not None:
+                return True
+
+            try:
+                import pynvml
+                cls._nvml_module = pynvml
+                cls._nvml_module.nvmlInit()
+                cls._device_handle = cls._nvml_module.nvmlDeviceGetHandleByIndex(0)
+                cls._nvml_initialized = True
+                return True
+            except Exception as exc:
+                cls._nvml_initialized = False
+                cls._device_handle = None
+                cls._nvml_module = None
+                logger.debug("Native NVML initialization bypassed (driver or module unavailable): %s", exc)
+                return False
+
+    @classmethod
+    def _get_gpu_metrics_native(cls) -> Dict[str, Any]:
+        """Polls GPU hardware states natively via pynvml bindings without subprocess forks."""
+        if not cls._init_nvml():
+            # Fallback to secondary watchdog query if available
+            try:
+                from jarvis.skills.system_watchdog import _query_gpu_telemetry
+                cached = _query_gpu_telemetry()
+                if cached:
+                    return {
+                        "gpu_name": cached.get("name", cls._DEFAULT_GPU_METRICS["gpu_name"]),
+                        "gpu_load": cached.get("load_pct", 0),
+                        "vram_used_mb": cached.get("vram_used", 0),
+                        "vram_total_mb": cached.get("vram_total", 4096),
+                        "gpu_temp_c": cached.get("temp_c", 0),
+                    }
+            except Exception:
+                pass
+            return dict(cls._DEFAULT_GPU_METRICS)
+
+        try:
+            handle = cls._device_handle
+            nvml = cls._nvml_module
+
+            raw_name = nvml.nvmlDeviceGetName(handle)
+            gpu_name = raw_name.decode("utf-8") if isinstance(raw_name, bytes) else str(raw_name)
+
+            util_rates = nvml.nvmlDeviceGetUtilizationRates(handle)
+            gpu_load = int(util_rates.gpu)
+
+            mem_info = nvml.nvmlDeviceGetMemoryInfo(handle)
+            vram_used_mb = int(mem_info.used / (1024 * 1024))
+            vram_total_mb = int(mem_info.total / (1024 * 1024))
+
+            gpu_temp_c = int(nvml.nvmlDeviceGetTemperature(handle, nvml.NVML_TEMPERATURE_GPU))
+
+            return {
+                "gpu_name": gpu_name,
+                "gpu_load": gpu_load,
+                "vram_used_mb": vram_used_mb,
+                "vram_total_mb": vram_total_mb,
+                "gpu_temp_c": gpu_temp_c,
+            }
+        except Exception as exc:
+            logger.debug("NVML hardware poll failed; resetting handle: %s", exc)
+            with cls._nvml_lock:
+                cls._nvml_initialized = False
+                cls._device_handle = None
+            return dict(cls._DEFAULT_GPU_METRICS)
+
+    @classmethod
+    def shutdown_nvml(cls):
+        """Cleanly finalizes the NVML driver session during host termination."""
+        with cls._nvml_lock:
+            if cls._nvml_initialized and cls._nvml_module is not None:
+                try:
+                    cls._nvml_module.nvmlShutdown()
+                except Exception:
+                    pass
+                cls._nvml_initialized = False
+                cls._device_handle = None
+                cls._nvml_module = None
+
+    @staticmethod
+    def sample_metrics_sync(orchestrator: Any = None) -> Dict[str, Any]:
+        """Synchronous vitals collection combining psutil host memory/CPU with native NVML GPU telemetry."""
+        bat = get_raw_battery_info()
+        cpu_val = round(psutil.cpu_percent(interval=None), 1)
+
+        vmem = psutil.virtual_memory()
+        ram_pct = round(vmem.percent, 1)
+        ram_used_gb = round(vmem.used / (1024 ** 3), 1)
+        ram_total_gb = round(vmem.total / (1024 ** 3), 1)
+        ram_used_mb = int(vmem.used / (1024 * 1024))
+        ram_total_mb = int(vmem.total / (1024 * 1024))
+
+        gpu_data = WorkstationMetricsCollector._get_gpu_metrics_native()
+
+        state = "idle"
+        active_model = "qwen/qwen3.8-27b"
+        tier = "TRI-TIER HYBRID"
+        provider = "hybrid"
+        is_muted = False
+        specialist_status = {"gemini": "ACTIVE", "groq": "ACTIVE", "grok": "METERED / OFF", "claude": "METERED / OFF"}
+        latencies = {"ollama": 0.0, "groq": 0.0, "gemini": 0.0}
+        memory_label = "TIER 2 (ACTIVE)"
+
+        if orchestrator is not None:
+            if hasattr(orchestrator, "is_muted") and callable(orchestrator.is_muted):
+                try:
+                    is_muted = bool(orchestrator.is_muted())
+                except Exception:
+                    is_muted = False
+
+            if hasattr(orchestrator, "state"):
+                state = str(getattr(orchestrator, "state", "idle"))
+
+            if hasattr(orchestrator, "brain"):
+                b = orchestrator.brain
+                p = getattr(b, "provider", "hybrid")
+                provider = p
+                tier = "TRI-TIER HYBRID" if p in ("hybrid", "auto") else ("LOCAL" if p == "ollama" else "CLOUD")
+                active_model = str(getattr(b, "openai_model", getattr(b, "provider", active_model)))
+                status_provider = getattr(b, "specialist_status", None)
+                if callable(status_provider):
+                    try:
+                        specialist_status = status_provider()
+                    except Exception:
+                        pass
+                lat_getter = getattr(b, "get_latencies", None)
+                if callable(lat_getter):
+                    try:
+                        latencies = lat_getter()
+                    except Exception:
+                        pass
+                if hasattr(b, "memory"):
+                    try:
+                        facts = b.memory.get_all_facts()
+                        memory_label = f"{len(facts)} FACTS STORED"
+                    except Exception:
+                        pass
+
+        timer_count = 0
+        try:
+            from jarvis.skills.timers import _active_timers, _timer_lock
+            with _timer_lock:
+                timer_count = len(_active_timers)
+        except Exception:
+            pass
+
+        return {
+            # Single-character keys required by Council Telemetry Directive
+            "c": cpu_val,
+            "rp": ram_pct,
+            "ru": ram_used_mb,
+            "rt": ram_total_mb,
+            "gp": gpu_data["gpu_load"],
+            "gl": gpu_data["gpu_load"],
+            "vu": gpu_data["vram_used_mb"],
+            "vt": gpu_data["vram_total_mb"],
+            "gt": gpu_data["gpu_temp_c"],
+            "st": state,
+            "md": active_model,
+            "m": 1 if is_muted else 0,
+            "ts": int(time.time() * 1000),
+            # Backwards-compatible fields for existing test assertions & components
+            "cpu": cpu_val,
+            "ram_pct": ram_pct,
+            "ram_used_gb": ram_used_gb,
+            "ram_total_gb": ram_total_gb,
+            "gpu": gpu_data["gpu_name"],
+            "gpu_name": gpu_data["gpu_name"],
+            "gpu_load": gpu_data["gpu_load"],
+            "gpu_temp": gpu_data["gpu_temp_c"],
+            "vram_used": f"{gpu_data['vram_used_mb']} MB",
+            "vram_used_mb": gpu_data["vram_used_mb"],
+            "vram_total_mb": gpu_data["vram_total_mb"],
+            "model": active_model,
+            "tier": tier,
+            "provider": provider,
+            "state": state,
+            "specialists": specialist_status,
+            "active_timers": timer_count,
+            "latencies": latencies,
+            "memory_label": memory_label,
+            "is_muted": is_muted,
+            "battery": bat.get("percent", 100),
+            "charging": bat.get("charging", False),
+            "has_battery": bat.get("has_battery", False),
+            "timestamp": time.strftime("%H:%M:%S"),
+        }
 
 
-def _get_cached_gpu_telemetry() -> Optional[Dict[str, Any]]:
-    """Caches GPU telemetry for 6 seconds to avoid spawning nvidia-smi constantly."""
-    now = time.time()
-    if now - _gpu_telemetry_cache["timestamp"] < 6.0 and _gpu_telemetry_cache["data"] is not None:
-        return _gpu_telemetry_cache["data"]
-    try:
-        from jarvis.skills.system_watchdog import _query_gpu_telemetry
-        res = _query_gpu_telemetry()
-        if res:
-            _gpu_telemetry_cache["data"] = res
-            _gpu_telemetry_cache["timestamp"] = now
-            return res
-    except Exception:
-        pass
-    return _gpu_telemetry_cache.get("data")
+class TelemetryConnectionManager:
+    """Manages active HUD WebSocket connections with an 8-subscriber ceiling and lossy Queue(maxsize=1)."""
+
+    def __init__(self, max_clients: int = 8):
+        self.max_clients = max_clients
+        self._clients: Dict[WebSocket, asyncio.Queue] = {}
+        self._sender_tasks: Dict[WebSocket, asyncio.Task] = {}
+        self._lock = asyncio.Lock()
+
+    @property
+    def client_count(self) -> int:
+        return len(self._clients)
+
+    @property
+    def connected_clients(self) -> Set[WebSocket]:
+        return set(self._clients.keys())
+
+    async def connect(self, websocket: WebSocket) -> bool:
+        """Enforces 8-subscriber connection ceiling and binds an isolated Queue(maxsize=1)."""
+        async with self._lock:
+            if len(self._clients) >= self.max_clients:
+                logger.warning("HUD WebSocket connection rejected: max client ceiling (%d) reached.", self.max_clients)
+                await websocket.close(code=1008, reason="Max subscriber ceiling reached")
+                return False
+
+            await websocket.accept()
+            queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+            self._clients[websocket] = queue
+            task = asyncio.create_task(self._client_sender_worker(websocket, queue))
+            self._sender_tasks[websocket] = task
+            logger.info("HUD WebSocket client connected (Total: %d)", len(self._clients))
+            return True
+
+    async def disconnect(self, websocket: WebSocket):
+        """Safely cleans up subscriber queue, cancels sender task, and releases socket."""
+        async with self._lock:
+            if websocket in self._sender_tasks:
+                task = self._sender_tasks.pop(websocket)
+                task.cancel()
+            self._clients.pop(websocket, None)
+            logger.info("HUD WebSocket client disconnected (Total: %d)", len(self._clients))
+
+    async def _client_sender_worker(self, websocket: WebSocket, queue: asyncio.Queue):
+        """Dedicated coroutine per client: drains Queue(maxsize=1) and writes to socket."""
+        try:
+            while True:
+                payload_str = await queue.get()
+                await websocket.send_text(payload_str)
+                queue.task_done()
+        except (WebSocketDisconnect, asyncio.CancelledError):
+            pass
+        except Exception as e:
+            logger.debug("Client sender worker terminated: %s", e)
+        finally:
+            asyncio.create_task(self.disconnect(websocket))
+
+    def broadcast_telemetry(self, raw_data: Dict[str, Any]):
+        """Non-blocking fanout with non-blocking queue.get_nowait() to drop stale frames under backpressure."""
+        if not self._clients:
+            return
+
+        payload = {
+            "type": "telemetry",
+            "t": "telem",
+            "c": raw_data.get("c", raw_data.get("cpu", 0.0)),
+            "rp": raw_data.get("rp", raw_data.get("ram_pct", 0.0)),
+            "ru": raw_data.get("ru", raw_data.get("ram_used_mb", 0)),
+            "rt": raw_data.get("rt", raw_data.get("ram_total_mb", 16384)),
+            "gp": raw_data.get("gp", raw_data.get("gpu_load", 0)),
+            "gl": raw_data.get("gl", raw_data.get("gpu_load", 0)),
+            "vu": raw_data.get("vu", raw_data.get("vram_used_mb", 0)),
+            "vt": raw_data.get("vt", raw_data.get("vram_total_mb", 4096)),
+            "gt": raw_data.get("gt", raw_data.get("gpu_temp_c", 0)),
+            "st": raw_data.get("st", raw_data.get("state", "idle")),
+            "md": raw_data.get("md", raw_data.get("model", "qwen3.8-27b")),
+            "m": raw_data.get("m", 0),
+            "ts": raw_data.get("ts", int(time.time() * 1000)),
+            # Legacy fields for existing test assertions & components
+            "cpu": raw_data.get("cpu", raw_data.get("c", 0.0)),
+            "ram_pct": raw_data.get("ram_pct", raw_data.get("rp", 0.0)),
+            "ram_used_gb": raw_data.get("ram_used_gb", round(raw_data.get("ru", 0) / 1024, 1)),
+            "ram_total_gb": raw_data.get("ram_total_gb", round(raw_data.get("rt", 16384) / 1024, 1)),
+            "gpu": raw_data.get("gpu", raw_data.get("gpu_name", "RTX 3050")),
+            "timestamp": raw_data.get("timestamp", time.strftime("%H:%M:%S")),
+        }
+        minified_str = json.dumps(payload, separators=(",", ":"))
+
+        for queue in list(self._clients.values()):
+            if queue.full():
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+            try:
+                queue.put_nowait(minified_str)
+            except asyncio.QueueFull:
+                pass
+
+    async def broadcast_direct(self, message_str: str):
+        """Broadcasts discrete event message directly to all connected clients."""
+        dead = []
+        for ws in list(self._clients.keys()):
+            try:
+                await ws.send_text(message_str)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            await self.disconnect(ws)
 
 
 class JarvisUIService:
@@ -47,7 +347,7 @@ class JarvisUIService:
         self.orchestrator = orchestrator
         self.host = host
         self.port = port
-        self.connected_clients: Set[WebSocket] = set()
+        self.telemetry_manager = TelemetryConnectionManager(max_clients=8)
         self._server: Optional[uvicorn.Server] = None
         self._thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -57,6 +357,10 @@ class JarvisUIService:
             psutil.cpu_percent(interval=None)
         except Exception:
             pass
+
+    @property
+    def connected_clients(self) -> Set[WebSocket]:
+        return self.telemetry_manager.connected_clients
 
     @classmethod
     def get_instance(cls) -> Optional["JarvisUIService"]:
@@ -80,6 +384,7 @@ class JarvisUIService:
             Route("/api/photos", endpoint=self._handle_photos_list, methods=["GET"]),
             Route("/api/photos/{photo_id}", endpoint=self._handle_photo_stream, methods=["GET"]),
             WebSocketRoute("/ws", endpoint=self._handle_websocket),
+            WebSocketRoute("/api/telemetry", endpoint=self._handle_websocket),
         ]
         return Starlette(routes=routes)
 
@@ -476,14 +781,16 @@ class JarvisUIService:
             return JSONResponse({"error": str(e)}, status_code=500)
 
     async def _handle_websocket(self, websocket: WebSocket):
-        await websocket.accept()
-        self.connected_clients.add(websocket)
-        logger.info(f"HUD WebSocket client connected (Total: {len(self.connected_clients)})")
+        accepted = await self.telemetry_manager.connect(websocket)
+        if not accepted:
+            return
 
-        # Send initial status
+        # Send initial status asynchronously off-loop
         try:
-            init_telemetry = self._gather_telemetry()
-            await websocket.send_text(json.dumps({"type": "telemetry", **init_telemetry}))
+            init_telemetry = await anyio.to_thread.run_sync(
+                WorkstationMetricsCollector.sample_metrics_sync, self.orchestrator
+            )
+            await websocket.send_text(json.dumps({"type": "telemetry", **init_telemetry}, separators=(",", ":")))
         except Exception:
             pass
 
@@ -503,7 +810,7 @@ class JarvisUIService:
                         action = payload.get("action", "")
                         if action == "toggle_mute" and self.orchestrator:
                             is_muted = self.orchestrator.toggle_mute()
-                            self.broadcast_telemetry({"is_muted": is_muted})
+                            self.broadcast_telemetry({"is_muted": is_muted, "m": 1 if is_muted else 0})
                         elif action == "set_volume":
                             from jarvis.skills.os_control import adjust_volume
                             percent = int(payload.get("percent", 50))
@@ -516,109 +823,26 @@ class JarvisUIService:
         except (WebSocketDisconnect, asyncio.CancelledError):
             pass
         finally:
-            self.connected_clients.discard(websocket)
-            logger.info(f"HUD WebSocket client disconnected (Total: {len(self.connected_clients)})")
+            await self.telemetry_manager.disconnect(websocket)
 
     def _gather_telemetry(self) -> Dict[str, Any]:
         """Collects current hardware and model telemetry without blocking."""
-        bat = get_raw_battery_info()
-        cpu_val = round(psutil.cpu_percent(interval=None), 1)
-        mem = psutil.virtual_memory()
-        ram_pct = mem.percent
-        ram_used_gb = round(mem.used / (1024 ** 3), 1)
-        ram_total_gb = round(mem.total / (1024 ** 3), 1)
-
-        gpu_info = _get_cached_gpu_telemetry()
-        gpu_temp = gpu_info.get("temp_c", 0) if gpu_info else 0
-        gpu_name = gpu_info.get("name", "RTX 3050 (CUDA FP16)") if gpu_info else "RTX 3050 (CUDA FP16)"
-        gpu_vram = f"{gpu_info.get('vram_used', 0)} MB" if gpu_info else "Active"
-
-        timer_count = 0
-        try:
-            from jarvis.skills.timers import _active_timers, _timer_lock
-            with _timer_lock:
-                timer_count = len(_active_timers)
-        except Exception:
-            pass
-
-        active_model = "qwen/qwen3.8-27b + qwen3.5:2b"
-        tier = "TRI-TIER HYBRID"
-        provider = "hybrid"
-        specialist_status = {"gemini": "ACTIVE", "groq": "ACTIVE", "grok": "METERED / OFF", "claude": "METERED / OFF"}
-        is_muted = False
-
-        if self.orchestrator:
-            is_muted = self.orchestrator.is_muted()
-            if hasattr(self.orchestrator, "brain"):
-                p = getattr(self.orchestrator.brain, "provider", "hybrid")
-                provider = p
-                tier = "TRI-TIER HYBRID" if p in ("hybrid", "auto") else ("LOCAL" if p == "ollama" else "CLOUD")
-                active_model = getattr(self.orchestrator.brain, "openai_model", active_model)
-                status_provider = getattr(self.orchestrator.brain, "specialist_status", None)
-                if callable(status_provider):
-                    specialist_status = status_provider()
-
-        latencies = {"ollama": 0.0, "groq": 0.0, "gemini": 0.0}
-        if self.orchestrator and hasattr(self.orchestrator, "brain"):
-            lat_getter = getattr(self.orchestrator.brain, "get_latencies", None)
-            if callable(lat_getter):
-                latencies = lat_getter()
-
-        memory_label = "TIER 2 (ACTIVE)"
-        if self.orchestrator and hasattr(self.orchestrator, "brain") and hasattr(self.orchestrator.brain, "memory"):
-            try:
-                facts = self.orchestrator.brain.memory.get_all_facts()
-                memory_label = f"{len(facts)} FACTS STORED"
-            except Exception:
-                pass
-
-        return {
-            "cpu": cpu_val,
-            "ram_pct": ram_pct,
-            "ram_used_gb": ram_used_gb,
-            "ram_total_gb": ram_total_gb,
-            "battery": bat.get("percent", 100),
-            "charging": bat.get("charging", False),
-            "has_battery": bat.get("has_battery", False),
-            "gpu": gpu_name,
-            "gpu_temp": gpu_temp,
-            "gpu_vram": gpu_vram,
-            "model": active_model,
-            "tier": tier,
-            "provider": provider,
-            "specialists": specialist_status,
-            "active_timers": timer_count,
-            "latencies": latencies,
-            "memory_label": memory_label,
-            "is_muted": is_muted,
-            "timestamp": time.strftime("%H:%M:%S"),
-        }
+        return WorkstationMetricsCollector.sample_metrics_sync(self.orchestrator)
 
     def broadcast(self, payload: Dict[str, Any]):
         """Thread-safe broadcast of a JSON payload to all connected clients."""
-        if not self.connected_clients or not self._loop:
+        if not self.telemetry_manager.client_count or not self._loop:
             return
 
-        message = json.dumps(payload)
-
-        async def _send():
-            dead = set()
-            for client in list(self.connected_clients):
-                try:
-                    await client.send_text(message)
-                except Exception:
-                    dead.add(client)
-            for d in dead:
-                self.connected_clients.discard(d)
-
+        message = json.dumps(payload, separators=(",", ":"))
         try:
-            asyncio.run_coroutine_threadsafe(_send(), self._loop)
+            asyncio.run_coroutine_threadsafe(self.telemetry_manager.broadcast_direct(message), self._loop)
         except Exception:
             pass
 
     def broadcast_state(self, state: str):
         """Broadcasts voice state change ('idle', 'listening', 'thinking', 'speaking')."""
-        self.broadcast({"type": "state", "state": state})
+        self.broadcast({"type": "state", "state": state, "st": state})
 
     def broadcast_message(self, sender: str, text: str):
         """Broadcasts a dialogue message to the live mission feed."""
@@ -634,7 +858,11 @@ class JarvisUIService:
         base = self._gather_telemetry()
         if extra:
             base.update(extra)
-        self.broadcast({"type": "telemetry", **base})
+        if self._loop and self.telemetry_manager.client_count:
+            try:
+                self._loop.call_soon_threadsafe(self.telemetry_manager.broadcast_telemetry, base)
+            except Exception:
+                pass
 
     def broadcast_audio_level(self, level: float):
         """Broadcasts audio reactivity level (0.0 to 1.0)."""
@@ -655,17 +883,12 @@ class JarvisUIService:
             while self._server and not self._server.should_exit:
                 try:
                     await asyncio.sleep(1.0)
-                    if self.connected_clients:
-                        base = self._gather_telemetry()
-                        msg = json.dumps({"type": "telemetry", **base})
-                        dead = set()
-                        for client in list(self.connected_clients):
-                            try:
-                                await client.send_text(msg)
-                            except Exception:
-                                dead.add(client)
-                        for d in dead:
-                            self.connected_clients.discard(d)
+                    if self.telemetry_manager.client_count:
+                        # Offload synchronous system queries to worker thread: ZERO event-loop blocking
+                        metrics = await anyio.to_thread.run_sync(
+                            WorkstationMetricsCollector.sample_metrics_sync, self.orchestrator
+                        )
+                        self.telemetry_manager.broadcast_telemetry(metrics)
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
@@ -701,10 +924,11 @@ class JarvisUIService:
         time.sleep(0.4)
 
     def stop(self):
-        """Stops the Uvicorn server cleanly."""
+        """Stops the Uvicorn server cleanly and shuts down native NVML session."""
         if self._server:
             self._server.should_exit = True
         if self._thread:
             self._thread.join(timeout=1.0)
             self._thread = None
         self._server = None
+        WorkstationMetricsCollector.shutdown_nvml()
