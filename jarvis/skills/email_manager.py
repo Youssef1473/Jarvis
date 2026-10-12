@@ -255,14 +255,20 @@ def _send_smtp_email(
 
 def _get_credentials(account: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str], int, bool]:
     """Returns (username, password, imap_host, smtp_host, smtp_port, use_ssl) for requested provider."""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(override=True)
+    except Exception:
+        pass
+
     acc = account.lower().strip()
     if acc in ("gmail", "google", "all"):
         user = os.getenv("GMAIL_ADDRESS", "").strip()
-        pwd = os.getenv("GMAIL_APP_PASSWORD", "").strip()
+        pwd = os.getenv("GMAIL_APP_PASSWORD", "").strip().replace(" ", "")
         return user, pwd, "imap.gmail.com", "smtp.gmail.com", 465, True
     elif acc in ("outlook", "microsoft", "hotmail", "office365"):
         user = os.getenv("OUTLOOK_ADDRESS", "").strip()
-        pwd = os.getenv("OUTLOOK_APP_PASSWORD", "").strip()
+        pwd = os.getenv("OUTLOOK_APP_PASSWORD", "").strip().replace(" ", "")
         return user, pwd, "outlook.office365.com", "smtp.office365.com", 587, False
     return None, None, None, None, 0, False
 

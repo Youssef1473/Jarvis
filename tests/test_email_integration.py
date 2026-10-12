@@ -75,8 +75,8 @@ def test_unread_emails_formatting():
 
     mock_mail.fetch.return_value = ("OK", [(b"1", msg.as_bytes())])
 
-    with patch("imaplib.IMAP4_SSL", return_value=mock_mail), \
-         patch.dict(os.environ, {"GMAIL_ADDRESS": "tony@starkindustries.com", "GMAIL_APP_PASSWORD": "dummy_password"}):
+    with patch("jarvis.skills.email_manager._get_credentials", return_value=("tony@starkindustries.com", "dummy_password", "imap.gmail.com", "smtp.gmail.com", 465, True)), \
+         patch("imaplib.IMAP4_SSL", return_value=mock_mail):
         
         # Test check_unread_emails
         res_unread = check_unread_emails(account="gmail")
@@ -104,7 +104,7 @@ def test_unread_emails_formatting():
 def test_send_email_pipeline():
     print("\n--- 3. Testing Send Email Drafting & Mock SMTP Dispatch ---")
 
-    with patch.dict(os.environ, {"GMAIL_ADDRESS": "tony@starkindustries.com", "GMAIL_APP_PASSWORD": "dummy_password"}):
+    with patch("jarvis.skills.email_manager._get_credentials", return_value=("tony@starkindustries.com", "dummy_password", "imap.gmail.com", "smtp.gmail.com", 465, True)):
         
         # 1. Test draft preview (confirm=False)
         draft = send_email(
