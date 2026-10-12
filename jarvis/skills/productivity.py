@@ -4,7 +4,13 @@ from jarvis.skills.base import SkillRegistry
 from jarvis.core.memory import MemoryManager
 from jarvis.core.config_loader import load_config
 
-_memory_instance = None
+_memory_instance: MemoryManager | None = None
+
+
+def set_memory_manager(mgr: MemoryManager):
+    """Sets the shared singleton MemoryManager instance."""
+    global _memory_instance
+    _memory_instance = mgr
 
 
 def _get_memory() -> MemoryManager:

@@ -16,14 +16,23 @@ class MemoryManager:
     """Stores user preferences, facts, tasks, and conversation history in SQLite with adaptive learning."""
 
     def __init__(self, config: Dict[str, Any]):
+        self.llm_config = config.get("llm", {})
+        memory_config = config.get("memory", {})
+        self.background_learning_enabled = bool(memory_config.get("background_learning", False))
+        self._learning_lock = threading.Lock()
+        self._learning_in_flight = False
+        self._context_summary_lock = threading.Lock()
+        self._context_summary_cache: Optional[str] = None
         base_dir = Path(config.get("_base_dir", "."))
-        db_rel_path = config.get("memory", {}).get("db_path", "data/jarvis_memory.db")
+        db_rel_path = memory_config.get("db_path", "data/jarvis_memory.db")
         self.db_path = base_dir / db_rel_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=5000;")
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -89,6 +98,8 @@ class MemoryManager:
                     updated_at = CURRENT_TIMESTAMP
             """, (category.lower().strip(), key.lower().strip(), value.strip()))
             conn.commit()
+        with self._context_summary_lock:
+            self._context_summary_cache = None
         return f"Remembered: '{key}' is '{value}'."
 
     def get_fact(self, key: str) -> Optional[str]:
@@ -232,13 +243,28 @@ class MemoryManager:
             cursor.execute(sql, tuple(params))
             return [dict(r) for r in cursor.fetchall()]
 
-    def auto_learn_from_interaction(self, user_text: str, reply_text: str, groq_api_key: Optional[str] = None):
+    def auto_learn_from_interaction(
+        self,
+        user_text: str,
+        reply_text: str,
+        groq_api_key: Optional[str] = None,
+        provider: str = "groq",
+    ):
         """Asynchronously analyzes user utterances to extract and persist persistent preferences, facts, and habits."""
         cleaned = user_text.strip().lower()
+        if not self.background_learning_enabled:
+            return
         # Fast filter for greetings, one-word queries, and short commands
         trivial = {"hey jarvis", "exit", "quit", "goodbye", "help", "who are you", "yes", "no", "ok", "okay", "cancel", "thanks", "thank you"}
         if len(cleaned) < 8 or cleaned in trivial:
             return
+
+        # A second local generation competes directly with the live reply on a
+        # small GPU. When enabled, serialize learning so turns never pile up.
+        with self._learning_lock:
+            if self._learning_in_flight:
+                return
+            self._learning_in_flight = True
 
         def _extract():
             system_prompt = (
@@ -252,51 +278,40 @@ class MemoryManager:
                 "Output valid JSON without markdown fences."
             )
 
-            # Priority 1: Use Gemini Flash Lite (massive token quota, zero impact on Groq's 8000 TPM quota)
-            gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
-            if gemini_key:
-                try:
-                    from google import genai
-                    g_client = genai.Client(api_key=gemini_key)
-                    g_res = g_client.models.generate_content(
-                        model="gemini-3.1-flash-lite",
-                        contents=f"{system_prompt}\n\nUser statement: '{user_text}'"
-                    )
-                    content = g_res.text.strip() if g_res.text else "[]"
-                    if content.startswith("```"):
-                        content = re.sub(r"^```(?:json)?\n?", "", content)
-                        content = re.sub(r"\n?```$", "", content)
-                    items = json.loads(content)
-                    if isinstance(items, list):
-                        for item in items:
-                            key = item.get("key", "").strip()
-                            val = item.get("value", "").strip()
-                            cat = item.get("category", "general").strip()
-                            if key and val:
-                                self.remember_fact(key, val, cat)
-                                logger.info(f"Learned new fact about Sir via ambient link: [{cat}] {key} -> {val}")
-                        return
-                except Exception as e:
-                    logger.debug(f"Gemini background memory extraction notice: {e}")
-
-            # Priority 2: Fallback to Groq with max_retries=0 and stagger
-            api_key = groq_api_key or os.getenv("GROQ_API_KEY", "").strip()
+            if provider == "ollama":
+                api_key = "ollama"
+                base_url = self.llm_config.get("ollama_base_url", "http://127.0.0.1:11434/v1")
+                model = self.llm_config.get("ollama_model", "qwen3.5:2b-q4_K_M")
+            elif provider == "groq":
+                api_key = groq_api_key or os.getenv("GROQ_API_KEY", "").strip()
+                base_url = "https://api.groq.com/openai/v1"
+                model = self.llm_config.get("groq_model", "qwen/qwen3.8-27b")
+            else:
+                # Memory extraction must never turn local mode into a cloud call.
+                return
             if not api_key:
                 return
 
             try:
                 import time
-                time.sleep(1.0)  # Stagger slightly to avoid burst contention with speech
+                if provider == "groq":
+                    time.sleep(1.0)  # Stagger slightly to avoid burst contention with speech
                 from openai import OpenAI
-                client = OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1", max_retries=0, timeout=8.0)
+                client = OpenAI(
+                    api_key=api_key,
+                    base_url=base_url,
+                    max_retries=0,
+                    timeout=90.0 if provider == "ollama" else 8.0,
+                )
                 res = client.chat.completions.create(
-                    model="qwen/qwen3.8-27b",
+                    model=model,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": f"User statement: '{user_text}'"}
                     ],
                     max_tokens=200,
-                    temperature=0.0
+                    temperature=0.0,
+                    **({"reasoning_effort": "none"} if provider == "ollama" else {}),
                 )
 
                 content = res.choices[0].message.content.strip()
@@ -314,15 +329,25 @@ class MemoryManager:
                             self.remember_fact(key, val, cat)
                             logger.info(f"Learned new fact about Sir: [{cat}] {key} -> {val}")
             except Exception as e:
-                logger.debug(f"Groq background memory extraction notice: {e}")
+                logger.debug("%s background memory extraction notice: %s", provider, e)
+            finally:
+                with self._learning_lock:
+                    self._learning_in_flight = False
 
         threading.Thread(target=_extract, daemon=True).start()
 
     def get_context_summary(self) -> str:
         """Generates a structured, categorized summary of remembered facts for the LLM prompt."""
+        with self._context_summary_lock:
+            if self._context_summary_cache is not None:
+                return self._context_summary_cache
+
         facts = self.get_all_facts()
         if not facts:
-            return "No prior facts recorded."
+            summary = "No prior facts recorded."
+            with self._context_summary_lock:
+                self._context_summary_cache = summary
+            return summary
 
         by_cat = {}
         for f in facts:
@@ -332,4 +357,7 @@ class MemoryManager:
         sections = []
         for cat, items in sorted(by_cat.items()):
             sections.append(f"[{cat}]\n" + "\n".join(f"• {item}" for item in items))
-        return "\n\n".join(sections)
+        summary = "\n\n".join(sections)
+        with self._context_summary_lock:
+            self._context_summary_cache = summary
+        return summary

@@ -16,14 +16,18 @@ from jarvis.core.memory import MemoryManager
 from jarvis.core.safety import SafetyGate
 from jarvis.core.brain import JarvisBrain
 from jarvis.core.heartbeat import JarvisHeartbeat
+from jarvis.core.services import ManagedServiceManager
 from jarvis.ui.hud import JarvisHUD
 
 logger = logging.getLogger("Jarvis.Orchestrator")
 
 
-def trim_process_memory():
-    """Trims unreferenced RAM on Windows and invokes garbage collector."""
+def trim_process_memory(aggressive: bool = False):
+    """Run low-cost collection; reserve working-set eviction for explicit opt-in."""
     import gc
+    gc.collect(0)
+    if not aggressive:
+        return
     gc.collect()
     try:
         import ctypes
@@ -42,10 +46,16 @@ class JarvisOrchestrator:
         # Initialize sub-systems
         self.sfx = SoundEffects(config)
         self.memory = MemoryManager(config)
+        try:
+            import jarvis.skills.productivity as prod_skills
+            prod_skills.set_memory_manager(self.memory)
+        except Exception:
+            pass
         self.safety = SafetyGate(config)
         self.stt = SpeechToText(config)
         self.tts = TextToSpeech(config)
-        self.brain = JarvisBrain(config, self.memory, self.safety)
+        self.service_manager = ManagedServiceManager()
+        self.brain = JarvisBrain(config, self.memory, self.safety, service_manager=self.service_manager)
         self.hud = JarvisHUD()
         self.heartbeat = JarvisHeartbeat(self, config)
 
@@ -75,7 +85,7 @@ class JarvisOrchestrator:
             config=config,
             on_press_callback=self._on_ptt_press,
             on_release_callback=self._on_ptt_release,
-            on_any_key_callback=self._on_key_activity,
+            on_any_key_callback=None,
         )
         self.wake_detector = WakeWordDetector(
             config,
@@ -84,6 +94,8 @@ class JarvisOrchestrator:
         )
 
         self._running = False
+        self._stopped = False
+        self._stop_lock = threading.Lock()
 
     def set_state(self, new_state: str):
         """Unified state switcher notifying both desktop Tkinter HUD and Web Holographic HUD."""
@@ -285,14 +297,22 @@ class JarvisOrchestrator:
     def is_shutdown_command(query: str) -> bool:
         """Determines if query is a departure or shutdown request."""
         clean = "".join(c.lower() for c in query if c.isalnum() or c.isspace())
+        normalized = " ".join(clean.split())
+        if normalized in {
+            "stop", "stop please", "please stop", "can you stop", "could you stop",
+            "exit", "quit", "goodbye", "good bye", "bye",
+        }:
+            return True
         triggers = [
             "goodbye", "good bye", "bye", "shutdown", "shut down",
             "exit", "quit", "thats it for now", "that is it for now",
             "thats all for now", "that is all for now",
             "power down", "deactivate", "go to sleep", "sleep now",
-            "terminate", "close jarvis", "stop working"
+            "power off", "go offline", "terminate", "close jarvis", "stop jarvis",
+            "stop listening", "stop working", "stop all services", "stop all the services",
+            "stop every service", "shut yourself down"
         ]
-        return any(t in clean for t in triggers)
+        return any(t in normalized for t in triggers)
 
     def handle_command(self, query: str):
         """Processes a text query, executes tools, and speaks the reply."""
@@ -327,17 +347,24 @@ class JarvisOrchestrator:
             self.tts.queue_sentence(sentence)
 
         reply = self.brain.process_query(query, sentence_callback=queue_speech)
+        # Complete playback of remaining queued audio
+        speech_completed = self.tts.finish_streaming_session()
+        if not speech_completed:
+            reply += (
+                "\n\n[Speech playback timed out. The complete response is shown here, "
+                "but Jarvis could not finish speaking it.]"
+            )
+
         print(f"[Jarvis]: {reply}\n")
 
-        # Broadcast response to Holographic HUD
+        # Publish the response after playback drain so the HUD state and
+        # transcript reflect the actual end of speech.
         if getattr(self, "ui_service", None):
             self.ui_service.broadcast_message("jarvis", reply)
 
-        # Complete playback of remaining queued audio
-        self.tts.finish_streaming_session()
         self.set_state("idle")
         self.sfx.play_done()
-        trim_process_memory()
+        trim_process_memory(self.config.get("performance", {}).get("aggressive_working_set_trim", False))
 
         # Check if shutdown tool was invoked during LLM reasoning
         from jarvis.skills.os_control import is_shutdown_requested
@@ -378,7 +405,7 @@ class JarvisOrchestrator:
         self.sfx.play_done()
         hud_url = f"http://{self.ui_service.host}:{self.ui_service.port}" if self.ui_service else "Disabled"
         print("\n" + "=" * 60)
-        print(" JARVIS 2.0 ONLINE & OPERATIONAL")
+        print(" JARVIS 3.0 ONLINE & OPERATIONAL")
         print(f"  - Holographic Web HUD active at {hud_url}")
         print("  - Floating Arc-Reactor HUD active (Drag to move)")
         print("  - Hold Fin (End) key to talk (Push-to-Talk)")
@@ -392,7 +419,7 @@ class JarvisOrchestrator:
         self.set_state("speaking")
         asyncio.run(self.tts.speak("Jarvis systems operational. All sub-systems online, Sir."))
         self.set_state("idle")
-        trim_process_memory()
+        trim_process_memory(self.config.get("performance", {}).get("aggressive_working_set_trim", False))
 
     def run_interactive_loop(self):
         """Main execution loop for voice and console interaction."""
@@ -422,12 +449,27 @@ class JarvisOrchestrator:
             self.stop()
 
     def stop(self):
-        """Stops all running listeners and cleanup."""
-        self._running = False
-        if getattr(self, "ui_service", None):
-            self.ui_service.stop()
-        self.heartbeat.stop()
-        self.hotkey_listener.stop()
-        self.wake_detector.stop()
-        self.tts.stop()
-        self.hud.stop()
+        """Stops Jarvis's internal workers and every managed child service."""
+        with self._stop_lock:
+            if self._stopped:
+                return
+            self._stopped = True
+            self._running = False
+
+        cleanup_steps = [
+            ("Web HUD", getattr(self, "ui_service", None)),
+            ("heartbeat", self.heartbeat),
+            ("hotkey listener", self.hotkey_listener),
+            ("wake detector", self.wake_detector),
+            ("text-to-speech", self.tts),
+            ("desktop HUD", self.hud),
+        ]
+        for name, component in cleanup_steps:
+            if component is None:
+                continue
+            try:
+                component.stop()
+            except Exception:
+                logger.exception("Could not stop Jarvis %s cleanly.", name)
+
+        self.service_manager.stop_all()

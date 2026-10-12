@@ -6,18 +6,18 @@ from typing import Dict, Any, Tuple
 class SafetyGate:
     """Verifies whether commands or tools carry destructive risk."""
 
+    # This denylist catches common destructive PowerShell commands and aliases.
+    # It is not a sandbox: arbitrary shell code can still cause side effects.
     DANGEROUS_COMMAND_PATTERNS = [
-        r"\brm\b",
-        r"\bdel\b",
-        r"\brmdir\b",
-        r"\bremove-item\b",
-        r"\bformat\s+[a-zA-Z]:",
-        r"\bshutdown\b",
-        r"\brestart-computer\b",
-        r"\bdrop\s+table\b",
-        r"\bdelete\s+from\b",
-        r"\bkill\b",
-        r"\bstop-process\b",
+        r"(?<![\w-])(?:remove-item|ri|del|erase|rd|rmdir|remove-itemproperty)(?![\w-])",
+        r"(?<![\w-])(?:clear-content|clc|set-content|sc|out-file)(?![\w-])",
+        r"(?<![\w-])(?:format|format-volume|clear-disk)(?![\w-])",
+        r"(?<![\w-])(?:shutdown|stop-computer|restart-computer)(?![\w-])",
+        r"(?<![\w-])(?:stop-process|kill)(?![\w-])",
+        r"(?<![\w-])(?:set-executionpolicy)(?![\w-])",
+        r"\b(?:drop\s+table|delete\s+from|truncate\s+table)\b",
+        r"\b(?:invoke-expression|iex|encodedcommand|enc)\b",
+        r"\bdel\s+/[fsq]",
     ]
 
     def __init__(self, config: Dict[str, Any]):
@@ -42,6 +42,9 @@ class SafetyGate:
         if tool_name == "execute_powershell":
             cmd = arguments.get("command", "")
             if self.is_command_dangerous(cmd):
-                return False, f"The command '{cmd}' may modify or delete files. Are you certain you want me to proceed, Sir?"
+                return False, (
+                    "Blocked a command matching Jarvis's destructive-command rules. "
+                    "This tool cannot request interactive approval, so the command was not run."
+                )
 
         return True, ""

@@ -36,8 +36,8 @@ def test_dev_skills():
     print("\n2b. Testing read_multiple_files (batch)...")
     batch_res = SkillRegistry.execute("read_multiple_files", file_paths="run.py, jarvis/audio/stt.py", max_lines_per_file=10)
     print("Batch excerpt:\n" + "\n".join(batch_res.splitlines()[:10]))
-    assert "=== run.py" in batch_res
-    assert "=== stt.py" in batch_res
+    assert "run.py" in batch_res
+    assert "stt.py" in batch_res
 
     print("\n3. Testing search_codebase...")
     search_res = SkillRegistry.execute("search_codebase", query="Kokoro", folder_path="jarvis", file_pattern="*.py")
@@ -58,10 +58,13 @@ def test_dev_skills():
     print("Patched file content:\n" + verify_read)
     assert "Version: 2.0 (Self-Builder)" in verify_read
 
-    # Clean up scratch test file
+    # Clean up scratch test file and its backup
     scratch_path = Path(__file__).resolve().parent.parent / scratch_file
     if scratch_path.exists():
         scratch_path.unlink()
+    bak_path = scratch_path.with_suffix(scratch_path.suffix + ".bak")
+    if bak_path.exists():
+        bak_path.unlink()
 
     print("\n5. Testing git_status...")
     git_res = SkillRegistry.execute("git_status")

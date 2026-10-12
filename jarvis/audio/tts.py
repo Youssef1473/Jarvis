@@ -41,6 +41,7 @@ class TextToSpeech:
         self.rate = tts_cfg.get("rate", "+10%")
         self.volume = tts_cfg.get("volume", "+0%")
         self.pitch = tts_cfg.get("pitch", "+0Hz")
+        self.stream_timeout_seconds = max(10.0, float(tts_cfg.get("stream_timeout_seconds", 300)))
         
         self._is_speaking = False
         self._stop_event = threading.Event()
@@ -225,13 +226,8 @@ class TextToSpeech:
 
                     samples, sr = item
                     try:
-                        duration = len(samples) / float(sr)
                         sd.play(samples, sr)
-                        # Sleep bulk duration to yield CPU to Windows audio pipeline (audiodg)
-                        if duration > 0.15:
-                            time.sleep(duration * 0.85)
-                        while sd.get_stream().active and not self._stop_event.is_set():
-                            time.sleep(0.04)
+                        sd.wait()
                     except Exception as e:
                         logger.error(f"Playback error: {e}")
 
@@ -274,16 +270,40 @@ class TextToSpeech:
                 except Exception as e:
                     logger.error(f"SAPI queue error: {e}")
 
-    def finish_streaming_session(self):
-        """Waits for pre-synthesis and playback to conclude seamlessly or until interrupted."""
+    def finish_streaming_session(self) -> bool:
+        """Waits for all queued speech to finish; returns False only on a drain timeout."""
         if self.engine == "kokoro" and self._kokoro:
             self._sentence_queue.put(None)  # Signal synth worker
-            if self._synth_thread and self._synth_thread.is_alive():
-                self._synth_thread.join(timeout=30.0)
-            if self._playback_thread and self._playback_thread.is_alive():
-                self._playback_thread.join(timeout=30.0)
+
+            # Do not declare the HUD idle while queued synthesis or audio is
+            # still running. Polling also lets the normal barge-in stop event
+            # release this wait immediately.
+            deadline = time.monotonic() + self.stream_timeout_seconds
+            workers = [self._synth_thread, self._playback_thread]
+            timed_out = False
+            for worker in workers:
+                while worker and worker.is_alive():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        timed_out = True
+                        break
+                    worker.join(timeout=min(0.1, remaining))
+                if timed_out:
+                    break
+
+            if timed_out:
+                logger.error(
+                    "Speech stream did not drain within %.1f seconds; stopping playback.",
+                    self.stream_timeout_seconds,
+                )
+                self.stop()
+                for worker in workers:
+                    if worker and worker.is_alive():
+                        worker.join(timeout=2.0)
+
             self._is_speaking = False
             self._stream_active = False
+            return not timed_out
 
         else:
             import pythoncom
@@ -303,6 +323,7 @@ class TextToSpeech:
                         pythoncom.CoUninitialize()
                     except Exception:
                         pass
+            return True
 
     def speak_sync(self, text: str):
         """Synchronously speaks text with Kokoro or SAPI."""
@@ -322,14 +343,8 @@ class TextToSpeech:
                     lang=self.kokoro_lang
                 )
                 if not self._stop_event.is_set():
-                    duration = len(samples) / float(sr)
                     sd.play(samples, sr)
-                    if duration > 0.15:
-                        time.sleep(duration * 0.85)
-                    while sd.get_stream().active and not self._stop_event.is_set():
-                        time.sleep(0.04)
-                    if self._stop_event.is_set():
-                        sd.stop()
+                    sd.wait()
             except Exception as e:
                 logger.error(f"Kokoro speak_sync error: {e}. Falling back to SAPI5.")
                 self._speak_local_sapi(clean_text)
