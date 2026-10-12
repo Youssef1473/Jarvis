@@ -305,16 +305,34 @@ class MemoryManager:
 
     # Calendar Events
     def add_calendar_event(self, title: str, start_time: str, end_time: Optional[str] = None, location: Optional[str] = None) -> str:
-        """Adds a calendar event."""
+        """Adds a calendar event with deduplication for identical title and start time."""
+        clean_title = title.strip()
+        clean_start = start_time.strip()
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
+                SELECT id FROM calendar_events
+                WHERE is_cancelled = 0 AND LOWER(title) = ? AND start_time = ?
+            """, (clean_title.lower(), clean_start))
+            existing = cursor.fetchone()
+            if existing:
+                event_id = existing["id"]
+                cursor.execute("""
+                    UPDATE calendar_events
+                    SET end_time = COALESCE(?, end_time),
+                        location = COALESCE(?, location)
+                    WHERE id = ?
+                """, (end_time, location, event_id))
+                conn.commit()
+                return f"Event #{event_id} updated: '{clean_title}' at {clean_start}" + (f" ({location})" if location else "") + "."
+
+            cursor.execute("""
                 INSERT INTO calendar_events (title, start_time, end_time, location, is_cancelled)
                 VALUES (?, ?, ?, ?, 0)
-            """, (title.strip(), start_time.strip(), end_time, location))
+            """, (clean_title, clean_start, end_time, location))
             conn.commit()
             event_id = cursor.lastrowid
-        return f"Event #{event_id} scheduled: '{title}' at {start_time}" + (f" ({location})" if location else "") + "."
+        return f"Event #{event_id} scheduled: '{clean_title}' at {clean_start}" + (f" ({location})" if location else "") + "."
 
     def get_calendar_events(self, include_cancelled: bool = False) -> List[Dict[str, Any]]:
         """Retrieves active calendar events."""

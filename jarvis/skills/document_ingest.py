@@ -28,6 +28,102 @@ def _get_memory() -> MemoryManager:
     return _memory_instance
 
 
+def _extract_page_content(page) -> str:
+    """Extracts page text preserving 2D spatial column alignments for timetables and schedules."""
+    snippets = []
+    def visitor(text, cm, tm, fontDict, fontSize):
+        t = text.strip()
+        if t:
+            snippets.append((tm[4], tm[5], t))
+
+    try:
+        page.extract_text(visitor_text=visitor)
+    except Exception:
+        snippets = []
+
+    day_map = {
+        "lundi": "Monday",
+        "mardi": "Tuesday",
+        "mercredi": "Wednesday",
+        "jeudi": "Thursday",
+        "vendredi": "Friday",
+        "samedi": "Saturday",
+        "dimanche": "Sunday",
+        "monday": "Monday",
+        "tuesday": "Tuesday",
+        "wednesday": "Wednesday",
+        "thursday": "Thursday",
+        "friday": "Friday",
+        "saturday": "Saturday",
+        "sunday": "Sunday",
+    }
+
+    # Detect day column headers
+    day_columns = []
+    for x, y, text in snippets:
+        lower = text.lower()
+        if lower in day_map:
+            day_columns.append({"day": day_map[lower], "raw_day": text, "x": x, "y": y, "date": ""})
+
+    if len(day_columns) >= 2:
+        # Sort columns left to right by x coordinate
+        day_columns.sort(key=lambda d: d["x"])
+
+        # Match dates near headers (e.g. 12/10, 12/10/2026)
+        date_pattern = re.compile(r"^\d{1,2}/\d{1,2}(?:/\d{2,4})?$")
+        for x, y, text in snippets:
+            if date_pattern.match(text):
+                closest = min(day_columns, key=lambda c: abs(c["x"] - x))
+                if abs(closest["x"] - x) < 70 and abs(closest["y"] - y) < 80:
+                    closest["date"] = text
+
+        col_width = (day_columns[-1]["x"] - day_columns[0]["x"]) / (len(day_columns) - 1)
+        min_header_y = min(c["y"] for c in day_columns)
+
+        # Content in the table grid is below the day header row and above footer legend
+        grid_items = [it for it in snippets if 80 <= it[1] <= min_header_y - 15]
+
+        # Bucket items by column
+        col_buckets = {c["day"]: [] for c in day_columns}
+        for x, y, text in grid_items:
+            if any(text == c["raw_day"] or text == c["date"] for c in day_columns):
+                continue
+            lower_text = text.lower()
+            if any(k in lower_text for k in ["emploi du temps", "page 1", "légende", "legende", "année", "annee"]):
+                continue
+            if re.match(r"^\d{1,2}h$", text):
+                continue
+
+            closest = min(day_columns, key=lambda c: abs(c["x"] - x))
+            dist = abs(closest["x"] - x)
+            if dist < col_width * 0.55:
+                col_buckets[closest["day"]].append((x, y, text))
+
+        lines = ["--- Timetable Grid Extracted By Day Column ---"]
+        for col in day_columns:
+            day_name = col["day"]
+            date_str = f" ({col['date']})" if col["date"] else ""
+            items = col_buckets[day_name]
+            items.sort(key=lambda it: -it[1])
+            lines.append(f"\n### Day: {day_name}{date_str}")
+            if not items:
+                lines.append("(No classes or events scheduled)")
+            else:
+                lines.append(" | ".join([it[2] for it in items]))
+
+        return "\n".join(lines)
+
+    # Fallback to layout mode
+    try:
+        layout_txt = page.extract_text(extraction_mode="layout")
+        if layout_txt and len(layout_txt.strip()) > 30:
+            return layout_txt.strip()
+    except Exception:
+        pass
+
+    return page.extract_text() or ""
+
+
 def extract_text_from_pdf(file_path: str, max_pages: int = 50) -> str:
     """Extracts text from a PDF file using pypdf with fallback to Gemini Multimodal."""
     p = Path(file_path)
@@ -41,7 +137,7 @@ def extract_text_from_pdf(file_path: str, max_pages: int = 50) -> str:
         pages_to_read = min(len(reader.pages), max_pages)
         page_texts = []
         for i in range(pages_to_read):
-            t = reader.pages[i].extract_text() or ""
+            t = _extract_page_content(reader.pages[i])
             if t.strip():
                 page_texts.append(f"--- Page {i + 1} ---\n{t.strip()}")
         extracted_text = "\n\n".join(page_texts).strip()
@@ -143,8 +239,12 @@ def process_staged_document(identifier: str = "", user_context: str = "") -> str
         f"Sir has provided a document along with his verbal briefing and instructions.\n"
         f"Carefully analyze Sir's instructions and the document content.\n"
         f"Extract all relevant entities as requested by Sir:\n"
-        f"- If Sir wants calendar events/dates scheduled (or if the document is a syllabus/schedule/itinerary): "
+        f"- If Sir wants calendar events/dates scheduled (or if the document is a syllabus/schedule/itinerary/timetable): "
         f"extract calendar events with 'title', 'start_time' (normalized with date e.g. 'YYYY-MM-DD HH:MM' or 'YYYY-MM-DD'), 'end_time', 'location'.\n"
+        f"- CRITICAL FOR TIMETABLES / SCHEDULES: Process EVERY day of the week (Monday through Sunday). "
+        f"If a day has classes (such as Friday), extract them with their exact date (e.g. 2026-10-16). "
+        f"Do NOT stop after Monday-Wednesday; inspect the full week including Thursday, Friday, Saturday.\n"
+        f"If a day has no classes scheduled, do NOT generate events for that day.\n"
         f"- If Sir wants tasks/action items recorded: extract tasks with 'description' and 'due_date'.\n"
         f"- Always create a knowledge summary of the document for permanent archiving: 'title', 'category' (schedule|syllabus|invoice|contract|paper|manual|note|general), 'summary'.\n\n"
         f"OUTPUT FORMAT:\n"
@@ -189,7 +289,7 @@ def process_staged_document(identifier: str = "", user_context: str = "") -> str
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.1,
-                max_tokens=1500,
+                max_tokens=2500,
             )
             content = res.choices[0].message.content.strip()
             content = re.sub(r"^```(?:json)?\s*", "", content)
@@ -229,7 +329,7 @@ def process_staged_document(identifier: str = "", user_context: str = "") -> str
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.1,
-                max_tokens=1500,
+                max_tokens=2500,
             )
             content = res.choices[0].message.content.strip()
             content = re.sub(r"^```(?:json)?\s*", "", content)

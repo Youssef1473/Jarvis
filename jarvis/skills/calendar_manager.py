@@ -1,5 +1,6 @@
 """Calendar, schedule management, and Stark executive morning briefing protocol."""
 import datetime
+import re
 from typing import Dict, Any, List
 from jarvis.skills.base import SkillRegistry
 from jarvis.core.memory import MemoryManager
@@ -41,18 +42,49 @@ def schedule_calendar_event(title: str, start_time: str, end_time: str = "", loc
     description="Lists all upcoming scheduled meetings, calendar appointments, classes, timetable entries, and agenda events. Always call this when Sir asks about his calendar, schedule, upcoming classes, or agenda."
 )
 def list_calendar_events(include_all: bool = False) -> str:
-    """Returns scheduled events."""
+    """Returns scheduled events grouped chronologically."""
     mem = _get_memory()
     events = mem.get_calendar_events(include_cancelled=include_all)
     if not events:
         return "You have no scheduled meetings or appointments on your calendar, Sir."
 
-    formatted = []
+    from collections import defaultdict
+    grouped = defaultdict(list)
+    ungrouped = []
+
     for e in events:
-        loc = f" at {e['location']}" if e.get("location") else ""
-        end = f" to {e['end_time']}" if e.get("end_time") else ""
-        formatted.append(f"#{e['id']}: '{e['title']}' scheduled for {e['start_time']}{end}{loc}")
-    return "\n".join(formatted)
+        st = e.get("start_time", "")
+        date_match = re.match(r"^(\d{4}-\d{2}-\d{2})", st)
+        if date_match:
+            d_str = date_match.group(1)
+            grouped[d_str].append(e)
+        else:
+            ungrouped.append(e)
+
+    lines = []
+    for d_str in sorted(grouped.keys()):
+        try:
+            dt = datetime.datetime.strptime(d_str, "%Y-%m-%d")
+            day_header = dt.strftime("%A, %B %d, %Y")
+        except Exception:
+            day_header = d_str
+        lines.append(f"• {day_header}:")
+        for e in grouped[d_str]:
+            time_part = e["start_time"].replace(d_str, "").strip()
+            loc = f" at {e['location']}" if e.get("location") else ""
+            end_val = e.get("end_time") or ""
+            end_part = end_val.replace(d_str, "").strip() if end_val else ""
+            end_str = f" to {end_part}" if end_part else ""
+            lines.append(f"   - #{e['id']}: '{e['title']}' at {time_part or e['start_time']}{end_str}{loc}")
+
+    if ungrouped:
+        lines.append("• Other Appointments:")
+        for e in ungrouped:
+            loc = f" at {e['location']}" if e.get("location") else ""
+            end = f" to {e['end_time']}" if e.get("end_time") else ""
+            lines.append(f"   - #{e['id']}: '{e['title']}' scheduled for {e['start_time']}{end}{loc}")
+
+    return "\n".join(lines)
 
 
 @SkillRegistry.register(
