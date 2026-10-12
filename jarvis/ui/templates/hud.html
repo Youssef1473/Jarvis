@@ -146,7 +146,7 @@
       min-height: 0;
       display: grid;
       grid-template-columns: minmax(230px, 310px) minmax(250px, 1fr) minmax(290px, 390px);
-      grid-template-rows: minmax(0, 1fr) 108px;
+      grid-template-rows: minmax(0, 1fr) auto;
       gap: 18px;
       padding: 18px 24px;
       overflow: hidden;
@@ -337,19 +337,42 @@
     }
 
     /* Bottom Command Deck */
+    /* Bottom Command Deck */
     .command-deck {
       grid-column: 1 / -1;
       display: flex;
-      align-items: center;
-      gap: 16px;
+      flex-direction: column;
+      gap: 10px;
       min-width: 0;
-      padding: 12px 16px;
+      padding: 12px 18px;
+      box-sizing: border-box;
+      width: 100%;
+    }
+
+    .deck-top-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      width: 100%;
     }
 
     .quick-actions {
       display: flex;
+      align-items: center;
       gap: 8px;
-      flex: 0 0 auto;
+      flex-wrap: wrap;
+    }
+
+    .deck-status-hint {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      letter-spacing: 1px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
     }
 
     .btn-action {
@@ -357,15 +380,16 @@
       border: 1px solid var(--panel-border);
       color: var(--holo-cyan);
       font-family: 'Orbitron', sans-serif;
-      font-size: 0.75rem;
+      font-size: 0.73rem;
       letter-spacing: 1px;
-      padding: 12px 16px;
+      padding: 8px 13px;
       border-radius: 4px;
       cursor: pointer;
       transition: all 0.2s ease;
       display: flex;
       align-items: center;
       gap: 6px;
+      white-space: nowrap;
     }
 
     .btn-action:hover {
@@ -386,25 +410,41 @@
     }
 
     .input-wrapper {
-      flex: 1;
+      width: 100%;
       min-width: 0;
       display: flex;
       align-items: center;
-      background: rgba(4, 8, 16, 0.85);
+      background: rgba(4, 8, 16, 0.9);
       border: 1px solid var(--panel-border);
       border-radius: 4px;
-      padding: 4px 6px;
+      padding: 4px 8px;
       box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.6);
-      transition: border-color 0.2s ease;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      box-sizing: border-box;
     }
 
     .input-wrapper:focus-within {
       border-color: var(--holo-cyan);
-      box-shadow: var(--glow-cyan), inset 0 2px 8px rgba(0, 0, 0, 0.6);
+      box-shadow: 0 0 12px rgba(0, 240, 255, 0.35), inset 0 2px 8px rgba(0, 0, 0, 0.6);
+    }
+
+    .cmd-prefix {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--holo-cyan);
+      letter-spacing: 1.5px;
+      padding-left: 8px;
+      padding-right: 4px;
+      user-select: none;
+      opacity: 0.85;
+      white-space: nowrap;
     }
 
     .cmd-input {
       flex: 1;
+      width: 100%;
+      min-width: 0;
       background: transparent;
       border: none;
       outline: none;
@@ -413,7 +453,7 @@
       font-size: 1.15rem;
       font-weight: 600;
       letter-spacing: 1px;
-      padding: 8px 14px;
+      padding: 7px 10px;
     }
 
     .cmd-input::placeholder {
@@ -429,11 +469,12 @@
       font-size: 0.8rem;
       font-weight: 700;
       letter-spacing: 1.5px;
-      padding: 10px 22px;
+      padding: 9px 20px;
       border-radius: 3px;
       cursor: pointer;
       box-shadow: var(--glow-cyan);
       transition: all 0.2s ease;
+      white-space: nowrap;
     }
 
     .btn-transmit:hover {
@@ -486,6 +527,14 @@
         padding: 12px;
         gap: 10px;
         height: auto;
+      }
+      .deck-top-row {
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+      }
+      .deck-status-hint {
+        display: none;
       }
       .quick-actions {
         flex-wrap: wrap;
@@ -777,35 +826,41 @@
 
     <!-- Bottom: Command Deck -->
     <footer class="hud-card command-deck">
-      <div class="quick-actions">
-        <button class="btn-action" id="btnMute" onclick="toggleMute()">
-          <span id="muteIcon">🎙️</span> <span id="muteText">MUTE VOX</span>
-        </button>
-        <button class="btn-action" onclick="sendQuickCommand('Jarvis, initiate work protocol')">
-          <span>🛡️</span> WORK
-        </button>
-        <button class="btn-action" onclick="sendQuickCommand('Jarvis, give me my daily briefing')">
-          <span>🌅</span> BRIEFING
-        </button>
-        <button class="btn-action" onclick="sendQuickCommand('Jarvis, initiate lockdown protocol')">
-          <span>🔒</span> LOCKDOWN
-        </button>
-        <button class="btn-action" onclick="sendQuickCommand('Jarvis, optimize my PC')">
-          <span>🧹</span> OPTIMIZE
-        </button>
-        <button class="btn-action" onclick="sendQuickCommand('Look at my screen and tell me what you see')">
-          <span>👁️</span> VISION
-        </button>
-        <button class="btn-action" id="btnImportPdf" onclick="triggerPdfImport()" style="border-color: rgba(0, 255, 157, 0.5); color: var(--holo-emerald);" title="Import PDF Document via File Explorer">
-          <span>📄</span> IMPORT PDF
-        </button>
-        <input type="file" id="pdfFileInput" accept=".pdf,application/pdf" style="display:none;" onchange="handlePdfUpload(event)">
-        <button class="btn-action" id="btnDrawer" onclick="toggleDrawer()">
-          <span>📋</span> ARCHIVE
-        </button>
+      <div class="deck-top-row">
+        <div class="quick-actions">
+          <button class="btn-action" id="btnMute" onclick="toggleMute()">
+            <span id="muteIcon">🎙️</span> <span id="muteText">MUTE VOX</span>
+          </button>
+          <button class="btn-action" onclick="sendQuickCommand('Jarvis, initiate work protocol')">
+            <span>🛡️</span> WORK
+          </button>
+          <button class="btn-action" onclick="sendQuickCommand('Jarvis, give me my daily briefing')">
+            <span>🌅</span> BRIEFING
+          </button>
+          <button class="btn-action" onclick="sendQuickCommand('Jarvis, initiate lockdown protocol')">
+            <span>🔒</span> LOCKDOWN
+          </button>
+          <button class="btn-action" onclick="sendQuickCommand('Jarvis, optimize my PC')">
+            <span>🧹</span> OPTIMIZE
+          </button>
+          <button class="btn-action" onclick="sendQuickCommand('Look at my screen and tell me what you see')">
+            <span>👁️</span> VISION
+          </button>
+          <button class="btn-action" id="btnImportPdf" onclick="triggerPdfImport()" style="border-color: rgba(0, 255, 157, 0.5); color: var(--holo-emerald);" title="Import PDF Document via File Explorer">
+            <span>📄</span> IMPORT PDF
+          </button>
+          <input type="file" id="pdfFileInput" accept=".pdf,application/pdf" style="display:none;" onchange="handlePdfUpload(event)">
+          <button class="btn-action" id="btnDrawer" onclick="toggleDrawer()">
+            <span>📋</span> ARCHIVE
+          </button>
+        </div>
+        <div class="deck-status-hint">
+          <span style="color: var(--holo-emerald);">●</span> PTT: HOLD FIN / END KEY &middot; OR TRANSMIT VIA COMMAND LINE
+        </div>
       </div>
 
       <div class="input-wrapper">
+        <span class="cmd-prefix">JARVIS //</span>
         <input 
           type="text" 
           id="cmdInput" 
