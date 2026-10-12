@@ -52,6 +52,10 @@ class JarvisUIService:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self.template_path = Path(__file__).parent / "templates" / "hud.html"
         JarvisUIService._instance = self
+        try:
+            psutil.cpu_percent(interval=None)
+        except Exception:
+            pass
 
     @classmethod
     def get_instance(cls) -> Optional["JarvisUIService"]:
@@ -257,6 +261,14 @@ class JarvisUIService:
             if callable(lat_getter):
                 latencies = lat_getter()
 
+        memory_label = "TIER 2 (ACTIVE)"
+        if self.orchestrator and hasattr(self.orchestrator, "brain") and hasattr(self.orchestrator.brain, "memory"):
+            try:
+                facts = self.orchestrator.brain.memory.get_all_facts()
+                memory_label = f"{len(facts)} FACTS STORED"
+            except Exception:
+                pass
+
         return {
             "cpu": cpu_val,
             "ram_pct": ram_pct,
@@ -274,6 +286,7 @@ class JarvisUIService:
             "specialists": specialist_status,
             "active_timers": timer_count,
             "latencies": latencies,
+            "memory_label": memory_label,
             "is_muted": is_muted,
             "timestamp": time.strftime("%H:%M:%S"),
         }
@@ -287,7 +300,7 @@ class JarvisUIService:
 
         async def _send():
             dead = set()
-            for client in self.connected_clients:
+            for client in list(self.connected_clients):
                 try:
                     await client.send_text(message)
                 except Exception:
@@ -325,9 +338,46 @@ class JarvisUIService:
         self.broadcast({"type": "audio_level", "level": max(0.0, min(1.0, level))})
 
     def start(self):
-        """Starts the Uvicorn server in a background daemon thread."""
+        """Starts the Uvicorn server in a background daemon thread with continuous live telemetry streaming."""
         if self._thread and self._thread.is_alive():
             return
+
+        async def _telemetry_broadcast_loop():
+            # Prime CPU counter baseline
+            try:
+                psutil.cpu_percent(interval=None)
+            except Exception:
+                pass
+
+            while self._server and not self._server.should_exit:
+                try:
+                    await asyncio.sleep(1.0)
+                    if self.connected_clients:
+                        base = self._gather_telemetry()
+                        msg = json.dumps({"type": "telemetry", **base})
+                        dead = set()
+                        for client in list(self.connected_clients):
+                            try:
+                                await client.send_text(msg)
+                            except Exception:
+                                dead.add(client)
+                        for d in dead:
+                            self.connected_clients.discard(d)
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.debug(f"Telemetry broadcast loop notice: {e}")
+
+        async def _serve_all():
+            telemetry_task = self._loop.create_task(_telemetry_broadcast_loop())
+            try:
+                await self._server.serve()
+            finally:
+                telemetry_task.cancel()
+                try:
+                    await telemetry_task
+                except asyncio.CancelledError:
+                    pass
 
         def _run_server():
             self._loop = asyncio.new_event_loop()
@@ -341,7 +391,7 @@ class JarvisUIService:
             )
             self._server = uvicorn.Server(config)
             logger.info(f"Starting Jarvis HUD Web Server at http://{self.host}:{self.port}...")
-            self._loop.run_until_complete(self._server.serve())
+            self._loop.run_until_complete(_serve_all())
 
         self._thread = threading.Thread(target=_run_server, daemon=True, name="Jarvis-HUD-Server")
         self._thread.start()

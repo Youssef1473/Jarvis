@@ -1109,6 +1109,10 @@
           badge.textContent = `OLLAMA: ${oMs} | GROQ: ${gMs}`;
         }
       }
+      if (data.memory_label) {
+        const memCount = document.getElementById('memoryCountVal');
+        if (memCount) memCount.textContent = data.memory_label;
+      }
       if (data.is_muted !== undefined) {
         isMuted = data.is_muted;
         const btnMute = document.getElementById('btnMute');
@@ -1317,6 +1321,20 @@
     window.addEventListener('load', () => {
       initWebSocket();
       fetchInitialTelemetry();
+
+      // Fallback polling loop if WebSocket connection is lost or offline
+      setInterval(() => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          fetchInitialTelemetry();
+        }
+      }, 2000);
+
+      // Auto-refresh countdown timers when drawer is open
+      setInterval(() => {
+        if (isDrawerOpen && activeDrawerTab === 'timers') {
+          loadDrawerContent();
+        }
+      }, 1500);
     });
   </script>
 </body>
