@@ -125,7 +125,7 @@ Persistent Episodic Memory & Dialogue Recall:
         (("calendar", "meeting", "appointment", "schedule"), {"schedule_calendar_event", "list_calendar_events", "cancel_calendar_event"}),
         (("remember", "save this", "store this"), {"remember_fact"}),
         (("recall", "previous conversation", "past conversation", "we discussed", "you said earlier"), {"recall_fact", "recall_past_conversation"}),
-        (("email", "inbox", "unread mail"), {"check_unread_emails"}),
+        (("email", "inbox", "unread mail", "gmail", "mail", "send email", "search email", "read email", "draft email"), {"check_unread_emails", "search_emails", "read_email_details", "send_email"}),
         (("news", "headlines"), {"web_search", "get_tech_news_headlines"}),
         (("search", "latest", "current", "look up", "lookup"), {"web_search", "get_wikipedia_summary"}),
         (("http://", "https://", "webpage", "website", "open url"), {"browse_and_read_webpage", "open_url_in_desktop_browser", "capture_webpage_screenshot"}),
