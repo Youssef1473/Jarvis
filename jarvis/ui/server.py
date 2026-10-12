@@ -7,9 +7,10 @@ import threading
 import time
 from typing import Any, Dict, Optional, Set
 from starlette.applications import Starlette
-from starlette.responses import HTMLResponse, JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse, StreamingResponse, Response
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
+import anyio
 import uvicorn
 import psutil
 
@@ -76,9 +77,81 @@ class JarvisUIService:
             Route("/api/calendar/delete", endpoint=self._handle_calendar_delete, methods=["POST"]),
             Route("/api/calendar/event/delete", endpoint=self._handle_calendar_event_delete, methods=["POST"]),
             Route("/api/calendar/clear", endpoint=self._handle_calendar_clear, methods=["POST"]),
+            Route("/api/photos", endpoint=self._handle_photos_list, methods=["GET"]),
+            Route("/api/photos/{photo_id}", endpoint=self._handle_photo_stream, methods=["GET"]),
             WebSocketRoute("/ws", endpoint=self._handle_websocket),
         ]
         return Starlette(routes=routes)
+
+    async def _handle_photos_list(self, request):
+        """Lists archived photos from SQLite memory for HUD photo matrix."""
+        import sqlite3
+        from jarvis.core.skills.photo_manager import DB_PATH
+        try:
+            def _query_photos():
+                conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+                conn.row_factory = sqlite3.Row
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT photo_id, file_name, dimensions, file_size, caption, created_at
+                    FROM photos
+                    ORDER BY created_at DESC
+                    LIMIT 60
+                """)
+                rows = [dict(r) for r in cur.fetchall()]
+                conn.close()
+                return rows
+
+            photos = await anyio.to_thread.run_sync(_query_photos)
+            return JSONResponse({"photos": photos})
+        except Exception as e:
+            logger.error("Error retrieving photos for HUD: %s", e)
+            return JSONResponse({"photos": [], "error": str(e)})
+
+    async def _handle_photo_stream(self, request):
+        """Zero-RAM non-blocking photo streamer with ETag 304 caching."""
+        import re
+        photo_id = request.path_params.get("photo_id", "").strip()
+        if not re.match(r"^[a-f0-9]{16,64}(\.jpg)?$", photo_id):
+            return Response("Invalid photo ID format.", status_code=400)
+
+        from jarvis.core.skills.photo_manager import PHOTOS_DIR
+        target_name = photo_id if photo_id.endswith(".jpg") else f"{photo_id}.jpg"
+        target_path = (PHOTOS_DIR / target_name).resolve()
+
+        if not target_path.is_relative_to(PHOTOS_DIR.resolve()):
+            return Response("Directory traversal forbidden.", status_code=403)
+
+        exists = await anyio.to_thread.run_sync(target_path.is_file)
+        if not exists:
+            return Response("Photo not found.", status_code=404)
+
+        stat = await anyio.to_thread.run_sync(target_path.stat)
+        etag = f'"{stat.st_mtime_ns}-{stat.st_size}"'
+
+        # Check browser ETag cache for 304 Not Modified
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "public, max-age=86400, immutable"})
+
+        async def _chunk_reader(path: Path, chunk_size: int = 65536):
+            def _read_chunk(f):
+                return f.read(chunk_size)
+            file_obj = await anyio.to_thread.run_sync(lambda: open(path, "rb"))
+            try:
+                while True:
+                    chunk = await anyio.to_thread.run_sync(_read_chunk, file_obj)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                await anyio.to_thread.run_sync(file_obj.close)
+
+        headers = {
+            "ETag": etag,
+            "Cache-Control": "public, max-age=86400, immutable",
+            "Content-Length": str(stat.st_size),
+        }
+        return StreamingResponse(_chunk_reader(target_path), media_type="image/jpeg", headers=headers)
 
     async def _handle_index(self, request):
         if not self.template_path.exists():
