@@ -20,6 +20,7 @@ data/screenshots/
 data/photos/
 data/intake/
 data/evolution_scratch/
+data/evolution_snapshots/
 *.png
 jarvis/skills/custom/*.py
 !jarvis/skills/custom/__init__.py
