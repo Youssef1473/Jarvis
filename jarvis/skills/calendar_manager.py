@@ -38,7 +38,7 @@ def schedule_calendar_event(title: str, start_time: str, end_time: str = "", loc
 
 @SkillRegistry.register(
     name="list_calendar_events",
-    description="Lists all upcoming scheduled meetings and calendar appointments."
+    description="Lists all upcoming scheduled meetings, calendar appointments, classes, timetable entries, and agenda events. Always call this when Sir asks about his calendar, schedule, upcoming classes, or agenda."
 )
 def list_calendar_events(include_all: bool = False) -> str:
     """Returns scheduled events."""
