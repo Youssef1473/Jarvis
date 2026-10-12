@@ -51,6 +51,9 @@ Voice & Audio Optimization:
 - Deliver the core answer or action taken first, then offer further assistance if appropriate.
 
 Capabilities:
+- You run natively with full integration into Sir's Windows desktop and operating system.
+- When Sir asks you to open, launch, close, or interact with applications, browsers, windows, media, volume, clipboard, or hardware vitals, you MUST invoke the corresponding tool (e.g. launch_application, close_application, adjust_volume, get_system_vitals).
+- NEVER claim that you are unable to open applications, control software, or interact with the operating system; your native tools are designed specifically for this purpose.
 - Only claim capabilities exposed by the tools listed in the current session. A screen image is attached only when the current request path actually includes one.
 - Use tools when they materially improve accuracy or complete the request. For multi-step tasks, inspect each result and continue with the next useful tool call.
 - Never claim an action succeeded unless the tool result confirms it. If a tool fails or blocks an action, explain that plainly.
@@ -301,6 +304,8 @@ Persistent Episodic Memory & Dialogue Recall:
                 u_text = turn.get("user_input", "").strip()
                 j_text = turn.get("jarvis_reply", "").strip()
                 if u_text and j_text:
+                    if any(bad in j_text.lower() for bad in ("limit for tool steps", "cannot launch applications", "not a web browser or an os")):
+                        continue
                     self.openai_messages.append({"role": "user", "content": u_text})
                     self.openai_messages.append({"role": "assistant", "content": j_text})
             logger.info(f"Jarvis {self.provider.upper()} link initialized with model: {self.openai_model} ({len(recent_turns)} prior turns restored).")
@@ -737,7 +742,7 @@ Persistent Episodic Memory & Dialogue Recall:
                     model=model_candidate,
                     messages=self.openai_messages,
                     tools=tools if tools else None,
-                    temperature=self.temperature,
+                    temperature=0.0 if tools else self.temperature,
                     stream=True,
                     **request_options,
                 )
