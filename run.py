@@ -79,13 +79,13 @@ def main():
 
     # Check for stealth mode flags (--stealth, --background, -b, -s)
     is_stealth = any(arg in sys.argv for arg in ("--stealth", "--background", "-b", "-s"))
+    config = load_config()
     if is_stealth:
         from jarvis.ui.tray import set_console_visible
         set_console_visible(False)
-    else:
+    elif config.get("llm", {}).get("provider", "ollama").lower() == "gemini":
         check_api_key()
 
-    config = load_config()
     orchestrator = JarvisOrchestrator(config)
 
     # Launch full-featured system tray app in background

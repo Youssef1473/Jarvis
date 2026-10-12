@@ -17,6 +17,7 @@ scipy>=1.10.0
 pynput>=1.7.6
 
 # OS Automation & Vision
+psutil>=5.9.0
 pyautogui>=0.9.54
 pillow>=10.0.0
 mss>=10.0.0

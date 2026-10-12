@@ -1,6 +1,6 @@
 """Base tool decorator and skill registry for Jarvis 2.0."""
 import inspect
-from typing import Callable, Dict, Any, List
+from typing import Callable, Dict, Any, Iterable, List
 
 
 class SkillRegistry:
@@ -8,6 +8,7 @@ class SkillRegistry:
 
     _tools: Dict[str, Callable] = {}
     _descriptions: Dict[str, str] = {}
+    _openai_tools_cache: Dict[tuple[str, ...], List[Dict[str, Any]]] = {}
 
     @classmethod
     def register(cls, name: str | None = None, description: str | None = None):
@@ -17,6 +18,7 @@ class SkillRegistry:
             doc = description or (func.__doc__ or "").strip()
             cls._tools[tool_name] = func
             cls._descriptions[tool_name] = doc
+            cls._openai_tools_cache.clear()
             return func
         return decorator
 
@@ -29,8 +31,14 @@ class SkillRegistry:
         return cls._tools
 
     @classmethod
-    def get_openai_tools(cls) -> List[Dict[str, Any]]:
-        """Converts registered skills into OpenAI/xAI JSON schema tool definitions."""
+    def get_openai_tools(cls, names: Iterable[str] | None = None) -> List[Dict[str, Any]]:
+        """Return cached OpenAI-compatible schemas for every tool or a selected subset."""
+        selected = set(names) if names is not None else None
+        ordered_names = tuple(name for name in cls._tools if selected is None or name in selected)
+        cached = cls._openai_tools_cache.get(ordered_names)
+        if cached is not None:
+            return cached
+
         openai_tools = []
         type_map = {
             str: "string",
@@ -41,7 +49,8 @@ class SkillRegistry:
             dict: "object",
         }
 
-        for name, func in cls._tools.items():
+        for name in ordered_names:
+            func = cls._tools[name]
             sig = inspect.signature(func)
             props = {}
             required = []
@@ -70,6 +79,7 @@ class SkillRegistry:
                     }
                 }
             })
+        cls._openai_tools_cache[ordered_names] = openai_tools
         return openai_tools
 
     @classmethod

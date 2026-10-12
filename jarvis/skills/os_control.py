@@ -341,7 +341,16 @@ def control_media(action: str) -> str:
 )
 def minimize_all_windows() -> str:
     """Shows the desktop."""
-    pyautogui.hotkey("win", "d")
+    try:
+        import win32api
+        win32api.keybd_event(0x5B, 0, 0, 0)
+        win32api.keybd_event(0x44, 0, 0, 0)
+        win32api.keybd_event(0x44, 0, 2, 0)
+        win32api.keybd_event(0x5B, 0, 2, 0)
+    except Exception:
+        import pyautogui
+        pyautogui.FAILSAFE = False
+        pyautogui.hotkey("win", "d")
     return "Desktop shown, all windows minimized."
 
 

@@ -1,22 +1,23 @@
-# Jarvis 2.0 — Personal AI Assistant
+# Jarvis 3.0 — Personal AI Assistant
 
-An Iron-Man inspired, voice-first personal AI assistant engineered for Windows 11 with an NVIDIA RTX GPU, featuring **$0 API costs**, multimodal desktop vision, push-to-talk, wake word detection, long-term memory, and tool automation.
+An Iron-Man inspired, voice-first personal AI assistant engineered for Windows 11 with an NVIDIA RTX GPU. Version 3.0 keeps Ollama as its local-first primary brain, adds explicitly requested cloud specialist consultations, and improves model visibility in the HUD.
 
 ---
 
 ## Features
 
 - **Dual Voice Activation:**
-  - **Push-to-Talk:** Press and hold `ALT` while speaking; release to immediately transcribe and process.
+  - **Push-to-Talk:** Hold the configured PTT key while speaking, then release to transcribe and process. The checked-in configuration uses `End` (`fin`).
   - **Wake Word:** Say *"Hey Jarvis"* anytime to trigger voice command listening in the background.
   - **Barge-in / Interruption:** Start speaking or press any key to immediately cut off Jarvis's speech.
-- **Cognitive Brain (Gemini 2.0 Flash):**
-  - High-speed conversational reasoning and multi-step tool execution.
+- **Cognitive Brain (local-first, explicit routing):**
+  - Local Qwen 3.5 2B via Ollama for normal conversation, screen vision, and tool use without API credits.
+  - Optional Gemini, Grok, and Claude specialist consultations; normal requests never fan out to cloud services or silently switch providers.
   - Multimodal desktop vision: Ask *"Jarvis, look at my screen"* or *"Explain this error"* to analyze your active desktop.
 - **Hardware-Accelerated STT:** `faster-whisper` running locally on your NVIDIA GeForce RTX 3050 GPU using CUDA.
 - **Procedural High-Tech Audio Cues:** Synthesized Stark Industries chimes for wake, thinking, done, and alerts.
 - **Persistent Memory:** SQLite database (`data/jarvis_memory.db`) remembering your personal facts, preferences, habits, and tasks across sessions.
-- **Safety Gate:** Voice confirmation required before executing potentially destructive PowerShell scripts or file operations.
+- **Safety Gate:** Blocks a set of recognized destructive PowerShell commands and aliases. This is a pattern-based guard, not a sandbox or a substitute for reviewing commands; other registered tools can still change data.
 - **Tool Suite:**
   - **Desktop & OS Automation:** Launch apps, adjust volume, control media playback, show desktop.
   - **Web & Live Knowledge:** DuckDuckGo web search, Open-Meteo real-time global weather, Wikipedia.
@@ -29,12 +30,12 @@ An Iron-Man inspired, voice-first personal AI assistant engineered for Windows 1
 
 ## Quick Start
 
-### 1. Configure Gemini API Key (Free)
-Copy `.env.example` to `.env` and add your free Google AI Studio key:
-```bash
-GEMINI_API_KEY=your_key_here
+### 1. Install the local model
+Install [Ollama for Windows](https://ollama.com/download/windows), then download the configured model once:
+```powershell
+ollama pull qwen3.5:2b-q4_K_M
 ```
-Get a free key here: [Google AI Studio](https://aistudio.google.com/app/apikey).
+Jarvis starts Ollama's local server when needed. Inference and background memory extraction stay on this machine and do not consume API credits. The model is about 1.9 GB; its quality is below larger cloud models, and response speed depends on this PC. Jarvis requires Ollama and this model to be available locally.
 
 ### 2. Launch Jarvis
 Activate the virtual environment and run:
@@ -43,9 +44,19 @@ Activate the virtual environment and run:
 ```
 
 ### 3. Usage
-- **Hold ALT:** Speak your request, then release ALT.
+- **Hold End:** Speak your request, then release End. Change `audio.ptt_trigger` in `config/config.yaml` to use another key.
 - **Say "Hey Jarvis":** Jarvis wakes up, chimes, and listens.
 - **Type in terminal:** Type your question directly in the `[Sir]:` prompt and hit Enter.
+- **Request a specialist:** Say or type `consult gemini: <question>`, `consult groq: <question>`, `consult grok: <question>`, or `consult claude: <question>`. Only the named provider receives the text in that command; Jarvis does not forward the normal conversation history.
+
+### Provider and cost behavior
+
+- Ollama remains the configured primary model and handles ordinary conversation locally.
+- Gemini consultation is opt-in per request and requires `GEMINI_API_KEY`. The selected Gemini 3.8 Flash model has a Google AI Studio free tier, but it has model-specific quotas and rate limits; a key attached to a billed project can incur charges.
+- Gemini Free-tier prompts are sent to Google and may be used to improve Google's products, per its API pricing terms. Do not include sensitive content in a free-tier consultation.
+- Groq consultation is opt-in per request and requires `GROQ_API_KEY`; Groq documents free-plan quotas, which vary by model and account. A billed Developer-plan account can incur charges.
+- Grok and Claude API consultations are blocked by default. Their developer APIs are usage-billed, so enabling `llm.specialists.allow_metered_api_calls` is an explicit configuration change that can incur charges.
+- The HUD lists the active primary provider and whether specialist credentials/permissions are configured. Cloud calls do not happen automatically when a local request fails.
 
 ---
 

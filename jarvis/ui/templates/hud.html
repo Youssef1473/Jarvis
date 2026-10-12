@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>JARVIS 2.0 // Holographic HUD Interface</title>
+  <title>JARVIS 3.0 // Holographic HUD Interface</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800;900&family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
@@ -143,9 +143,10 @@
     /* Main Grid Layout */
     main {
       flex: 1;
+      min-height: 0;
       display: grid;
-      grid-template-columns: 310px 1fr 390px;
-      grid-template-rows: 1fr 90px;
+      grid-template-columns: minmax(230px, 310px) minmax(250px, 1fr) minmax(290px, 390px);
+      grid-template-rows: minmax(0, 1fr) 108px;
       gap: 18px;
       padding: 18px 24px;
       overflow: hidden;
@@ -341,12 +342,14 @@
       display: flex;
       align-items: center;
       gap: 16px;
-      padding: 0 16px;
+      min-width: 0;
+      padding: 12px 16px;
     }
 
     .quick-actions {
       display: flex;
       gap: 8px;
+      flex: 0 0 auto;
     }
 
     .btn-action {
@@ -384,6 +387,7 @@
 
     .input-wrapper {
       flex: 1;
+      min-width: 0;
       display: flex;
       align-items: center;
       background: rgba(4, 8, 16, 0.85);
@@ -449,7 +453,7 @@
     ::-webkit-scrollbar-thumb:hover { background: var(--holo-cyan); }
 
     /* Responsive Layout for Narrow, Split, or Docked Windows */
-    @media (max-width: 1024px) {
+    @media (max-width: 840px) {
       body {
         overflow-y: auto;
         height: auto;
@@ -504,7 +508,7 @@
   <header>
     <div class="brand">
       <div class="brand-logo"><div class="brand-logo-inner"></div></div>
-      <div class="brand-title">J.A.R.V.I.S. // 2.0</div>
+      <div class="brand-title">J.A.R.V.I.S. // 3.0</div>
       <div class="brand-sub">STARK INDUSTRIES COGNITIVE CORE</div>
     </div>
     <div class="header-pills">
@@ -513,8 +517,8 @@
         <span id="socketStatusText">NEURAL LINK ACTIVE</span>
       </div>
       <div class="pill">
-        <span>COST:</span>
-        <span style="color: var(--holo-emerald); font-weight: bold;">$0.00 / FREE</span>
+        <span>ROUTING:</span>
+        <span style="color: var(--holo-emerald); font-weight: bold;">LOCAL FIRST // CLOUD BY REQUEST</span>
       </div>
       <div class="pill">
         <span id="clockDisplay">00:00:00</span>
@@ -553,12 +557,17 @@
           </div>
         </div>
         <div class="telemetry-row">
-          <span class="telemetry-label">ACTIVE LLM TIER</span>
-          <span class="telemetry-val" id="modelTierVal" style="color: var(--holo-amber);">GROQ LPU FAST TIER</span>
+          <span class="telemetry-label">PRIMARY BRAIN</span>
+          <span class="telemetry-val" id="modelTierVal" style="color: var(--holo-emerald);">OLLAMA // LOCAL</span>
         </div>
         <div class="telemetry-row">
           <span class="telemetry-label">ACTIVE MODEL</span>
-          <span class="telemetry-val" id="activeModelVal" style="font-size: 0.8rem;">qwen3.8-27b</span>
+          <span class="telemetry-val" id="activeModelVal" style="font-size: 0.8rem;">qwen3.5:2b-q4_K_M</span>
+        </div>
+        <div class="telemetry-row" style="flex-direction: column; align-items: flex-start; gap: 5px;">
+          <span class="telemetry-label">SPECIALIST LANES</span>
+          <span class="telemetry-val" id="specialistVal" style="font-size: 0.72rem; line-height: 1.6;">GEMINI ADD KEY · GROQ ADD KEY · GROK METERED/OFF · CLAUDE METERED/OFF</span>
+          <span class="telemetry-label" style="font-size: 0.72rem;">CONSULT GEMINI/GROQ // ACCOUNT QUOTAS APPLY</span>
         </div>
         <div class="telemetry-row">
           <span class="telemetry-label">TTS ENGINE</span>
@@ -871,7 +880,7 @@
         badge.style.color = "var(--holo-amber)";
         badge.style.borderColor = "var(--holo-amber)";
         badge.style.textShadow = "var(--glow-amber)";
-        sub.textContent = "EXECUTING COGNITIVE REASONING & TOOL ROUTING";
+        sub.textContent = "LOCAL REASONING & TOOL ROUTING // NO AUTOMATIC CLOUD FALLBACK";
       } else if (state === "speaking") {
         badge.textContent = "SPEAKING // VOCAL HARMONICS";
         badge.style.color = "var(--holo-emerald)";
@@ -897,7 +906,12 @@
         document.getElementById('activeModelVal').textContent = data.model;
       }
       if (data.tier) {
-        document.getElementById('modelTierVal').textContent = `${data.tier.toUpperCase()} TIER`;
+        document.getElementById('modelTierVal').textContent = `${String(data.provider || 'OLLAMA').toUpperCase()} // ${data.tier.toUpperCase()}`;
+      }
+      if (data.specialists) {
+        const s = data.specialists;
+        document.getElementById('specialistVal').textContent =
+          `GEMINI ${s.gemini || 'OFF'} · GROQ ${s.groq || 'OFF'} · GROK ${s.grok || 'OFF'} · CLAUDE ${s.claude || 'OFF'}`;
       }
       if (data.gpu) {
         document.getElementById('gpuVal').textContent = data.gpu;

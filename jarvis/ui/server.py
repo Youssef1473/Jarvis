@@ -151,15 +151,21 @@ class JarvisUIService:
     def _gather_telemetry(self) -> Dict[str, Any]:
         """Collects current hardware and model telemetry without blocking."""
         bat = get_raw_battery_info()
-        active_model = "qwen/qwen3.8-27b"
-        tier = "fast"
+        active_model = "qwen3.5:2b-q4_K_M"
+        tier = "local"
+        provider = "ollama"
+        specialist_status = {"gemini": "ADD KEY", "groq": "ADD KEY", "grok": "METERED / OFF", "claude": "METERED / OFF"}
         is_muted = False
 
         if self.orchestrator:
             is_muted = self.orchestrator.is_muted()
             if hasattr(self.orchestrator, "brain"):
                 active_model = getattr(self.orchestrator.brain, "openai_model", active_model)
-                tier = "deep" if "claude" in active_model.lower() else "fast"
+                provider = getattr(self.orchestrator.brain, "provider", "")
+                tier = "LOCAL" if provider == "ollama" else "CLOUD"
+                status_provider = getattr(self.orchestrator.brain, "specialist_status", None)
+                if callable(status_provider):
+                    specialist_status = status_provider()
 
         return {
             "battery": bat.get("percent", 100),
@@ -167,6 +173,8 @@ class JarvisUIService:
             "gpu": "RTX 3050 (CUDA FP16)",
             "model": active_model,
             "tier": tier,
+            "provider": provider,
+            "specialists": specialist_status,
             "is_muted": is_muted,
             "timestamp": time.strftime("%H:%M:%S"),
         }

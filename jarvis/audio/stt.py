@@ -40,6 +40,7 @@ class SpeechToText:
         self.language = stt_cfg.get("language", "en")
         self.beam_size = int(stt_cfg.get("beam_size", 1))
         self.trim_silence = bool(stt_cfg.get("trim_silence", True))
+        self.vad_filter = bool(stt_cfg.get("vad_filter", False))
         self.cpu_threads = int(stt_cfg.get("cpu_threads", 4))
         self.initial_prompt = stt_cfg.get("initial_prompt", "Jarvis, Sir, computer, volume, battery, system.")
         self.model = None
@@ -133,7 +134,7 @@ class SpeechToText:
                 temperature=0.0,
                 condition_on_previous_text=False,
                 initial_prompt=self.initial_prompt,
-                vad_filter=True,
+                vad_filter=self.vad_filter,
                 vad_parameters=dict(
                     min_silence_duration_ms=250,
                     speech_pad_ms=150,
@@ -153,7 +154,7 @@ class SpeechToText:
                     temperature=0.0,
                     condition_on_previous_text=False,
                     initial_prompt=self.initial_prompt,
-                    vad_filter=True,
+                    vad_filter=self.vad_filter,
                     vad_parameters=dict(
                         min_silence_duration_ms=250,
                         speech_pad_ms=150,

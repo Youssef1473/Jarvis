@@ -126,7 +126,7 @@ class SystemTrayApp:
         muted = self.orchestrator.toggle_mute()
         new_status = "muted" if muted else "online"
         icon.icon = create_tray_icon_image(new_status)
-        icon.title = f"JARVIS 2.0 ({'MUTED' if muted else 'ONLINE'})"
+        icon.title = f"JARVIS 3.0 ({'MUTED' if muted else 'ONLINE'})"
         icon.update_menu()
 
     def _toggle_hud(self, icon, item):
@@ -180,13 +180,13 @@ class SystemTrayApp:
         """Presents a sleek, dark-themed Tkinter viewer displaying stored facts and preferences."""
         def _show_gui():
             root = tk.Tk()
-            root.title("JARVIS 2.0 — Long-Term Memory Profile")
+            root.title("JARVIS 3.0 — Long-Term Memory Profile")
             root.geometry("620x560")
             root.configure(bg="#0c1017")
 
             # Title
             header = tk.Label(
-                root, text="✦ JARVIS 2.0 COGNITIVE MEMORY ✦",
+                root, text="✦ JARVIS 3.0 COGNITIVE MEMORY ✦",
                 font=("Segoe UI", 12, "bold"), fg="#00f0ff", bg="#0c1017"
             )
             header.pack(pady=(15, 8))
@@ -240,13 +240,13 @@ class SystemTrayApp:
 
     def _build_menu(self) -> pystray.Menu:
         """Assembles the interactive system tray context menu."""
-        provider_name = getattr(self.orchestrator.brain, "provider", "groq").upper()
-        model_name = getattr(self.orchestrator.brain, "openai_model", "qwen/qwen3.8-27b")
+        provider_name = getattr(self.orchestrator.brain, "provider", "ollama").upper()
+        model_name = getattr(self.orchestrator.brain, "openai_model", "qwen3.5:2b-q4_K_M")
 
         menu_items = [
-            pystray.MenuItem(f"JARVIS 2.0 (Online)", None, enabled=False),
+            pystray.MenuItem("JARVIS 3.0 (Online)", None, enabled=False),
             pystray.MenuItem(f"Brain: {provider_name} ({model_name})", None, enabled=False),
-            pystray.MenuItem(f"Gateway: OmniRoute (Port 20128)", None, enabled=False),
+            pystray.MenuItem("Routing: local-first; cloud consultations by request", None, enabled=False),
             pystray.MenuItem(f"Voice: Kokoro-82M Neural (Local CUDA)", None, enabled=False),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
@@ -284,7 +284,7 @@ class SystemTrayApp:
         """Runs the tray icon loop."""
         image = create_tray_icon_image("online")
         menu = self._build_menu()
-        self.icon = pystray.Icon("Jarvis2.0", image, "JARVIS 2.0 Assistant", menu)
+        self.icon = pystray.Icon("Jarvis3.0", image, "JARVIS 3.0 Assistant", menu)
         self.icon.run()
 
     def run_in_background(self):

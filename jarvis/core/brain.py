@@ -25,6 +25,11 @@ import jarvis.skills.browser_agent
 import jarvis.skills.email_manager
 import jarvis.skills.screen_vision
 import jarvis.skills.timers
+import jarvis.skills.protocols
+import jarvis.skills.system_maintenance
+import jarvis.skills.media_dj
+import jarvis.skills.briefing
+import jarvis.skills.project_manager
 from jarvis.vision.screen_capture import ScreenPerception
 from jarvis.core.memory import MemoryManager
 from jarvis.core.safety import SafetyGate
@@ -129,6 +134,13 @@ Persistent Episodic Memory & Dialogue Recall:
         (("lock", "lock pc", "lock computer", "lock workstation"), {"lock_workstation"}),
         (("screenshot", "snapshot", "capture screen"), {"take_desktop_screenshot", "inspect_screen"}),
         (("timer", "countdown", "stopwatch", "alarm", "how much time left"), {"start_timer", "cancel_timer", "list_active_timers"}),
+        (("protocol", "work protocol", "lockdown", "relax protocol", "night protocol", "coding mode", "focus mode"), {"execute_protocol"}),
+        (("briefing", "morning briefing", "daily briefing", "morning protocol", "good morning"), {"get_daily_briefing"}),
+        (("ram hog", "memory hog", "eating ram", "eating", "who is eating", "top memory", "high memory", "memory consumer"), {"inspect_ram_hogs"}),
+        (("optimize", "cleanup", "clean pc", "clean workstation", "flush dns", "speed up"), {"optimize_workstation", "inspect_ram_hogs"}),
+        (("youtube", "play song", "play video", "play music", "soundtrack"), {"play_youtube_media"}),
+        (("open project", "launch project", "open repo"), {"open_project"}),
+        (("open folder", "downloads folder", "screenshots folder", "documents folder", "desktop folder"), {"open_user_folder"}),
     )
 
     def __init__(
@@ -549,7 +561,9 @@ Persistent Episodic Memory & Dialogue Recall:
             os_action_tools = {
                 "launch_application", "close_application", "adjust_volume", "control_media",
                 "minimize_all_windows", "lock_workstation", "get_system_vitals", "get_battery_status",
-                "take_desktop_screenshot", "start_timer", "cancel_timer", "list_active_timers"
+                "take_desktop_screenshot", "start_timer", "cancel_timer", "list_active_timers",
+                "execute_protocol", "get_daily_briefing", "inspect_ram_hogs", "optimize_workstation",
+                "play_youtube_media", "open_project", "open_user_folder"
             }
             if any(t in self.active_tool_names for t in os_action_tools) and getattr(self, "ollama_client", None):
                 logger.info("Hybrid Routing: OS / Device command -> LOCAL OLLAMA (0ms network latency)")
@@ -932,7 +946,9 @@ Persistent Episodic Memory & Dialogue Recall:
                 action_tools = {
                     "launch_application", "open_url_in_desktop_browser", "close_application",
                     "adjust_volume", "control_media", "minimize_all_windows", "lock_workstation",
-                    "take_desktop_screenshot", "shutdown_jarvis", "start_timer", "cancel_timer"
+                    "take_desktop_screenshot", "shutdown_jarvis", "start_timer", "cancel_timer",
+                    "execute_protocol", "get_daily_briefing", "inspect_ram_hogs", "optimize_workstation",
+                    "play_youtube_media", "open_project", "open_user_folder"
                 }
 
                 # Step 2: Handle tool calls if invoked
