@@ -147,33 +147,24 @@ class TextToSpeech:
         self._is_speaking = False
 
     def _clean_text_for_speech(self, text: str) -> str:
-        """Strips markdown and formatting so speech sounds completely natural."""
+        """Normalizes times, numbers, dates, units, and formatting for natural spoken delivery."""
         if not text:
             return ""
-        # Remove markdown horizontal rules (e.g. ---, ___, ***)
-        cleaned = re.sub(r"[-*_]{2,}", "", text.strip())
-        # Remove bold/italic markers
-        cleaned = re.sub(r"[*_~`#]", "", cleaned)
-        # Remove bullet points and numbered lists
-        cleaned = re.sub(r"^\s*[-*•]+\s*", "", cleaned)
-        cleaned = re.sub(r"^\s*\d+\.\s*", "", cleaned)
-        # Remove URLs
-        cleaned = re.sub(r"https?://\S+", "", cleaned)
-        # Normalize whitespace
-        cleaned = re.sub(r"\s+", " ", cleaned).strip()
-        # Must contain at least one pronounceable alphanumeric character
+        from jarvis.audio.normalizer import SpeechNormalizer
+        cleaned = SpeechNormalizer.normalize(text)
         if not re.search(r"[a-zA-Z0-9]", cleaned):
             return ""
         return cleaned
 
     def _split_into_audio_chunks(self, text: str) -> list[str]:
-        """Splits text into natural clause phrases (commas, semicolons, colons, dashes)
-        to enable ultra-low Time-to-First-Audio (<50ms) via progressive chunked synthesis."""
+        """Splits text into natural clause phrases (commas, semicolons, dashes)
+        to enable ultra-low Time-to-First-Audio (<50ms) via progressive chunked synthesis.
+        Guards colons inside timestamps (e.g. 12:15) so times are never fragmented."""
         if not text:
             return []
 
-        # Split on natural pause delimiters
-        raw_parts = re.split(r'([,;:—–\n]+)', text)
+        # Split on natural pause delimiters, ensuring colons between digits (like 12:15) are NOT split
+        raw_parts = re.split(r'([,;\n]+|(?<!\d):|:(?!\d)|[—–]+)', text)
         chunks = []
         current = ""
 

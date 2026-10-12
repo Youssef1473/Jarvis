@@ -781,24 +781,11 @@ Universal Document & PDF Ingestion:
 
     @staticmethod
     def _clean_speech_clause(text: str) -> str:
-        """Strips markdown code blocks, links, and inline tags for vocal delivery."""
+        """Normalizes times, dates, numbers, units, and markdown for vocal delivery."""
         if not text:
             return ""
-        # Remove code blocks and inline code
-        cleaned = re.sub(r"```[\s\S]*?```", "", text)
-        cleaned = re.sub(r"`[^`]*`", "", cleaned)
-        # Remove inline tool calls or XML
-        cleaned = re.sub(r"<tool_call>[\s\S]*?</tool_call>", "", cleaned)
-        cleaned = re.sub(r"<[^>]+>", "", cleaned)
-        # Remove URLs
-        cleaned = re.sub(r"https?://\S+", "", cleaned)
-        # Remove markdown horizontal rules (e.g. ---, ___, ***)
-        cleaned = re.sub(r"[-*_]{2,}", "", cleaned)
-        # Remove markdown markers
-        cleaned = re.sub(r"[\*_~#]", "", cleaned)
-        # Normalize whitespace
-        cleaned = re.sub(r"\s+", " ", cleaned).strip()
-        # Discard if it contains no letters or digits
+        from jarvis.audio.normalizer import SpeechNormalizer
+        cleaned = SpeechNormalizer.normalize(text)
         if not re.search(r"[a-zA-Z0-9]", cleaned):
             return ""
         return cleaned
@@ -811,9 +798,9 @@ Universal Document & PDF Ingestion:
         if m and m.start() >= 2:
             idx = m.end()
             return buffer[:idx].strip(), buffer[idx:]
-        # 2. Natural pause clause (, ; :) if buffer exceeds 65 characters
+        # 2. Natural pause clause (, ; :) if buffer exceeds 65 characters (ignoring colons between digits)
         if len(buffer) > 65:
-            m_clause = re.search(r'[,;:]\s+', buffer[25:])
+            m_clause = re.search(r'(?:[,;]|(?<!\d):(?!\d))\s+', buffer[25:])
             if m_clause:
                 cut_idx = 25 + m_clause.end()
                 return buffer[:cut_idx].strip(), buffer[cut_idx:]
