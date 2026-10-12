@@ -1,40 +1,210 @@
 """Operating system and desktop automation tools for Windows."""
 import os
+import sys
 import re
+import glob
+import shutil
+import logging
+import winreg
+import datetime
 import subprocess
+import webbrowser
+from pathlib import Path
+from typing import Dict, Any, Optional, List
 import pyautogui
+import psutil
+import pyperclip
 from jarvis.skills.base import SkillRegistry
+
+logger = logging.getLogger("Jarvis.OSControl")
+
+_app_index_cache: Dict[str, str] = {}
+_app_index_initialized: bool = False
+
+
+def _ensure_desktop_access():
+    """Ensures thread is attached to the interactive Windows desktop."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            try:
+                ctypes.windll.shcore.SetProcessDpiAwareness(2)
+            except Exception:
+                try:
+                    user32.SetProcessDPIAware()
+                except Exception:
+                    pass
+            hdesk = user32.OpenDesktopW("Default", 0, False, 0x01FF)
+            if hdesk:
+                user32.SetThreadDesktop(hdesk)
+        except Exception as e:
+            logger.debug(f"Desktop switch notice: {e}")
+
+
+def _build_app_index() -> Dict[str, str]:
+    """Scans and caches Windows Start Menu shortcuts (.lnk) and Registry App Paths."""
+    global _app_index_cache, _app_index_initialized
+    if _app_index_initialized:
+        return _app_index_cache
+
+    apps: Dict[str, str] = {}
+
+    # 1. Start Menu shortcuts
+    start_dirs = [
+        os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs"),
+        os.path.expandvars(r"%PROGRAMDATA%\Microsoft\Windows\Start Menu\Programs"),
+    ]
+    for s_dir in start_dirs:
+        if not os.path.exists(s_dir):
+            continue
+        try:
+            for root, _, files in os.walk(s_dir):
+                for f in files:
+                    if f.lower().endswith(".lnk"):
+                        name = os.path.splitext(f)[0].lower().strip()
+                        full_path = os.path.join(root, f)
+                        if name not in apps:
+                            apps[name] = full_path
+        except Exception as e:
+            logger.debug(f"Start Menu scan notice for '{s_dir}': {e}")
+
+    # 2. Windows App Paths registry
+    for root_key in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        try:
+            with winreg.OpenKey(root_key, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths") as key:
+                num_subkeys, _, _ = winreg.QueryInfoKey(key)
+                for i in range(num_subkeys):
+                    try:
+                        subkey_name = winreg.EnumKey(key, i)
+                        with winreg.OpenKey(key, subkey_name) as subkey:
+                            app_path, _ = winreg.QueryValueEx(subkey, "")
+                            if app_path and os.path.exists(app_path):
+                                base_name = os.path.splitext(subkey_name)[0].lower()
+                                if base_name not in apps:
+                                    apps[base_name] = app_path
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
+    _app_index_cache = apps
+    _app_index_initialized = True
+    return _app_index_cache
+
+
+COMMON_APP_ALIASES = {
+    "browser": "browser",
+    "my browser": "browser",
+    "web browser": "browser",
+    "default browser": "browser",
+    "calculator": "calc",
+    "calc": "calc",
+    "notepad": "notepad",
+    "text editor": "notepad",
+    "explorer": "explorer",
+    "files": "explorer",
+    "file explorer": "explorer",
+    "file manager": "explorer",
+    "terminal": "wt",
+    "windows terminal": "wt",
+    "cmd": "cmd",
+    "command prompt": "cmd",
+    "powershell": "powershell",
+    "code": "visual studio code",
+    "vscode": "visual studio code",
+    "vs code": "visual studio code",
+    "visual studio code": "visual studio code",
+    "settings": "ms-settings:",
+    "windows settings": "ms-settings:",
+    "task manager": "taskmgr",
+    "taskmgr": "taskmgr",
+    "spotify": "spotify",
+    "discord": "discord",
+    "brave": "brave",
+    "chrome": "chrome",
+    "edge": "msedge",
+    "control panel": "control",
+    "paint": "mspaint",
+}
 
 
 @SkillRegistry.register(
     name="launch_application",
-    description="Launches a desktop application by name (e.g., 'notepad', 'calc', 'chrome', 'spotify', 'code')."
+    description="Launches a desktop application by name (e.g., 'browser', 'chrome', 'discord', 'spotify', 'code', 'calculator', 'settings', 'notepad', 'terminal')."
 )
 def launch_application(app_name: str) -> str:
-    """Launches an application by name or executable."""
-    app_lower = app_name.lower().strip()
-    common_apps = {
-        "calculator": "calc",
-        "calc": "calc",
-        "notepad": "notepad",
-        "explorer": "explorer",
-        "files": "explorer",
-        "terminal": "wt",
-        "cmd": "cmd",
-        "powershell": "powershell",
-        "code": "code",
-        "vscode": "code",
-        "chrome": "start chrome",
-        "edge": "start msedge",
-        "spotify": "start spotify:",
-    }
+    """Launches an application by name, shortcut, or protocol scheme with detached process execution."""
+    cleaned = re.sub(r"[;&|<>$`\"]", "", app_name).lower().strip()
+    if not cleaned:
+        return "Application name cannot be empty, Sir."
 
-    cmd = common_apps.get(app_lower, f"start {app_name}")
+    # Handle browser requests naturally
+    if cleaned in ("browser", "my browser", "web browser", "default browser"):
+        apps = _build_app_index()
+        # Prefer known installed browsers if present
+        for b_name in ("brave", "chrome", "google chrome", "msedge", "edge", "firefox"):
+            if b_name in apps:
+                try:
+                    os.startfile(apps[b_name])
+                    return f"Opened your browser ({b_name.title()}), Sir."
+                except Exception:
+                    pass
+        # Fallback to standard web browser open
+        try:
+            webbrowser.open("https://google.com")
+            return "Opened your default desktop browser, Sir."
+        except Exception as e:
+            return f"Failed to open browser: {e}"
+
+    # Resolve alias
+    resolved = COMMON_APP_ALIASES.get(cleaned, cleaned)
+
+    # 1. Direct protocol URI schemes
+    if resolved.endswith(":") or resolved.startswith("ms-"):
+        try:
+            os.startfile(resolved)
+            return f"Application '{app_name}' launched, Sir."
+        except Exception as e:
+            return f"Failed to launch '{app_name}': {e}"
+
+    # 2. Check indexed shortcuts & app paths
+    apps = _build_app_index()
+    if resolved in apps:
+        try:
+            os.startfile(apps[resolved])
+            return f"Application '{app_name}' launched, Sir."
+        except Exception as e:
+            return f"Failed to launch '{app_name}': {e}"
+
+    # 2b. Substring match in indexed applications
+    for name, path in apps.items():
+        if resolved in name or name in resolved:
+            try:
+                os.startfile(path)
+                return f"Application '{app_name}' ({name.title()}) launched, Sir."
+            except Exception:
+                continue
+
+    # 3. Check System32 / PATH executables
+    which_path = shutil.which(resolved)
+    if which_path:
+        try:
+            subprocess.Popen(
+                [which_path],
+                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+                close_fds=True,
+            )
+            return f"Application '{app_name}' launched, Sir."
+        except Exception as e:
+            return f"Failed to launch '{app_name}': {e}"
+
+    # 4. Fallback: Windows start protocol
     try:
-        subprocess.Popen(cmd, shell=True)
+        os.startfile(resolved)
         return f"Application '{app_name}' launched, Sir."
     except Exception as e:
-        return f"Failed to launch '{app_name}': {e}"
+        return f"Could not find or launch application '{app_name}', Sir: {e}"
 
 
 def _send_vk(vk_code: int):
@@ -247,10 +417,243 @@ def set_shutdown_requested(value: bool = True):
 
 @SkillRegistry.register(
     name="shutdown_jarvis",
-    description="Shuts down and terminates the Jarvis assistant completely when Sir says goodbye, exit, quit, shut down, or that's it for now."
+    description="Shuts down Jarvis and its managed services when Sir says stop, goodbye, exit, quit, shut down, or that's it for now."
 )
 def shutdown_jarvis() -> str:
     """Terminates the Jarvis application."""
     global _shutdown_requested
     _shutdown_requested = True
     return "Powering down systems. Goodbye, Sir."
+
+
+CRITICAL_PROCESS_DENYLIST = {
+    "explorer.exe", "python.exe", "pythonw.exe", "svchost.exe", "csrss.exe",
+    "winlogon.exe", "lsass.exe", "dwm.exe", "services.exe", "system", "smss.exe",
+    "runtimebroker.exe", "sihost.exe", "taskhostw.exe", "audiodg.exe"
+}
+
+
+@SkillRegistry.register(
+    name="close_application",
+    description="Safely closes a running desktop application or window by name (e.g., 'notepad', 'calc', 'chrome', 'spotify', 'brave')."
+)
+def close_application(app_name: str) -> str:
+    """Closes matching running desktop processes, enforcing critical system process protection."""
+    cleaned = app_name.lower().strip()
+    if not cleaned:
+        return "Application name cannot be empty, Sir."
+
+    # Normalize name and remove .exe if provided
+    base_target = cleaned[:-4] if cleaned.endswith(".exe") else cleaned
+
+    # Check for direct system critical protection
+    if f"{base_target}.exe" in CRITICAL_PROCESS_DENYLIST or base_target in ("explorer", "python", "pythonw", "system"):
+        return f"Cannot terminate system-critical process '{app_name}' for security and system stability reasons, Sir."
+
+    closed_count = 0
+    closed_names = []
+
+    for proc in psutil.process_iter(['pid', 'name']):
+        try:
+            p_name = (proc.info['name'] or "").lower()
+            if not p_name:
+                continue
+
+            # Skip any critical process
+            if p_name in CRITICAL_PROCESS_DENYLIST:
+                continue
+
+            # Match target
+            if base_target == p_name or f"{base_target}.exe" == p_name or (len(base_target) >= 4 and base_target in p_name):
+                proc.terminate()
+                try:
+                    proc.wait(timeout=1.0)
+                except psutil.TimeoutExpired:
+                    proc.kill()
+                closed_count += 1
+                if proc.info['name'] not in closed_names:
+                    closed_names.append(proc.info['name'])
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    if closed_count > 0:
+        names_str = ", ".join(closed_names)
+        return f"Closed {closed_count} process(es) matching '{app_name}' ({names_str}), Sir."
+    return f"No active process matching '{app_name}' was found to close, Sir."
+
+
+@SkillRegistry.register(
+    name="list_running_applications",
+    description="Lists all visible desktop application windows currently active on Sir's workstation."
+)
+def list_running_applications() -> str:
+    """Lists visible top-level desktop windows."""
+    try:
+        import win32gui
+        _ensure_desktop_access()
+        windows = []
+
+        def _enum_win(hwnd, _):
+            if win32gui.IsWindowVisible(hwnd):
+                title = win32gui.GetWindowText(hwnd).strip()
+                if title and len(title) > 1 and title not in ("Default IME", "MSCTFIME UI", "Program Manager"):
+                    windows.append(title)
+
+        win32gui.EnumWindows(_enum_win, None)
+        if not windows:
+            return "No active desktop windows detected, Sir."
+
+        unique = []
+        seen = set()
+        for w in windows:
+            if w not in seen:
+                seen.add(w)
+                unique.append(w)
+
+        return "Active Desktop Windows, Sir:\n" + "\n".join(f"• {w}" for w in unique[:15])
+    except Exception as e:
+        return f"Unable to list running applications: {e}"
+
+
+@SkillRegistry.register(
+    name="get_active_window",
+    description="Returns the window title and process name of the application Sir is currently looking at or focused on."
+)
+def get_active_window() -> str:
+    """Gets the title of the currently focused desktop window."""
+    try:
+        import win32gui
+        import win32process
+        _ensure_desktop_access()
+        hwnd = win32gui.GetForegroundWindow()
+        if not hwnd:
+            return "No window is currently in the foreground, Sir."
+        title = win32gui.GetWindowText(hwnd).strip()
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        proc_name = ""
+        try:
+            proc = psutil.Process(pid)
+            proc_name = proc.name()
+        except Exception:
+            pass
+
+        desc = f"'{title}'" if title else "Untitled Window"
+        if proc_name:
+            desc += f" ({proc_name})"
+        return f"Currently focused window: {desc}, Sir."
+    except Exception as e:
+        return f"Could not determine active window: {e}"
+
+
+@SkillRegistry.register(
+    name="get_system_vitals",
+    description="Reports real-time system performance telemetry: CPU utilization %, RAM usage (GB used/total), C: drive disk space, battery status, and GPU thermals/VRAM."
+)
+def get_system_vitals() -> str:
+    """Reads non-blocking system hardware telemetry."""
+    try:
+        cpu_pct = psutil.cpu_percent(interval=None)
+        mem = psutil.virtual_memory()
+        mem_used_gb = mem.used / (1024 ** 3)
+        mem_total_gb = mem.total / (1024 ** 3)
+        disk = psutil.disk_usage("C:\\")
+        disk_free_gb = disk.free / (1024 ** 3)
+
+        vitals = [
+            f"• CPU Utilization: {cpu_pct:.1f}%",
+            f"• Memory (RAM): {mem_used_gb:.1f} GB of {mem_total_gb:.1f} GB utilized ({mem.percent}%)",
+            f"• Primary Storage (C:): {disk_free_gb:.1f} GB free ({100 - disk.percent:.1f}% available)",
+        ]
+
+        batt = get_raw_battery_info()
+        if batt.get("has_battery"):
+            chg = "Plugged In" if batt.get("charging") else "On Battery"
+            vitals.append(f"• Power / Battery: {batt.get('percent')}% ({chg})")
+
+        # GPU telemetry via nvidia-smi if available
+        try:
+            res = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name,memory.used,memory.total,temperature.gpu", "--format=csv,noheader,nounits"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                parts = [p.strip() for p in res.stdout.strip().split(",")]
+                if len(parts) >= 4:
+                    gpu_name, vram_used, vram_total, temp = parts[0], parts[1], parts[2], parts[3]
+                    vitals.append(f"• GPU: {gpu_name} at {temp}°C ({vram_used} MB / {vram_total} MB VRAM)")
+        except Exception:
+            pass
+
+        return "Workstation System Vitals, Sir:\n" + "\n".join(vitals)
+    except Exception as e:
+        return f"Unable to read system vitals: {e}"
+
+
+@SkillRegistry.register(
+    name="read_clipboard",
+    description="Reads and returns the current text stored in the Windows clipboard."
+)
+def read_clipboard() -> str:
+    """Reads text from Windows clipboard."""
+    try:
+        text = pyperclip.paste()
+        if not text or not text.strip():
+            return "The clipboard is currently empty, Sir."
+        preview = text[:500]
+        suffix = f" ... [{len(text) - 500} more characters truncated]" if len(text) > 500 else ""
+        return f"Clipboard Content ({len(text)} characters):\n{preview}{suffix}"
+    except Exception as e:
+        return f"Unable to read clipboard: {e}"
+
+
+@SkillRegistry.register(
+    name="copy_to_clipboard",
+    description="Copies text directly to the Windows clipboard so Sir can paste it anywhere."
+)
+def copy_to_clipboard(text: str) -> str:
+    """Copies text to Windows clipboard."""
+    try:
+        pyperclip.copy(text)
+        return f"Successfully copied {len(text)} characters to the clipboard, Sir."
+    except Exception as e:
+        return f"Unable to copy to clipboard: {e}"
+
+
+@SkillRegistry.register(
+    name="lock_workstation",
+    description="Immediately locks Sir's Windows workstation for security."
+)
+def lock_workstation() -> str:
+    """Locks the Windows computer."""
+    try:
+        import ctypes
+        ctypes.windll.user32.LockWorkStation()
+        return "Workstation locked, Sir."
+    except Exception as e:
+        return f"Unable to lock workstation: {e}"
+
+
+@SkillRegistry.register(
+    name="take_desktop_screenshot",
+    description="Captures a high-resolution screenshot of the desktop display and saves it to data/screenshots."
+)
+def take_desktop_screenshot(filename: str = "") -> str:
+    """Captures and saves a full-resolution desktop screenshot."""
+    try:
+        from PIL import ImageGrab
+        _ensure_desktop_access()
+        img = ImageGrab.grab(all_screens=True)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        name = filename.strip() or f"screenshot_{timestamp}.png"
+        if not name.lower().endswith(".png"):
+            name += ".png"
+
+        save_dir = Path("data/screenshots")
+        save_dir.mkdir(parents=True, exist_ok=True)
+        save_path = save_dir / name
+        img.save(str(save_path), format="PNG")
+        return f"Screenshot saved successfully to '{save_path}' ({img.width}x{img.height}), Sir."
+    except Exception as e:
+        return f"Failed to save desktop screenshot: {e}"
