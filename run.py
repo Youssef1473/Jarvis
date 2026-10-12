@@ -69,13 +69,21 @@ def check_api_key():
 def main():
     setup_logging()
 
-    # Laptop Thermal Profile: Tune process priority so Windows schedules background tasks on E-cores
+    # Process Elevation & Performance Scheduling
+    # Elevates main process to ABOVE_NORMAL_PRIORITY_CLASS to prioritize
+    # audio streaming callbacks, Kokoro synthesis, and ring buffer I/O over OS background tasks.
     try:
         import psutil
-        psutil.Process().nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
-        logging.getLogger("Jarvis").info("Laptop Thermal Profile: Priority tuned to BELOW_NORMAL (E-core affinity).")
+        proc = psutil.Process()
+        proc.nice(psutil.ABOVE_NORMAL_PRIORITY_CLASS)
+        logging.getLogger("Jarvis").info("Process Elevation: Set to ABOVE_NORMAL_PRIORITY_CLASS for high-performance audio scheduling.")
     except Exception as e:
-        pass
+        try:
+            import psutil
+            psutil.Process().nice(psutil.NORMAL_PRIORITY_CLASS)
+            logging.getLogger("Jarvis").info("Process Elevation: Set to NORMAL_PRIORITY_CLASS.")
+        except Exception:
+            pass
 
     # Check for stealth mode flags (--stealth, --background, -b, -s)
     is_stealth = any(arg in sys.argv for arg in ("--stealth", "--background", "-b", "-s"))

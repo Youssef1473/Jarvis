@@ -270,6 +270,12 @@ def adjust_volume(action: str = "set", percent: int = -1, steps: int = 5) -> str
 
     # Core Audio endpoint control (pycaw) - sub-millisecond exact hardware precision
     try:
+        if sys.platform == "win32":
+            try:
+                import pythoncom
+                pythoncom.CoInitialize()
+            except Exception:
+                pass
         from pycaw.pycaw import AudioUtilities
         spk = AudioUtilities.GetSpeakers()
 

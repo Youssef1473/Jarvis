@@ -152,6 +152,27 @@ class SkillSandbox:
                 if call_name in cls.BLOCKED_CALLS or any(call_name.startswith(f"{b}.") for b in cls.BLOCKED_MODULES):
                     return False, f"Security Violation: '{call_name}' is blocked inside autonomous skills."
 
+            # 4. Operational Invariant: Infinite While Loop Detection (Unbounded Spin-Locks)
+            elif isinstance(node, ast.While):
+                is_const_true = (
+                    (isinstance(node.test, ast.Constant) and bool(node.test.value) is True) or
+                    (isinstance(node.test, ast.Name) and node.test.id == "True")
+                )
+                if is_const_true:
+                    has_exit = any(
+                        isinstance(child, (ast.Break, ast.Return))
+                        for child in ast.walk(node)
+                    )
+                    if not has_exit:
+                        return False, "Operational Guardrail Violation: Unbounded 'while True' loop detected with no exit break/return."
+
+            # 5. Operational Invariant: Massive Literal Memory Allocation (>50M elements)
+            elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
+                for operand in (node.left, node.right):
+                    if isinstance(operand, ast.Constant) and isinstance(operand.value, (int, float)):
+                        if operand.value > 50_000_000:
+                            return False, f"Operational Guardrail Violation: Massive allocation multiplier ({int(operand.value):,}) detected."
+
         return True, "AST security checks passed."
 
     @classmethod
@@ -215,12 +236,28 @@ class SkillSandbox:
         1. Module load and compilation without exception.
         2. Registration of at least one valid tool in SkillRegistry.
         3. Tool contract inspection: docstrings, signature parameter inspectability.
-        4. Emission of CANARY_VERIFICATION_SUCCESS and SANDBOX_LOAD_SUCCESS markers.
+        4. Operational Invariants:
+           - Global socket timeout to prevent network hangs.
+           - Active memory tracking (tracemalloc) to prevent memory bombs (>64MB).
+           - Smoke invocation under a 2.0s execution watchdog to catch spin-locks.
+        5. Emission of CANARY_VERIFICATION_SUCCESS and SANDBOX_LOAD_SUCCESS markers.
         """
         escaped_path = str(scratch_path).replace("\\", "\\\\")
         return f"""import sys
 import inspect
 import importlib.util
+import socket
+import threading
+import tracemalloc
+
+# Operational Guardrail 1: Enforce global socket timeout to prevent indefinite network hangs
+try:
+    socket.setdefaulttimeout(2.5)
+except Exception:
+    pass
+
+# Operational Guardrail 2: Track memory allocations to catch massive arrays / memory leaks
+tracemalloc.start()
 
 try:
     spec = importlib.util.spec_from_file_location('{clean_name}', r'{escaped_path}')
@@ -256,8 +293,48 @@ try:
             print(f'CANARY_ERROR: Registered tool {{tool_name}} is not callable')
             sys.exit(4)
         sig = inspect.signature(tool_fn)
-        for p in sig.parameters.values():
-            _ = p.name
+        dummy_kwargs = {{}}
+        for p_name, param in sig.parameters.items():
+            if param.default != inspect.Parameter.empty:
+                continue
+            ann = param.annotation
+            if ann in (int, float):
+                dummy_kwargs[p_name] = 0
+            elif ann is bool:
+                dummy_kwargs[p_name] = False
+            elif ann is list:
+                dummy_kwargs[p_name] = []
+            elif ann is dict:
+                dummy_kwargs[p_name] = {{}}
+            else:
+                dummy_kwargs[p_name] = "test"
+
+        # Operational Guardrail 3: Smoke-test invocation inside 2.0s watchdog thread
+        smoke_done = threading.Event()
+        smoke_exc = []
+
+        def _smoke_worker():
+            try:
+                tool_fn(**dummy_kwargs)
+            except Exception as e:
+                smoke_exc.append(e)
+            finally:
+                smoke_done.set()
+
+        worker = threading.Thread(target=_smoke_worker, daemon=True)
+        worker.start()
+
+        if not smoke_done.wait(timeout=2.0):
+            print(f"CANARY_ERROR: Tool '{{tool_name}}' exceeded 2.0s execution limit (potential spin-lock or hang)")
+            sys.exit(5)
+
+    # Operational Guardrail 4: Verify memory allocation threshold (< 64MB)
+    current_b, peak_b = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    peak_mb = peak_b / (1024 * 1024)
+    if peak_mb > 64.0:
+        print(f"CANARY_ERROR: Excessive memory consumption during canary execution ({{peak_mb:.1f}} MB > 64.0 MB limit)")
+        sys.exit(6)
 
     print('CANARY_VERIFICATION_SUCCESS')
     print('SANDBOX_LOAD_SUCCESS')

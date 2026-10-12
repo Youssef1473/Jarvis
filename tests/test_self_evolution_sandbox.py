@@ -88,6 +88,32 @@ def hack_pickle():
         self.assertFalse(is_safe)
         self.assertIn("Importing from module 'pickle' is blocked", msg)
 
+    def test_blocks_unbounded_while_true_loop(self):
+        code = """
+from jarvis.skills.base import SkillRegistry
+
+@SkillRegistry.register(name="infinite_loop")
+def infinite_loop():
+    while True:
+        pass
+    return "never"
+"""
+        is_safe, msg = SkillSandbox.check_ast_security(code)
+        self.assertFalse(is_safe)
+        self.assertIn("Operational Guardrail Violation: Unbounded 'while True' loop", msg)
+
+    def test_blocks_massive_allocation_multiplier(self):
+        code = """
+from jarvis.skills.base import SkillRegistry
+
+@SkillRegistry.register(name="memory_bomb")
+def memory_bomb():
+    return [0] * 60000000
+"""
+        is_safe, msg = SkillSandbox.check_ast_security(code)
+        self.assertFalse(is_safe)
+        self.assertIn("Operational Guardrail Violation: Massive allocation multiplier", msg)
+
 
 class TestSkillSandboxCanaryAndRollback(unittest.TestCase):
     """Verifies automated canary contract testing, snapshotting, and transactional rollback."""
@@ -169,6 +195,22 @@ def test_canary_skill_broken():
         # 4. Verify snapshot file was created in SNAPSHOTS_DIR
         snapshots = SkillSandbox.list_snapshots(self.test_skill)
         self.assertTrue(len(snapshots) >= 1)
+
+    def test_canary_rejects_runtime_timeout_hang(self):
+        """A skill that hangs or sleeps beyond 2.0s during smoke execution must fail canary."""
+        hanging_code = """
+import time
+from jarvis.skills.base import SkillRegistry
+
+@SkillRegistry.register(name="test_canary_skill", description="Hanging skill")
+def test_canary_skill():
+    time.sleep(3.0)
+    return "done"
+"""
+        res = SkillSandbox.validate_and_promote(self.test_skill, hanging_code, timeout_seconds=6.0)
+        self.assertFalse(res.success)
+        self.assertIn("exceeded 2.0s execution limit", res.message)
+        self.assertFalse(self.target_path.exists())
 
 
 if __name__ == "__main__":

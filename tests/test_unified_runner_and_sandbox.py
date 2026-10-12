@@ -94,6 +94,36 @@ def bad_tool():
         self.assertFalse(res.success)
         self.assertIn("SyntaxError", res.message)
 
+    def test_unified_runner_enforces_mandatory_tool_timeout(self):
+        """UnifiedRunner must abort stalled tools and return a timeout error without freezing."""
+        import time
+
+        @SkillRegistry.register(name="slow_stalled_tool", description="Test stalled tool")
+        def slow_stalled_tool():
+            time.sleep(0.8)
+            return "finished"
+
+        stalled_call = ToolCall(id="call_slow", name="slow_stalled_tool", arguments={})
+        turn_1 = LLMResponse(content="", tool_calls=[stalled_call])
+        turn_2 = LLMResponse(content="Recovered after timeout.", tool_calls=[])
+
+        provider = MockProvider([turn_1, turn_2])
+        # Set aggressive tool timeout of 0.15s
+        runner = UnifiedRunner(max_iterations=3, tool_timeout=0.15)
+
+        start = time.monotonic()
+        final_reply, history = runner.execute_session(
+            provider=provider,
+            messages=[{"role": "user", "content": "run slow tool"}],
+        )
+        elapsed = time.monotonic() - start
+
+        # Must abort in well under 0.6s instead of waiting 0.8s
+        self.assertLess(elapsed, 0.6)
+        tool_entry = next((m for m in history if m.get("role") == "tool"), None)
+        self.assertIsNotNone(tool_entry)
+        self.assertIn("exceeded maximum execution timeout", tool_entry["content"])
+
 
 if __name__ == "__main__":
     unittest.main()

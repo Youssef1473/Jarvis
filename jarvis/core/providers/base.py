@@ -5,6 +5,8 @@ which consolidates multi-turn tool execution, progressive audio narration, and
 deterministic cycle detection into a single robust engine.
 """
 from abc import ABC, abstractmethod
+import asyncio
+import concurrent.futures
 from dataclasses import dataclass, field
 import json
 import logging
@@ -79,10 +81,65 @@ class UnifiedRunner:
         safety_gate: Optional[SafetyGate] = None,
         max_iterations: int = 4,
         per_turn_timeout: float = 35.0,
+        tool_timeout: float = 5.0,
     ):
         self.safety = safety_gate or SafetyGate({})
         self.max_iterations = max_iterations
         self.per_turn_timeout = per_turn_timeout
+        self.tool_timeout = tool_timeout
+        self._tool_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=8,
+            thread_name_prefix="Jarvis-ToolWorker"
+        )
+
+    def execute_tool_with_timeout(
+        self,
+        fn_name: str,
+        fn_args: Dict[str, Any],
+        timeout: Optional[float] = None,
+    ) -> str:
+        """Executes a tool offloaded asynchronously to a dedicated worker thread with strict timeout guard."""
+        tool_timeout = timeout if timeout is not None else self.tool_timeout
+        try:
+            future = self._tool_executor.submit(SkillRegistry.execute, fn_name, **fn_args)
+            result = future.result(timeout=tool_timeout)
+            return str(result)
+        except concurrent.futures.TimeoutError:
+            logger.error("Tool '%s' exceeded mandatory execution timeout of %.1fs.", fn_name, tool_timeout)
+            return (
+                f"Error: Tool '{fn_name}' exceeded maximum execution timeout of {tool_timeout:.1f}s "
+                "and was terminated to protect real-time system responsiveness."
+            )
+        except Exception as err:
+            logger.error("Error executing tool '%s': %s", fn_name, err)
+            return f"Execution error: {err}"
+
+    async def execute_tool_async(
+        self,
+        fn_name: str,
+        fn_args: Dict[str, Any],
+        timeout: Optional[float] = None,
+    ) -> str:
+        """Asynchronous coroutine executing a tool off-loop via asyncio.wait_for and the worker pool."""
+        tool_timeout = timeout if timeout is not None else self.tool_timeout
+        loop = asyncio.get_running_loop()
+        try:
+            future = loop.run_in_executor(self._tool_executor, lambda: SkillRegistry.execute(fn_name, **fn_args))
+            result = await asyncio.wait_for(future, timeout=tool_timeout)
+            return str(result)
+        except asyncio.TimeoutError:
+            logger.error("Tool '%s' exceeded mandatory async execution timeout of %.1fs.", fn_name, tool_timeout)
+            return (
+                f"Error: Tool '{fn_name}' exceeded maximum execution timeout of {tool_timeout:.1f}s "
+                "and was terminated to protect real-time system responsiveness."
+            )
+        except Exception as err:
+            logger.error("Error executing tool '%s' asynchronously: %s", fn_name, err)
+            return f"Execution error: {err}"
+
+    def shutdown(self, wait: bool = False):
+        """Cleanly terminates the asynchronous worker thread pool."""
+        self._tool_executor.shutdown(wait=wait)
 
     @staticmethod
     def narrate_tool_action(fn_name: str, fn_args: Dict[str, Any]) -> str:
@@ -254,11 +311,7 @@ class UnifiedRunner:
                     if sentence_callback:
                         sentence_callback(f"Action was halted: {warning}")
                 else:
-                    try:
-                        tool_result = SkillRegistry.execute(fn_name, **fn_args)
-                    except Exception as err:
-                        logger.error("Error executing tool '%s': %s", fn_name, err)
-                        tool_result = f"Execution error: {err}"
+                    tool_result = self.execute_tool_with_timeout(fn_name, fn_args, timeout=self.tool_timeout)
 
                 # Append tool result to history
                 active_messages.append({

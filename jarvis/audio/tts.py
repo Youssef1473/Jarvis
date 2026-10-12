@@ -300,7 +300,14 @@ class TextToSpeech:
                             logger.error(f"Kokoro synth error on '{chunk}': {e}")
 
             # Audio callback reading from lock-free audio ring buffer
+            _cb_priority_elevated = False
+
             def _audio_callback(outdata, frames, time_info, status):
+                nonlocal _cb_priority_elevated
+                if not _cb_priority_elevated:
+                    _set_thread_realtime_priority()
+                    _cb_priority_elevated = True
+
                 if self._stop_event.is_set():
                     outdata.fill(0.0)
                     return
@@ -335,6 +342,7 @@ class TextToSpeech:
                 self._output_stream = None
 
             def _playback_worker():
+                _set_thread_realtime_priority()
                 while self._stream_active and not self._stop_event.is_set():
                     try:
                         item = self._audio_queue.get(timeout=0.05)
