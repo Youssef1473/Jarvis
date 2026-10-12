@@ -125,7 +125,8 @@ Universal Document & PDF Ingestion:
 
 Autonomous Self-Building & Dynamic Feature Creation:
 - You possess the capability to build, program, and expand your own skills and features dynamically at runtime.
-- When Sir asks you to add a feature to yourself, create a new command, teach yourself an action, or do something where the command is not currently present (e.g. "add a feature to open a Brave tab", "create a command to check disk space", "teach yourself how to do X", "add this feature to yourself"), you MUST invoke `create_or_update_custom_skill`.
+- When Sir asks you to add a feature, implement a feature (e.g. "let's implement the feature...", "add this feature to yourself"), create a new command, teach yourself an action, or do something where the capability is not currently present, you MUST ACTUALLY INVOKE `create_or_update_custom_skill` or codebase tools.
+- CRITICAL ANTI-HALLUCINATION RULE: NEVER claim, pretend, or describe in conversational text that you designed, created, or implemented files, databases, endpoints, or features unless you have ACTUALLY executed the tool call and received confirmation. Falsely stating you built a feature without invoking tools is strictly forbidden.
 - Write clean, self-contained Python code defining functions decorated with `@SkillRegistry.register(name='...', description='...')`.
 - The tool will be immediately hot-reloaded into your running brain without restarting, allowing you to invoke the newly created skill and complete Sir's request in the same session.
 """
@@ -1800,8 +1801,9 @@ Autonomous Self-Building & Dynamic Feature Creation:
                 tool_signatures.append(f"- {fn.get('name')}: {fn.get('description')} (params: {list(params.keys())})")
             tools_block = (
                 "Native OS & System Tools Available:\n" + "\n".join(tool_signatures) + "\n\n"
-                "If you need to perform an action or retrieve dynamic system/calendar data, respond with a JSON tool call:\n"
+                "If you need to perform an action, retrieve system/calendar data, or build/implement/add a feature, respond with a JSON tool call:\n"
                 '{"tool": "<name>", "arguments": {<args>}}\n'
+                "NEVER claim or describe in conversational text that you created, modified, or added features unless you output a tool call to actually do it.\n"
                 "Otherwise, respond with your direct conversational answer to Sir.\n\n"
             )
             prompt = tools_block + f"Sir asks: {user_text}"
