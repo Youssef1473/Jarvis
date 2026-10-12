@@ -1,6 +1,10 @@
 """Central orchestrator coordinating audio, hotkeys, STT, LLM, tools, TTS, and HUD overlay."""
 import asyncio
 import logging
+import os
+import random
+import re
+import sys
 import threading
 import time
 from typing import Dict, Any, List
