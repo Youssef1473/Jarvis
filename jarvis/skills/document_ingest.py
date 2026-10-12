@@ -1,0 +1,284 @@
+"""Universal Context-Gated Document & PDF Ingestion Engine for Jarvis 2.0.
+Supports multi-domain intake (calendar events, tasks, research papers, contracts, invoices).
+Files remain staged until Sir provides conversational context and instructions.
+"""
+import datetime
+import hashlib
+import json
+import logging
+import os
+from pathlib import Path
+import re
+from typing import Dict, Any, List, Optional
+
+from jarvis.skills.base import SkillRegistry
+from jarvis.core.memory import MemoryManager
+from jarvis.core.config_loader import load_config
+
+logger = logging.getLogger("Jarvis.DocumentIngest")
+
+_memory_instance: Optional[MemoryManager] = None
+
+
+def _get_memory() -> MemoryManager:
+    global _memory_instance
+    if _memory_instance is None:
+        cfg = load_config()
+        _memory_instance = MemoryManager(cfg)
+    return _memory_instance
+
+
+def extract_text_from_pdf(file_path: str, max_pages: int = 50) -> str:
+    """Extracts text from a PDF file using pypdf with fallback to Gemini Multimodal."""
+    p = Path(file_path)
+    if not p.is_file():
+        raise FileNotFoundError(f"Document file not found: {file_path}")
+
+    extracted_text = ""
+    try:
+        import pypdf
+        reader = pypdf.PdfReader(str(p))
+        pages_to_read = min(len(reader.pages), max_pages)
+        page_texts = []
+        for i in range(pages_to_read):
+            t = reader.pages[i].extract_text() or ""
+            if t.strip():
+                page_texts.append(f"--- Page {i + 1} ---\n{t.strip()}")
+        extracted_text = "\n\n".join(page_texts).strip()
+    except Exception as e:
+        logger.warning(f"pypdf extraction failed for {file_path}: {e}")
+
+    # If extracted text is minimal (e.g. scanned document or image-only PDF), attempt Gemini Multimodal OCR
+    if len(extracted_text) < 40:
+        gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+        if gemini_key:
+            try:
+                from google import genai
+                from google.genai import types
+                client = genai.Client(api_key=gemini_key)
+                pdf_bytes = p.read_bytes()
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=[
+                        types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
+                        "Extract all readable text, tables, dates, and information from this document verbatim."
+                    ]
+                )
+                if response.text and len(response.text.strip()) > len(extracted_text):
+                    extracted_text = response.text.strip()
+                    logger.info(f"Successfully extracted text via Gemini Multimodal OCR for {p.name}")
+            except Exception as ocr_err:
+                logger.debug(f"Gemini OCR fallback notice: {ocr_err}")
+
+    return extracted_text
+
+
+@SkillRegistry.register(
+    name="list_staged_documents",
+    description="Lists all staged PDF or document files that are currently awaiting Sir's context and instructions."
+)
+def list_staged_documents() -> str:
+    """Lists staged documents pending user context."""
+    mem = _get_memory()
+    staged = mem.get_staged_documents(status="PENDING_CONTEXT")
+    if not staged:
+        return "There are currently no staged documents awaiting review, Sir."
+
+    lines = ["Staged Documents Awaiting Your Context, Sir:"]
+    for doc in staged:
+        size_kb = round(doc.get("file_size", 0) / 1024, 1)
+        lines.append(f"• #{doc['id']}: '{doc['filename']}' ({size_kb} KB) — Staged at {doc.get('staged_at', 'recently')}")
+    return "\n".join(lines)
+
+
+@SkillRegistry.register(
+    name="process_staged_document",
+    description="Processes a staged PDF/document using Sir's conversational briefing and instructions. Extracts and registers calendar events, tasks, or knowledge documents into the database."
+)
+def process_staged_document(identifier: str = "", user_context: str = "") -> str:
+    """Processes a staged document guided by Sir's spoken context."""
+    mem = _get_memory()
+    
+    # 1. Resolve target staged document
+    target_doc = None
+    clean_id = identifier.strip() if identifier else ""
+    if clean_id.isdigit():
+        target_doc = mem.get_staged_document(doc_id=int(clean_id))
+    elif clean_id:
+        target_doc = mem.get_staged_document(filename=clean_id)
+    
+    if not target_doc:
+        # Fall back to the most recently staged pending document
+        target_doc = mem.get_staged_document()
+
+    if not target_doc:
+        return "I could not locate any staged documents awaiting your context, Sir. Please import a document first."
+
+    file_path = target_doc.get("file_path", "")
+    filename = target_doc.get("filename", "document.pdf")
+    doc_id = target_doc.get("id")
+
+    if not os.path.exists(file_path):
+        return f"The physical file for '{filename}' could not be found at '{file_path}', Sir."
+
+    # 2. Extract Document Content
+    try:
+        raw_text = extract_text_from_pdf(file_path)
+    except Exception as e:
+        return f"Unable to extract text from '{filename}', Sir: {str(e)}"
+
+    if not raw_text.strip():
+        return f"Document '{filename}' appears to be empty or unreadable, Sir."
+
+    # Truncate text if excessively long for LLM context window (keep first 15,000 chars)
+    truncated_text = raw_text[:15000]
+
+    # 3. LLM Entity & Context Extraction
+    today_str = datetime.date.today().isoformat()
+    system_prompt = (
+        f"You are the document intelligence extraction engine for JARVIS.\n"
+        f"Today's date is: {today_str}.\n"
+        f"Sir has provided a document along with his verbal briefing and instructions.\n"
+        f"Carefully analyze Sir's instructions and the document content.\n"
+        f"Extract all relevant entities as requested by Sir:\n"
+        f"- If Sir wants calendar events/dates scheduled (or if the document is a syllabus/schedule/itinerary): "
+        f"extract calendar events with 'title', 'start_time' (normalized with date e.g. 'YYYY-MM-DD HH:MM' or 'YYYY-MM-DD'), 'end_time', 'location'.\n"
+        f"- If Sir wants tasks/action items recorded: extract tasks with 'description' and 'due_date'.\n"
+        f"- Always create a knowledge summary of the document for permanent archiving: 'title', 'category' (schedule|syllabus|invoice|contract|paper|manual|note|general), 'summary'.\n\n"
+        f"OUTPUT FORMAT:\n"
+        f"Output ONLY valid JSON with this exact schema (no markdown fences, no explanation):\n"
+        f"{{\n"
+        f'  "calendar_events": [\n'
+        f'    {{"title": "...", "start_time": "YYYY-MM-DD HH:MM", "end_time": "...", "location": "..."}}\n'
+        f'  ],\n'
+        f'  "tasks": [\n'
+        f'    {{"description": "...", "due_date": "YYYY-MM-DD"}}\n'
+        f'  ],\n'
+        f'  "knowledge_doc": {{\n'
+        f'    "title": "...",\n'
+        f'    "category": "...",\n'
+        f'    "summary": "..."\n'
+        f'  }}\n'
+        f"}}"
+    )
+
+    user_prompt = (
+        f"Sir's Verbal Context & Instructions: \"{user_context or 'Process and archive this document according to its contents.'}\"\n\n"
+        f"Filename: {filename}\n\n"
+        f"<untrusted_document_payload filename=\"{filename}\">\n"
+        f"{truncated_text}\n"
+        f"</untrusted_document_payload>"
+    )
+
+    extracted_data = {}
+    cfg = load_config()
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+
+    # Attempt extraction via Groq LPU (Tier 2 fast intellect)
+    if groq_key:
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1", max_retries=0, timeout=15.0)
+            res = client.chat.completions.create(
+                model=cfg.get("llm", {}).get("groq_model", "qwen/qwen3.8-27b"),
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1,
+                max_tokens=1500,
+            )
+            content = res.choices[0].message.content.strip()
+            content = re.sub(r"^```(?:json)?\s*", "", content)
+            content = re.sub(r"\s*```$", "", content)
+            extracted_data = json.loads(content)
+        except Exception as e:
+            logger.debug(f"Groq document extraction notice: {e}")
+
+    # Fallback to Gemini if Groq unavailable or failed
+    if not extracted_data and gemini_key:
+        try:
+            from google import genai
+            from google.genai import types
+            client = genai.Client(api_key=gemini_key)
+            res = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=f"{system_prompt}\n\n{user_prompt}",
+                config=types.GenerateContentConfig(temperature=0.1, response_mime_type="application/json")
+            )
+            if res.text:
+                extracted_data = json.loads(res.text.strip())
+        except Exception as e:
+            logger.debug(f"Gemini document extraction notice: {e}")
+
+    # If extraction returned nothing, build fallback knowledge archive
+    if not extracted_data:
+        extracted_data = {
+            "calendar_events": [],
+            "tasks": [],
+            "knowledge_doc": {
+                "title": filename.replace(".pdf", "").replace("_", " ").title(),
+                "category": "general",
+                "summary": f"Archived document: {filename} with user context: {user_context}."
+            }
+        }
+
+    # 4. Commit Extracted Data to SQLite
+    calendar_events = extracted_data.get("calendar_events", [])
+    tasks = extracted_data.get("tasks", [])
+    knowledge_doc = extracted_data.get("knowledge_doc", {})
+
+    scheduled_count = 0
+    for evt in calendar_events:
+        title = evt.get("title", "").strip()
+        start = evt.get("start_time", "").strip()
+        end = evt.get("end_time", "")
+        loc = evt.get("location", "")
+        if title and start:
+            # Normalize start time if only clock time is given
+            for fmt in ("%H:%M", "%I:%M %p", "%I %p"):
+                try:
+                    datetime.datetime.strptime(start, fmt)
+                    start = f"{today_str} {start}"
+                    break
+                except ValueError:
+                    pass
+            mem.add_calendar_event(title, start, end or None, loc or None)
+            scheduled_count += 1
+
+    tasks_count = 0
+    for t in tasks:
+        desc = t.get("description", "").strip()
+        due = t.get("due_date", "")
+        if desc:
+            mem.add_task(desc, due or None)
+            tasks_count += 1
+
+    doc_title = knowledge_doc.get("title", filename)
+    doc_cat = knowledge_doc.get("category", "general")
+    doc_summary = knowledge_doc.get("summary", "")
+    mem.save_document_knowledge(
+        title=doc_title,
+        category=doc_cat,
+        summary=doc_summary,
+        raw_content=truncated_text[:2000],
+        file_path=file_path
+    )
+
+    # 5. Mark Document as Processed
+    mem.mark_document_processed(doc_id, user_context=user_context)
+
+    # 6. Synthesize Spoken Summary
+    actions = []
+    if scheduled_count > 0:
+        actions.append(f"{scheduled_count} calendar event{'s' if scheduled_count > 1 else ''}")
+    if tasks_count > 0:
+        actions.append(f"{tasks_count} action item{'s' if tasks_count > 1 else ''}")
+    actions.append(f"archived '{doc_title}' under {doc_cat}")
+
+    action_summary = ", ".join(actions)
+    return (
+        f"Processed '{filename}' according to your instructions, Sir: "
+        f"successfully registered {action_summary} in your database."
+    )

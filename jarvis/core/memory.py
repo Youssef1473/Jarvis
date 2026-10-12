@@ -176,6 +176,32 @@ class MemoryManager:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # Staged Documents (Context-Gated Intake)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS staged_documents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    filename TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    file_hash TEXT,
+                    file_size INTEGER DEFAULT 0,
+                    status TEXT DEFAULT 'PENDING_CONTEXT',
+                    user_context TEXT,
+                    staged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    processed_at TIMESTAMP
+                )
+            """)
+            # Knowledge Documents Archive
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS documents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    category TEXT DEFAULT 'general',
+                    summary TEXT,
+                    raw_content TEXT,
+                    file_path TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             conn.commit()
 
     # Fact & Preference Management
@@ -348,6 +374,92 @@ class MemoryManager:
                 conn.commit()
                 return f"Cancelled event '{row['title']}' (#{row['id']}), Sir."
             return "No active calendar events to cancel, Sir."
+
+    # Staged & Ingested Document Management
+    def stage_document(self, filename: str, file_path: str, file_hash: str = "", file_size: int = 0) -> Dict[str, Any]:
+        """Registers an uploaded document into the staged queue awaiting user context."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO staged_documents (filename, file_path, file_hash, file_size, status)
+                VALUES (?, ?, ?, ?, 'PENDING_CONTEXT')
+            """, (filename.strip(), file_path.strip(), file_hash, file_size))
+            conn.commit()
+            doc_id = cursor.lastrowid
+            return {
+                "id": doc_id,
+                "filename": filename.strip(),
+                "file_path": file_path.strip(),
+                "status": "PENDING_CONTEXT",
+            }
+
+    def get_staged_documents(self, status: str = "PENDING_CONTEXT") -> List[Dict[str, Any]]:
+        """Retrieves documents waiting in the staged queue."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if status == "ALL":
+                cursor.execute("SELECT * FROM staged_documents ORDER BY id DESC")
+            else:
+                cursor.execute("SELECT * FROM staged_documents WHERE status = ? ORDER BY id DESC", (status,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_staged_document(self, doc_id: Optional[int] = None, filename: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Finds a specific staged document or the most recent pending one."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if doc_id:
+                cursor.execute("SELECT * FROM staged_documents WHERE id = ?", (doc_id,))
+            elif filename:
+                cursor.execute(
+                    "SELECT * FROM staged_documents WHERE LOWER(filename) LIKE ? AND status = 'PENDING_CONTEXT' ORDER BY id DESC LIMIT 1",
+                    (f"%{filename.lower().strip()}%",)
+                )
+            else:
+                cursor.execute("SELECT * FROM staged_documents WHERE status = 'PENDING_CONTEXT' ORDER BY id DESC LIMIT 1")
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def mark_document_processed(self, doc_id: int, user_context: str = "") -> None:
+        """Marks a staged document as processed with the provided context."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE staged_documents
+                SET status = 'PROCESSED', user_context = ?, processed_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (user_context, doc_id))
+            conn.commit()
+
+    def save_document_knowledge(
+        self,
+        title: str,
+        category: str = "general",
+        summary: str = "",
+        raw_content: str = "",
+        file_path: str = ""
+    ) -> int:
+        """Archives document content and structured summary into the persistent knowledge archive."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO documents (title, category, summary, raw_content, file_path)
+                VALUES (?, ?, ?, ?, ?)
+            """, (title.strip(), category.lower().strip(), summary.strip(), raw_content.strip(), file_path.strip()))
+            conn.commit()
+            return cursor.lastrowid
+
+    def search_documents(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Searches archived document summaries and titles."""
+        q = f"%{query.lower().strip()}%"
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, title, category, summary, file_path, created_at
+                FROM documents
+                WHERE LOWER(title) LIKE ? OR LOWER(summary) LIKE ? OR LOWER(category) LIKE ?
+                ORDER BY id DESC LIMIT ?
+            """, (q, q, q, limit))
+            return [dict(row) for row in cursor.fetchall()]
 
     # Interaction History & Autonomous Self-Learning
     def log_interaction(self, user_input: str, jarvis_reply: str, tool_calls: Optional[str] = None):

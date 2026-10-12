@@ -70,6 +70,8 @@ class JarvisUIService:
             Route("/api/mute", endpoint=self._handle_mute, methods=["POST"]),
             Route("/api/notes", endpoint=self._handle_notes, methods=["GET"]),
             Route("/api/timers", endpoint=self._handle_timers, methods=["GET"]),
+            Route("/api/documents/upload", endpoint=self._handle_documents_upload, methods=["POST"]),
+            Route("/api/documents/staged", endpoint=self._handle_staged_documents, methods=["GET"]),
             WebSocketRoute("/ws", endpoint=self._handle_websocket),
         ]
         return Starlette(routes=routes)
@@ -171,6 +173,72 @@ class JarvisUIService:
         except Exception as e:
             logger.warning(f"Error reading timers for HUD: {e}")
             return JSONResponse({"timers": []})
+
+    async def _handle_documents_upload(self, request):
+        """Receives a PDF document from the file explorer upload dialog and stages it."""
+        try:
+            form = await request.form()
+            file_field = form.get("file")
+            if not file_field:
+                return JSONResponse({"error": "No file uploaded"}, status_code=400)
+
+            filename = getattr(file_field, "filename", "uploaded_doc.pdf")
+            if not filename.lower().endswith(".pdf"):
+                return JSONResponse({"error": "Only PDF documents are supported currently"}, status_code=400)
+
+            base_dir = Path(__file__).resolve().parent.parent.parent
+            intake_dir = base_dir / "data" / "intake"
+            intake_dir.mkdir(parents=True, exist_ok=True)
+
+            target_path = intake_dir / filename
+            content = await file_field.read()
+            target_path.write_bytes(content)
+
+            import hashlib
+            file_hash = hashlib.sha256(content).hexdigest()
+            file_size = len(content)
+
+            doc_info = {"id": 0, "filename": filename, "status": "PENDING_CONTEXT"}
+            if self.orchestrator and hasattr(self.orchestrator, "memory"):
+                doc_info = self.orchestrator.memory.stage_document(
+                    filename=filename,
+                    file_path=str(target_path),
+                    file_hash=file_hash,
+                    file_size=file_size
+                )
+
+            # Broadcast WebSocket notification
+            asyncio.create_task(self.broadcast({
+                "type": "document_staged",
+                "filename": filename,
+                "id": doc_info.get("id"),
+                "size_kb": round(file_size / 1024, 1),
+                "message": f"Staged '{filename}'. Standing by for Sir's briefing."
+            }))
+
+            if self.orchestrator and hasattr(self.orchestrator, "sfx"):
+                try:
+                    self.orchestrator.sfx.play_alert()
+                except Exception:
+                    pass
+
+            return JSONResponse({
+                "status": "staged",
+                "id": doc_info.get("id"),
+                "filename": filename,
+                "size_kb": round(file_size / 1024, 1),
+                "message": f"Document '{filename}' staged successfully. Awaiting your briefing, Sir."
+            })
+        except Exception as e:
+            logger.error(f"Error handling document upload: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def _handle_staged_documents(self, request):
+        """Returns all documents waiting in the staged queue."""
+        if self.orchestrator and hasattr(self.orchestrator, "memory"):
+            staged = self.orchestrator.memory.get_staged_documents(status="PENDING_CONTEXT")
+            return JSONResponse({"staged": staged})
+        return JSONResponse({"staged": []})
 
     async def _handle_websocket(self, websocket: WebSocket):
         await websocket.accept()

@@ -33,6 +33,7 @@ import jarvis.skills.project_manager
 import jarvis.skills.notes
 import jarvis.skills.system_watchdog
 import jarvis.skills.deep_research
+import jarvis.skills.document_ingest
 from jarvis.vision.screen_capture import ScreenPerception
 from jarvis.core.memory import MemoryManager
 from jarvis.core.safety import SafetyGate
@@ -88,6 +89,9 @@ Persistent Episodic Memory & Dialogue Recall:
 
 Calendar & Schedule Management:
 - When Sir indicates that a scheduled meeting or proactive calendar alert does not exist, was mistaken, or should be cancelled (e.g. "I don't have a [meeting]", "cancel that meeting", "dismiss that appointment"), you MUST immediately invoke `cancel_calendar_event` with the event title or ID rather than merely apologizing conversationally.
+
+Universal Document & PDF Ingestion:
+- When Sir mentions an uploaded, imported, or staged PDF/document, or provides context for a document (e.g., "that PDF is my class schedule, put it on my calendar", "the document I imported is an invoice", "process that PDF"), you MUST invoke `process_staged_document` passing Sir's instructions in `user_context` to parse and register the data into the database.
 """
 
     GEMINI_CANDIDATE_MODELS = [
@@ -150,6 +154,7 @@ Calendar & Schedule Management:
         (("note", "notes", "take note", "take a note", "note down", "write down", "jot down", "save note", "record note", "my notes", "read notes", "search notes"), {"take_quick_note", "read_recent_notes", "search_notes"}),
         (("hardware watchdog", "thermal monitor", "watchdog", "system health check", "hardware health", "check hardware"), {"check_hardware_health", "start_hardware_watchdog", "stop_hardware_watchdog"}),
         (("deep research", "research topic", "investigate", "in-depth research", "compile report"), {"deep_research", "web_search"}),
+        (("pdf", "document", "staged", "import pdf", "uploaded", "that pdf", "the pdf", "syllabus", "intake", "file explorer"), {"process_staged_document", "list_staged_documents"}),
     )
 
     def __init__(

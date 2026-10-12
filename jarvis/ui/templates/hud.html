@@ -512,6 +512,33 @@
       box-shadow: 0 0 6px rgba(255, 170, 0, 0.3);
     }
 
+    .staged-doc-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      margin-top: 12px;
+      background: rgba(0, 255, 157, 0.12);
+      border: 1px solid var(--holo-emerald);
+      border-radius: 20px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.78rem;
+      color: var(--holo-emerald);
+      box-shadow: 0 0 12px rgba(0, 255, 157, 0.35);
+      cursor: pointer;
+      animation: pulse-staged 2s infinite ease-in-out;
+      transition: all 0.2s ease;
+    }
+    .staged-doc-pill:hover {
+      background: rgba(0, 255, 157, 0.22);
+      box-shadow: 0 0 20px rgba(0, 255, 157, 0.7);
+      transform: scale(1.03);
+    }
+    @keyframes pulse-staged {
+      0%, 100% { box-shadow: 0 0 8px rgba(0, 255, 157, 0.3); }
+      50% { box-shadow: 0 0 18px rgba(0, 255, 157, 0.7); }
+    }
+
     /* Slide-out Holographic HUD Drawer */
     .hud-drawer {
       position: fixed;
@@ -723,6 +750,9 @@
       <div class="status-hud-box">
         <div class="status-badge" id="statusBadge">STANDBY // ONLINE</div>
         <div class="sub-status" id="subStatus">VOICE SENSORS ARMED // HOLD FIN KEY OR SAY "HEY JARVIS"</div>
+        <div id="stagedDocPill" class="staged-doc-pill" style="display:none;" onclick="focusContextInput()" title="Click to provide context for this document">
+          <span>📄</span> <span id="stagedDocText">1 STAGED PDF (Awaiting Briefing)</span>
+        </div>
       </div>
     </section>
 
@@ -766,6 +796,10 @@
         <button class="btn-action" onclick="sendQuickCommand('Look at my screen and tell me what you see')">
           <span>👁️</span> VISION
         </button>
+        <button class="btn-action" id="btnImportPdf" onclick="triggerPdfImport()" style="border-color: rgba(0, 255, 157, 0.5); color: var(--holo-emerald);" title="Import PDF Document via File Explorer">
+          <span>📄</span> IMPORT PDF
+        </button>
+        <input type="file" id="pdfFileInput" accept=".pdf,application/pdf" style="display:none;" onchange="handlePdfUpload(event)">
         <button class="btn-action" id="btnDrawer" onclick="toggleDrawer()">
           <span>📋</span> ARCHIVE
         </button>
@@ -1013,6 +1047,9 @@
         appendChatMessage(data.sender, data.text, data.timestamp);
       } else if (data.type === "audio_level") {
         audioReactiveLevel = data.level || 0.0;
+      } else if (data.type === "document_staged") {
+        updateStagedBadge(data.filename);
+        appendChatMessage("jarvis", data.message || `Received '${data.filename}', Sir. Standing by for your briefing.`);
       }
     }
 
@@ -1310,6 +1347,76 @@
       }
     }
 
+    // PDF Document Import & Context Staging
+    function triggerPdfImport() {
+      const input = document.getElementById('pdfFileInput');
+      if (input) {
+        input.value = '';
+        input.click();
+      }
+    }
+
+    async function handlePdfUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      appendChatMessage('system', `Importing '${file.name}' via file explorer...`);
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const res = await fetch('/api/documents/upload', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        if (res.ok) {
+          appendChatMessage('jarvis', `Document '${file.name}' staged successfully, Sir. Standing by for your context and instructions.`);
+          updateStagedBadge(file.name);
+        } else {
+          appendChatMessage('system', `Failed to stage document: ${data.error || 'Unknown error'}`);
+        }
+      } catch (err) {
+        appendChatMessage('system', `Network error uploading document: ${err.message}`);
+      }
+    }
+
+    function updateStagedBadge(filename) {
+      const pill = document.getElementById('stagedDocPill');
+      const text = document.getElementById('stagedDocText');
+      if (pill && text) {
+        if (filename) {
+          text.textContent = `STAGED: ${filename} (Awaiting Briefing)`;
+          pill.style.display = 'inline-flex';
+        } else {
+          pill.style.display = 'none';
+        }
+      }
+    }
+
+    function focusContextInput() {
+      const cmd = document.getElementById('cmdInput');
+      if (cmd) {
+        cmd.value = "Jarvis, that PDF is ";
+        cmd.focus();
+      }
+    }
+
+    function checkStagedDocuments() {
+      fetch('/api/documents/staged')
+        .then(res => res.json())
+        .then(data => {
+          const docs = data.staged || [];
+          if (docs.length > 0) {
+            updateStagedBadge(docs[0].filename);
+          } else {
+            updateStagedBadge(null);
+          }
+        })
+        .catch(() => {});
+    }
+
     // Auto-fetch initial telemetry
     function fetchInitialTelemetry() {
       fetch('/api/status')
@@ -1321,6 +1428,7 @@
     window.addEventListener('load', () => {
       initWebSocket();
       fetchInitialTelemetry();
+      checkStagedDocuments();
 
       // Fallback polling loop if WebSocket connection is lost or offline
       setInterval(() => {
@@ -1328,6 +1436,11 @@
           fetchInitialTelemetry();
         }
       }, 2000);
+
+      // Periodic check for staged documents
+      setInterval(() => {
+        checkStagedDocuments();
+      }, 5000);
 
       // Auto-refresh countdown timers when drawer is open
       setInterval(() => {
