@@ -72,6 +72,7 @@ class JarvisUIService:
             Route("/api/timers", endpoint=self._handle_timers, methods=["GET"]),
             Route("/api/documents/upload", endpoint=self._handle_documents_upload, methods=["POST"]),
             Route("/api/documents/staged", endpoint=self._handle_staged_documents, methods=["GET"]),
+            Route("/api/calendar", endpoint=self._handle_calendar, methods=["GET"]),
             WebSocketRoute("/ws", endpoint=self._handle_websocket),
         ]
         return Starlette(routes=routes)
@@ -239,6 +240,13 @@ class JarvisUIService:
             staged = self.orchestrator.memory.get_staged_documents(status="PENDING_CONTEXT")
             return JSONResponse({"staged": staged})
         return JSONResponse({"staged": []})
+
+    async def _handle_calendar(self, request):
+        """Returns upcoming calendar appointments for HUD drawer."""
+        if self.orchestrator and hasattr(self.orchestrator, "memory"):
+            events = self.orchestrator.memory.get_calendar_events(include_cancelled=False)
+            return JSONResponse({"events": events})
+        return JSONResponse({"events": []})
 
     async def _handle_websocket(self, websocket: WebSocket):
         await websocket.accept()

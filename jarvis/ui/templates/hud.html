@@ -145,10 +145,10 @@
       flex: 1;
       min-height: 0;
       display: grid;
-      grid-template-columns: minmax(230px, 310px) minmax(250px, 1fr) minmax(290px, 390px);
+      grid-template-columns: minmax(280px, 330px) minmax(320px, 1fr) minmax(340px, 420px);
       grid-template-rows: minmax(0, 1fr) auto;
-      gap: 18px;
-      padding: 18px 24px;
+      gap: 16px;
+      padding: 16px 20px 14px 20px;
       overflow: hidden;
       z-index: 10;
     }
@@ -164,6 +164,8 @@
       position: relative;
       overflow: hidden;
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+      height: 100%;
+      min-height: 0;
     }
 
     .hud-card::before {
@@ -193,22 +195,36 @@
       letter-spacing: 1.5px;
       color: var(--holo-cyan);
       background: rgba(0, 240, 255, 0.04);
+      flex: 0 0 auto;
     }
 
     .card-body {
       flex: 1;
+      min-height: 0;
       padding: 16px;
       overflow-y: auto;
     }
 
     /* Telemetry Panel */
+    .telemetry-section-header {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.68rem;
+      letter-spacing: 1.5px;
+      color: var(--holo-blue);
+      padding: 10px 0 4px 0;
+      border-bottom: 1px solid rgba(0, 240, 255, 0.2);
+      margin-top: 4px;
+      text-transform: uppercase;
+      opacity: 0.9;
+    }
+
     .telemetry-row {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 10px 0;
+      padding: 8px 0;
       border-bottom: 1px dashed rgba(0, 240, 255, 0.12);
-      font-size: 0.95rem;
+      font-size: 0.92rem;
     }
 
     .telemetry-row:last-child {
@@ -252,13 +268,18 @@
       align-items: center;
       justify-content: center;
       position: relative;
+      height: 100%;
+      min-height: 0;
+      gap: 8px;
     }
 
     #reactorCanvas {
       width: 100%;
-      height: 100%;
-      max-width: 480px;
-      max-height: 480px;
+      height: auto;
+      max-width: 440px;
+      max-height: 440px;
+      aspect-ratio: 1 / 1;
+      filter: drop-shadow(0 0 25px rgba(0, 240, 255, 0.2));
     }
 
     .status-hud-box {
@@ -640,21 +661,23 @@
     }
     .drawer-tabs {
       display: flex;
-      gap: 8px;
-      padding: 10px 18px;
+      gap: 6px;
+      padding: 10px 14px;
       border-bottom: 1px dashed rgba(0, 240, 255, 0.15);
       background: rgba(0, 0, 0, 0.2);
+      flex-wrap: wrap;
     }
     .drawer-tab {
-      padding: 6px 14px;
+      padding: 6px 11px;
       font-family: 'Orbitron', sans-serif;
-      font-size: 0.76rem;
+      font-size: 0.7rem;
       background: transparent;
       border: 1px solid var(--panel-border);
       color: var(--text-dim);
       border-radius: 3px;
       cursor: pointer;
       transition: all 0.2s;
+      white-space: nowrap;
     }
     .drawer-tab.active {
       border-color: var(--holo-cyan);
@@ -728,6 +751,7 @@
         <span style="color: var(--text-dim);">[SYS-01]</span>
       </div>
       <div class="card-body">
+        <div class="telemetry-section-header">// HARDWARE & THERMALS</div>
         <div class="telemetry-row">
           <span class="telemetry-label">HOST OS</span>
           <span class="telemetry-val" id="osVal">WINDOWS 11 64-BIT</span>
@@ -766,8 +790,10 @@
             <div class="meter-bar" id="batteryMeter"></div>
           </div>
         </div>
+
+        <div class="telemetry-section-header">// COGNITIVE ROUTER & LATENCY</div>
         <div class="telemetry-row">
-          <span class="telemetry-label">COGNITIVE ROUTER</span>
+          <span class="telemetry-label">ROUTER TIER</span>
           <span class="telemetry-val" id="modelTierVal" style="color: var(--holo-emerald);">TRI-TIER HYBRID</span>
         </div>
         <div class="telemetry-row">
@@ -775,13 +801,11 @@
           <span class="telemetry-val" id="activeModelVal" style="font-size: 0.72rem; line-height: 1.4;">GROQ LPU + OLLAMA + GEMINI</span>
         </div>
         <div class="telemetry-row">
-          <span class="telemetry-label">ACTIVE TIMERS</span>
-          <span class="telemetry-val" id="activeTimersVal" style="color: var(--holo-amber);">0 ACTIVE</span>
-        </div>
-        <div class="telemetry-row">
           <span class="telemetry-label">INFERENCE SPEED</span>
           <span class="thermal-badge" id="latencyBadge" style="border-color: var(--holo-cyan); color: var(--holo-cyan); background: rgba(0, 240, 255, 0.1);">OLLAMA: --ms | GROQ: --ms</span>
         </div>
+
+        <div class="telemetry-section-header">// AGENT MEMORY & INTAKE</div>
         <div class="telemetry-row">
           <span class="telemetry-label">TTS ENGINE</span>
           <span class="telemetry-val" style="color: var(--holo-emerald);">KOKORO-82M (LOCAL CUDA)</span>
@@ -789,6 +813,14 @@
         <div class="telemetry-row">
           <span class="telemetry-label">DYNAMIC MEMORY</span>
           <span class="telemetry-val" id="memoryCountVal">TIER 2 (ACTIVE)</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">ACTIVE TIMERS</span>
+          <span class="telemetry-val" id="activeTimersVal" style="color: var(--holo-amber);">0 ACTIVE</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">STAGED INTAKE</span>
+          <span class="telemetry-val" id="telemetryStagedVal" style="color: var(--holo-emerald);">0 PENDING</span>
         </div>
       </div>
     </section>
@@ -881,8 +913,10 @@
       <button class="drawer-close-btn" onclick="toggleDrawer()">✕ CLOSE</button>
     </div>
     <div class="drawer-tabs">
-      <button class="drawer-tab active" id="tabTimersBtn" onclick="switchDrawerTab('timers')">ACTIVE TIMERS (<span id="drawerTimerCount">0</span>)</button>
-      <button class="drawer-tab" id="tabNotesBtn" onclick="switchDrawerTab('notes')">RECENT NOTES</button>
+      <button class="drawer-tab active" id="tabTimersBtn" onclick="switchDrawerTab('timers')">TIMERS (<span id="drawerTimerCount">0</span>)</button>
+      <button class="drawer-tab" id="tabNotesBtn" onclick="switchDrawerTab('notes')">NOTES</button>
+      <button class="drawer-tab" id="tabStagedBtn" onclick="switchDrawerTab('staged')">STAGED (<span id="drawerStagedCount">0</span>)</button>
+      <button class="drawer-tab" id="tabAgendaBtn" onclick="switchDrawerTab('agenda')">AGENDA</button>
     </div>
     <div class="drawer-body" id="drawerBody">
       <div style="color: var(--text-dim); font-size: 0.85rem; text-align: center; margin-top: 20px;">Loading archive data...</div>
@@ -1239,7 +1273,18 @@
       activeDrawerTab = tab;
       document.getElementById('tabTimersBtn').classList.toggle('active', tab === 'timers');
       document.getElementById('tabNotesBtn').classList.toggle('active', tab === 'notes');
+      document.getElementById('tabStagedBtn').classList.toggle('active', tab === 'staged');
+      document.getElementById('tabAgendaBtn').classList.toggle('active', tab === 'agenda');
       loadDrawerContent();
+    }
+
+    function briefDocument(filename) {
+      const input = document.getElementById('cmdInput');
+      if (input) {
+        input.value = `Jarvis, that PDF (${filename}) is `;
+        input.focus();
+      }
+      if (isDrawerOpen) toggleDrawer();
     }
 
     function loadDrawerContent() {
@@ -1249,7 +1294,8 @@
           .then(res => res.json())
           .then(data => {
             const timers = data.timers || [];
-            document.getElementById('drawerTimerCount').textContent = timers.length;
+            const countEl = document.getElementById('drawerTimerCount');
+            if (countEl) countEl.textContent = timers.length;
             if (!timers.length) {
               container.innerHTML = `
                 <div style="color: var(--text-dim); text-align: center; margin-top: 30px; font-size: 0.88rem;">
@@ -1277,7 +1323,7 @@
           .catch(err => {
             container.innerHTML = `<div style="color: var(--holo-crimson); font-size: 0.85rem;">Error loading timers: ${err}</div>`;
           });
-      } else {
+      } else if (activeDrawerTab === 'notes') {
         fetch('/api/notes')
           .then(res => res.json())
           .then(data => {
@@ -1303,6 +1349,73 @@
           })
           .catch(err => {
             container.innerHTML = `<div style="color: var(--holo-crimson); font-size: 0.85rem;">Error loading notes: ${err}</div>`;
+          });
+      } else if (activeDrawerTab === 'staged') {
+        fetch('/api/documents/staged')
+          .then(res => res.json())
+          .then(data => {
+            const docs = data.staged || [];
+            const countEl = document.getElementById('drawerStagedCount');
+            if (countEl) countEl.textContent = docs.length;
+            if (!docs.length) {
+              container.innerHTML = `
+                <div style="color: var(--text-dim); text-align: center; margin-top: 30px; font-size: 0.88rem;">
+                  📄 No documents currently staged awaiting briefing.<br>
+                  <span style="font-size: 0.78rem; opacity: 0.7;">Click [IMPORT PDF] in the command deck to stage documents.</span>
+                </div>
+              `;
+              return;
+            }
+            container.innerHTML = docs.map(doc => `
+              <div class="drawer-card">
+                <div class="drawer-card-header">
+                  <span style="color: var(--holo-emerald); font-weight: 600;">📄 ${escapeHtml(doc.filename)}</span>
+                  <span style="color: var(--holo-amber); font-size: 0.8rem;">${(doc.file_size ? (doc.file_size / 1024).toFixed(1) + ' KB' : 'PDF')}</span>
+                </div>
+                <div style="font-size: 0.78rem; color: var(--text-dim); margin-bottom: 8px;">
+                  Status: PENDING BRIEFING &middot; ID #${doc.id}
+                </div>
+                <button class="drawer-close-btn" style="color: var(--holo-cyan); border-color: rgba(0, 240, 255, 0.4); width: 100%;" onclick="briefDocument('${escapeHtml(doc.filename)}')">
+                  BRIEF JARVIS ↵
+                </button>
+              </div>
+            `).join('');
+          })
+          .catch(err => {
+            container.innerHTML = `<div style="color: var(--holo-crimson); font-size: 0.85rem;">Error loading staged documents: ${err}</div>`;
+          });
+      } else if (activeDrawerTab === 'agenda') {
+        fetch('/api/calendar')
+          .then(res => res.json())
+          .then(data => {
+            const events = data.events || [];
+            if (!events.length) {
+              container.innerHTML = `
+                <div style="color: var(--text-dim); text-align: center; margin-top: 30px; font-size: 0.88rem;">
+                  📅 No upcoming calendar events scheduled.<br>
+                  <span style="font-size: 0.78rem; opacity: 0.7;">Say "Jarvis, schedule meeting with Stark tomorrow at 10am" to add one.</span>
+                </div>
+              `;
+              return;
+            }
+            container.innerHTML = events.map(ev => `
+              <div class="drawer-card">
+                <div class="drawer-card-header">
+                  <span style="color: var(--holo-amber); font-weight: 600;">📅 ${escapeHtml(ev.title)}</span>
+                  <span style="color: var(--text-dim); font-size: 0.78rem;">#${ev.id}</span>
+                </div>
+                <div style="font-size: 0.82rem; color: var(--text-main); margin-bottom: 4px;">
+                  ⏰ ${escapeHtml(ev.start_time)}${ev.end_time ? ' &ndash; ' + escapeHtml(ev.end_time) : ''}
+                </div>
+                ${ev.location ? `<div style="font-size: 0.78rem; color: var(--holo-cyan); margin-bottom: 8px;">📍 ${escapeHtml(ev.location)}</div>` : ''}
+                <button class="drawer-close-btn" style="color: var(--holo-crimson); border-color: rgba(255, 51, 102, 0.4);" onclick="sendQuickCommand('Jarvis, cancel calendar event ${escapeHtml(ev.title)}')">
+                  CANCEL EVENT
+                </button>
+              </div>
+            `).join('');
+          })
+          .catch(err => {
+            container.innerHTML = `<div style="color: var(--holo-crimson); font-size: 0.85rem;">Error loading calendar: ${err}</div>`;
           });
       }
     }
@@ -1463,6 +1576,15 @@
         .then(res => res.json())
         .then(data => {
           const docs = data.staged || [];
+          const drawerCount = document.getElementById('drawerStagedCount');
+          if (drawerCount) drawerCount.textContent = docs.length;
+
+          const telemStaged = document.getElementById('telemetryStagedVal');
+          if (telemStaged) {
+            telemStaged.textContent = docs.length > 0 ? `${docs.length} PENDING` : '0 PENDING';
+            telemStaged.style.color = docs.length > 0 ? 'var(--holo-amber)' : 'var(--holo-emerald)';
+          }
+
           if (docs.length > 0) {
             updateStagedBadge(docs[0].filename);
           } else {
