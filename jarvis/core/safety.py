@@ -20,8 +20,9 @@ class SafetyGate:
         r"\bdel\s+/[fsq]",
     ]
 
-    def __init__(self, config: Dict[str, Any]):
-        self.confirm_destructive = config.get("safety", {}).get("confirm_destructive", True)
+    def __init__(self, config: Dict[str, Any] = None):
+        cfg = config or {}
+        self.confirm_destructive = cfg.get("safety", {}).get("confirm_destructive", True)
 
     def is_command_dangerous(self, command_str: str) -> bool:
         """Checks if a shell command contains potentially destructive verbs."""

@@ -41,86 +41,10 @@ def create_or_update_custom_skill(
     python_code: str,
     description: str = "",
 ) -> str:
-    """Validates, writes, and hot-reloads a custom Python skill into Jarvis's running process."""
-    clean_name = _sanitize_skill_name(skill_name)
-    code = python_code.strip()
-
-    if not code:
-        return "Error: python_code cannot be empty."
-
-    # 1. Pre-execution AST Syntax Validation
-    try:
-        ast.parse(code)
-    except SyntaxError as e:
-        logger.error("Syntax error in generated skill '%s': %s", clean_name, e)
-        return (
-            f"Failed to create skill '{clean_name}' due to a Python SyntaxError on line {e.lineno}:\n"
-            f"{e.msg}\n\nPlease revise the code and try again."
-        )
-
-    # 2. Ensure SkillRegistry import is present if not already in code
-    if "SkillRegistry" not in code:
-        code = "from jarvis.skills.base import SkillRegistry\n\n" + code
-
-    target_file = CUSTOM_SKILLS_DIR / f"{clean_name}.py"
-
-    # Track tools registered before loading
-    tools_before = set(SkillRegistry.get_all_tools().keys())
-
-    # 3. Write validated code to jarvis/skills/custom/<clean_name>.py
-    try:
-        with open(target_file, "w", encoding="utf-8") as f:
-            f.write(code)
-    except Exception as e:
-        logger.error("Failed to write custom skill file %s: %s", target_file, e)
-        return f"Error writing custom skill to disk: {e}"
-
-    # 4. Dynamic Import & Hot-Reload via importlib
-    module_name = f"jarvis.skills.custom.{clean_name}"
-    try:
-        spec = importlib.util.spec_from_file_location(module_name, str(target_file))
-        if spec is None or spec.loader is None:
-            return f"Error creating import specification for {target_file}."
-
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
-        spec.loader.exec_module(module)
-
-        # Clear tool schema cache so new tools are immediately visible to LLMs
-        if hasattr(SkillRegistry, "_openai_tools_cache"):
-            SkillRegistry._openai_tools_cache.clear()
-
-        tools_after = set(SkillRegistry.get_all_tools().keys())
-        newly_registered = list(tools_after - tools_before)
-
-        logger.info(
-            "Autonomous Skill Engineered: '%s' hot-reloaded successfully. New tools: %s",
-            clean_name,
-            newly_registered,
-        )
-
-        tools_info = (
-            f"Registered new tool(s): {', '.join(newly_registered)}."
-            if newly_registered
-            else "Skill module loaded successfully (no new @SkillRegistry.register decorators detected)."
-        )
-        return (
-            f"Successfully engineered and hot-reloaded capability '{clean_name}', Sir! "
-            f"{tools_info} It is immediately active in your current session."
-        )
-
-    except Exception as e:
-        logger.error("Dynamic import error for skill '%s': %s", clean_name, e)
-        # Attempt to remove the failing file so it doesn't break future launches
-        try:
-            if target_file.exists():
-                target_file.unlink()
-        except Exception:
-            pass
-        return (
-            f"Failed to hot-reload skill '{clean_name}' due to runtime execution error:\n"
-            f"{type(e).__name__}: {e}\n\nPlease diagnose the issue and try again."
-        )
+    """Validates, writes, and hot-reloads a custom Python skill via the isolated SkillSandbox."""
+    from jarvis.core.evolution.sandbox import SkillSandbox
+    result = SkillSandbox.validate_and_promote(skill_name=skill_name, python_code=python_code)
+    return result.message
 
 
 @SkillRegistry.register(
