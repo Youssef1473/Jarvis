@@ -343,8 +343,25 @@ class JarvisOrchestrator:
         self.set_state("speaking")
         self.tts.start_streaming_session()
 
+        # Check if this query is an instant deterministic reflex (<10ms) or model switch
+        norm_query = re.sub(r"^[\s,;:.]+|[\s,!?:.]+$", "", (query or "").strip()).strip()
+        is_fast_reflex = bool(self.brain._try_fast_reflex(norm_query))
+        is_model_switch = bool(re.match(r"^(?:switch to|use|activate|set model to|enable)\s+(pro|flash|claude|sonnet|opus|gemini|3\.8|3\.1)", norm_query, re.I))
+
+        queued_ack = None
+        # For non-reflex cognitive tasks, speak an immediate acknowledgment (<200ms) so Sir is never left in silence
+        if not is_fast_reflex and not is_model_switch and len(norm_query.split()) >= 3:
+            import random
+            queued_ack = random.choice(["Right away, Sir.", "On it, Sir."])
+            self.tts.queue_sentence(queued_ack)
+
         def queue_speech(sentence: str):
-            self.tts.queue_sentence(sentence)
+            nonlocal queued_ack
+            s_clean = sentence.strip()
+            if queued_ack and s_clean.lower().startswith(queued_ack.lower()[:7]):
+                s_clean = re.sub(r"^(?:right away,?\s+sir\.?|on it,?\s+sir\.?)\s*", "", s_clean, flags=re.I).strip()
+            if s_clean:
+                self.tts.queue_sentence(s_clean)
 
         reply = self.brain.process_query(query, sentence_callback=queue_speech)
         # Complete playback of remaining queued audio

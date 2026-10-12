@@ -681,8 +681,8 @@ Autonomous Self-Building & Dynamic Feature Creation:
             return SkillRegistry.execute("get_battery_status")
 
         # 4. Browser Tabs & Browsers
-        # Brave variations (e.g. "open a tab in brave", "open a tab and brave", "open brave", "new brave tab")
-        if re.search(r"^(?:open|launch|start|new)?\s*(?:a\s+)?(?:new\s+)?tab\s+(?:in|and|on|for)\s+brave$|^(?:open|launch|start|open a|new)\s+(?:brave\s+tab|brave|brave browser)$|^brave\s+tab$", clean):
+        # Brave variations (e.g. "open a tab in my current brave", "open a tab in brave", "open a tab and brave", "open brave", "new brave tab")
+        if re.search(r"^(?:open|launch|start|new)?\s*(?:a\s+)?(?:new\s+)?tab\s+(?:in|and|on|for)\s+(?:my\s+|the\s+)?(?:current\s+)?brave.*$|^(?:open|launch|start|open a|new)\s+(?:brave\s+tab|brave|brave browser)$|^brave\s+tab$", clean):
             return SkillRegistry.execute("open_browser_tab", browser="brave")
 
         # Chrome variations

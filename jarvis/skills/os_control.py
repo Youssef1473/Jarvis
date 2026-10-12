@@ -688,11 +688,56 @@ def take_desktop_screenshot(filename: str = "") -> str:
     description="Opens a new tab or navigates to a specific URL in Brave, Chrome, Edge, or the desktop browser."
 )
 def open_browser_tab(url: str = "", browser: str = "brave") -> str:
-    """Opens a new tab or URL in the requested desktop browser."""
+    """Opens a new tab or URL in the requested desktop browser.
+    If the browser is already running on the desktop, focuses the active window and presses Ctrl+T.
+    """
     browser_clean = (browser or "brave").lower().strip()
     target_url = url.strip()
     if target_url and not target_url.startswith(("http://", "https://", "about:", "chrome:", "brave:")):
         target_url = "https://" + target_url
+
+    # 1. Fast Path: If an active browser window is already open, focus it and press Ctrl+T immediately!
+    try:
+        import win32gui
+        import win32con
+        _ensure_desktop_access()
+        matched_hwnds = []
+
+        def _enum_win(hwnd, _):
+            if win32gui.IsWindowVisible(hwnd):
+                w_title = win32gui.GetWindowText(hwnd).strip()
+                if w_title and browser_clean in w_title.lower():
+                    matched_hwnds.append((hwnd, w_title))
+
+        win32gui.EnumWindows(_enum_win, None)
+
+        if matched_hwnds:
+            hwnd, found_title = matched_hwnds[0]
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            win32gui.SetForegroundWindow(hwnd)
+            time.sleep(0.06)
+            pyautogui.FAILSAFE = False
+            pyautogui.hotkey("ctrl", "t")
+            if target_url:
+                time.sleep(0.05)
+                old_clip = pyperclip.paste()
+                pyperclip.copy(target_url)
+                pyautogui.hotkey("ctrl", "v")
+                time.sleep(0.04)
+                pyautogui.press("enter")
+
+                def _restore():
+                    time.sleep(0.3)
+                    try:
+                        pyperclip.copy(old_clip)
+                    except Exception:
+                        pass
+
+                threading.Thread(target=_restore, daemon=True).start()
+                return f"Opened '{target_url}' in your active {browser_clean.title()} window, Sir."
+            return f"Opened a new tab in your active {browser_clean.title()} window, Sir."
+    except Exception as e:
+        logger.debug(f"Active window tab notice: {e}")
 
     apps = _build_app_index()
     browser_exe = None
