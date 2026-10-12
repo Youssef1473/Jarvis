@@ -113,7 +113,7 @@ Persistent Episodic Memory & Dialogue Recall:
         (("http://", "https://", "webpage", "website", "open url"), {"browse_and_read_webpage", "open_url_in_desktop_browser", "capture_webpage_screenshot"}),
         (("open", "launch", "start", "software", "program", "browser", "app"), {"launch_application"}),
         (("close", "terminate", "exit app", "kill app", "quit app"), {"close_application"}),
-        (("running", "open apps", "open windows", "active window", "focused window", "what am i looking at"), {"get_active_window", "list_running_applications"}),
+        (("running", "open apps", "open windows", "active window", "focused window", "what am i looking at", "on my screen", "on screen", "my screen", "what is open"), {"get_active_window", "list_running_applications"}),
         (("vitals", "cpu", "ram", "memory usage", "hardware", "system status", "specs", "gpu"), {"get_system_vitals", "get_battery_status"}),
         (("clipboard", "copy", "copied", "paste"), {"read_clipboard", "copy_to_clipboard"}),
         (("lock", "lock pc", "lock computer", "lock workstation"), {"lock_workstation"}),
@@ -416,10 +416,19 @@ Persistent Episodic Memory & Dialogue Recall:
         logger.info(f"Jarvis Gemini session initialized with model: {self.gemini_model} ({len(recent_turns)} prior turns restored).")
 
     def should_capture_screen(self, query: str) -> bool:
-        """Determines if the prompt requests looking at the screen."""
+        """Determines if the prompt requests visual inspection of screen pixels."""
         q = query.lower()
-        triggers = ["screen", "look at this", "look here", "what do you see", "error on my screen", "read my screen", "screenshot"]
-        return any(t in q for t in triggers)
+        # Exclude OS actions, window listings, screenshots, and lock commands
+        if any(w in q for w in ("running", "open apps", "open windows", "active window", "focused window", "screenshot", "lock", "minimize")):
+            return False
+
+        vision_triggers = [
+            "look at this", "look here", "look at my screen", "look at the screen",
+            "what do you see", "error on my screen", "read my screen", "read the screen",
+            "inspect my screen", "inspect the screen", "can you see my screen",
+            "describe my screen", "see on my screen", "visualize screen"
+        ]
+        return any(t in q for t in vision_triggers)
 
     def process_query(self, user_text: str, sentence_callback: Any = None) -> str:
         """Routes normal conversation to the configured primary model; consultations are explicit."""
@@ -688,8 +697,9 @@ Persistent Episodic Memory & Dialogue Recall:
             self.openai_messages[0]["content"] = self._get_system_instruction()
         
         # Prepare user payload with vision if requested
-        if self.should_capture_screen(user_text):
-            img_bytes = ScreenPerception.capture_screen_bytes(max_width=1600)
+        include_vision = self.should_capture_screen(user_text)
+        if include_vision:
+            img_bytes = ScreenPerception.capture_screen_bytes(max_width=1024, quality=70)
             if img_bytes:
                 b64 = base64.b64encode(img_bytes).decode("utf-8")
                 user_msg = {
@@ -701,11 +711,13 @@ Persistent Episodic Memory & Dialogue Recall:
                 }
             else:
                 user_msg = {"role": "user", "content": user_text}
+                include_vision = False
         else:
             user_msg = {"role": "user", "content": user_text}
 
         self.openai_messages.append(user_msg)
         tools = SkillRegistry.get_openai_tools(self.active_tool_names)
+        max_output_tokens = int(self.config.get("llm", {}).get("max_output_tokens", 1024))
 
         last_error = None
         for model_candidate in candidate_models:
@@ -743,6 +755,7 @@ Persistent Episodic Memory & Dialogue Recall:
                     messages=self.openai_messages,
                     tools=tools if tools else None,
                     temperature=0.0 if tools else self.temperature,
+                    max_tokens=max_output_tokens,
                     stream=True,
                     **request_options,
                 )
@@ -873,6 +886,7 @@ Persistent Episodic Memory & Dialogue Recall:
                         messages=self.openai_messages,
                         tools=followup_tools,
                         temperature=self.temperature,
+                        max_tokens=max_output_tokens,
                         stream=True,
                         **request_options,
                     )
@@ -917,6 +931,7 @@ Persistent Episodic Memory & Dialogue Recall:
                         messages=self.openai_messages,
                         tools=None,
                         temperature=self.temperature,
+                        max_tokens=max_output_tokens,
                         stream=True,
                         **request_options,
                     )
@@ -960,6 +975,7 @@ Persistent Episodic Memory & Dialogue Recall:
                             messages=self.openai_messages,
                             tools=None,
                             temperature=self.temperature,
+                            max_tokens=max_output_tokens,
                             stream=True,
                             **request_options,
                         )
@@ -1004,6 +1020,13 @@ Persistent Episodic Memory & Dialogue Recall:
 
             except Exception as e:
                 last_error = e
+                if include_vision and user_msg.get("role") == "user" and isinstance(user_msg.get("content"), list):
+                    logger.warning(
+                        f"{self.provider.upper()} vision stream encountered error: {e}. Gracefully retrying with text query..."
+                    )
+                    user_msg["content"] = user_text
+                    include_vision = False
+                    continue
                 if model_candidate != candidate_models[-1]:
                     next_model = candidate_models[candidate_models.index(model_candidate) + 1]
                     logger.warning(
