@@ -107,6 +107,12 @@ Universal Document & PDF Ingestion:
         "gemini-pro-latest",
     ]
 
+    GROQ_CANDIDATE_MODELS = [
+        "qwen/qwen3.8-27b",
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+    ]
+
     CODE_TOOL_NAMES = {
         "list_directory",
         "read_file",
@@ -179,7 +185,11 @@ Universal Document & PDF Ingestion:
         self.ollama_client = None
         self.ollama_model = config.get("llm", {}).get("ollama_model", "qwen3.5:2b-q4_K_M")
         self.groq_client = None
-        self.groq_model = config.get("llm", {}).get("groq_model", "qwen/qwen3.8-27b")
+        configured_groq_model = config.get("llm", {}).get("groq_model", "qwen/qwen3.8-27b")
+        self.groq_candidates = [configured_groq_model] + [
+            m for m in self.GROQ_CANDIDATE_MODELS if m != configured_groq_model
+        ]
+        self.groq_model = self.groq_candidates[0]
 
         # OpenAI-compatible (OmniRoute / Groq / xAI / Ollama) state
         self.openai_client = None
@@ -857,9 +867,10 @@ Universal Document & PDF Ingestion:
         """Processes user input using OmniRoute, Groq, or xAI Grok with real-time streaming TTS and dynamic failover."""
         t_start = time.perf_counter()
         # Determine model candidates with Smart Dynamic Tiering
-        # Provider and model are explicit. A failed request never fans out to another
-        # model/provider and therefore cannot spend unexpected credits or leak context.
-        candidate_models = [self.openai_model]
+        if (self.provider == "groq" or self.openai_client == getattr(self, "groq_client", None)) and hasattr(self, "groq_candidates"):
+            candidate_models = list(self.groq_candidates)
+        else:
+            candidate_models = [self.openai_model]
 
         # Keep system instruction up-to-date with latest dynamic memory facts
         if self.openai_messages and self.openai_messages[0]["role"] == "system":
@@ -967,6 +978,7 @@ Universal Document & PDF Ingestion:
                                     s_clause, text_buffer = self._extract_next_speech_chunk(text_buffer)
 
                 had_tool_call = False
+                last_tool_result = ""
                 tool_iterations = 0
                 max_tool_iterations = 16 if self.active_task_mode == "code" else 2
                 executed_tool_signatures = set()
@@ -1032,6 +1044,7 @@ Universal Document & PDF Ingestion:
                             tool_result = f"Action halted: {warning}"
                         else:
                             tool_result = SkillRegistry.execute(fn_name, **fn_args)
+                            last_tool_result = str(tool_result)
                             if fn_name in action_tools:
                                 has_action_completed = True
 
@@ -1055,15 +1068,54 @@ Universal Document & PDF Ingestion:
                     )
                     followup_tools = tools if (allow_further_tools and tools) else None
 
-                    followup_stream = self.openai_client.chat.completions.create(
-                        model=self.openai_model,
-                        messages=self.openai_messages,
-                        tools=followup_tools,
-                        temperature=self.temperature,
-                        max_tokens=max_output_tokens,
-                        stream=True,
-                        **request_options,
-                    )
+                    try:
+                        followup_stream = self.openai_client.chat.completions.create(
+                            model=self.openai_model,
+                            messages=self.openai_messages,
+                            tools=followup_tools,
+                            temperature=self.temperature,
+                            max_tokens=max_output_tokens,
+                            stream=True,
+                            **request_options,
+                        )
+                    except Exception as fe:
+                        logger.warning(f"Post-tool follow-up with {self.openai_model} failed ({fe}). Attempting fallback synthesis...")
+                        followup_stream = None
+                        # 1. Try other candidate models if on Groq
+                        if (self.provider in ("groq", "hybrid", "auto") or self.openai_client == getattr(self, "groq_client", None)) and hasattr(self, "groq_candidates"):
+                            for alt_model in self.groq_candidates:
+                                if alt_model != self.openai_model:
+                                    try:
+                                        logger.info(f"Attempting post-tool synthesis on fallback Groq candidate '{alt_model}'...")
+                                        followup_stream = self.openai_client.chat.completions.create(
+                                            model=alt_model,
+                                            messages=self.openai_messages,
+                                            tools=None,
+                                            temperature=self.temperature,
+                                            max_tokens=max_output_tokens,
+                                            stream=True,
+                                        )
+                                        self.openai_model = alt_model
+                                        break
+                                    except Exception as alt_err:
+                                        logger.warning(f"Fallback Groq model '{alt_model}' failed: {alt_err}")
+                        # 2. Try local Ollama if Groq failed or was exhausted
+                        if followup_stream is None and getattr(self, "ollama_client", None):
+                            try:
+                                logger.info(f"Attempting post-tool synthesis on LOCAL OLLAMA ({self.ollama_model})...")
+                                followup_stream = self.ollama_client.chat.completions.create(
+                                    model=self.ollama_model,
+                                    messages=self.openai_messages,
+                                    tools=None,
+                                    temperature=self.temperature,
+                                    max_tokens=max_output_tokens,
+                                    stream=True,
+                                    reasoning_effort="none",
+                                )
+                            except Exception as ollama_err:
+                                logger.warning(f"Local Ollama synthesis fallback failed: {ollama_err}")
+                        if followup_stream is None:
+                            raise fe
 
                     for chunk in followup_stream:
                         if not chunk.choices:
@@ -1137,6 +1189,7 @@ Universal Document & PDF Ingestion:
                         logger.info(f"{self.provider.upper()} Inline tool call: {fn_name}({fn_args})")
                         is_safe, warning = self.safety.check_tool_call(fn_name, fn_args)
                         tool_result = f"Action halted: {warning}" if not is_safe else SkillRegistry.execute(fn_name, **fn_args)
+                        last_tool_result = str(tool_result)
                         logger.info(f"{self.provider.upper()} Inline tool result: {tool_result}")
 
                         self.openai_messages.append({"role": "assistant", "content": raw_content})
@@ -1144,15 +1197,34 @@ Universal Document & PDF Ingestion:
                             "role": "user",
                             "content": f"[System Tool Result: {tool_result}. Briefly acknowledge to Sir that this was completed.]"
                         })
-                        followup_stream = self.openai_client.chat.completions.create(
-                            model=self.openai_model,
-                            messages=self.openai_messages,
-                            tools=None,
-                            temperature=self.temperature,
-                            max_tokens=max_output_tokens,
-                            stream=True,
-                            **request_options,
-                        )
+                        try:
+                            followup_stream = self.openai_client.chat.completions.create(
+                                model=self.openai_model,
+                                messages=self.openai_messages,
+                                tools=None,
+                                temperature=self.temperature,
+                                max_tokens=max_output_tokens,
+                                stream=True,
+                                **request_options,
+                            )
+                        except Exception as fe:
+                            followup_stream = None
+                            if getattr(self, "ollama_client", None):
+                                try:
+                                    followup_stream = self.ollama_client.chat.completions.create(
+                                        model=self.ollama_model,
+                                        messages=self.openai_messages,
+                                        tools=None,
+                                        temperature=self.temperature,
+                                        max_tokens=max_output_tokens,
+                                        stream=True,
+                                        reasoning_effort="none",
+                                    )
+                                except Exception:
+                                    pass
+                            if followup_stream is None:
+                                raise fe
+
                         full_content_chunks = []
                         text_buffer = ""
                         for chunk in followup_stream:
@@ -1209,13 +1281,36 @@ Universal Document & PDF Ingestion:
                 if model_candidate != candidate_models[-1]:
                     next_model = candidate_models[candidate_models.index(model_candidate) + 1]
                     logger.warning(
-                        f"OmniRoute model '{model_candidate}' unavailable or quota limit reached ({e}). "
+                        f"{self.provider.upper()} model '{model_candidate}' unavailable or quota limit reached ({e}). "
                         f"Seamlessly switching to next fallback model: '{next_model}'..."
                     )
                     continue
                 else:
                     logger.warning(f"{self.provider.upper()} request failed on final candidate '{model_candidate}': {e}.")
                     break
+
+        # If tools executed successfully, NEVER return a failure message; deliver deterministic verbal acknowledgment
+        if had_tool_call and last_tool_result:
+            logger.info("Tool execution succeeded prior to synthesis failure. Delivering deterministic verbal acknowledgment...")
+            reply_text = f"Action completed, Sir: {last_tool_result}"
+            if sentence_callback:
+                clean_s = self._clean_speech_clause(reply_text)
+                if clean_s:
+                    sentence_callback(clean_s)
+            self.openai_messages.append({"role": "assistant", "content": reply_text})
+            self.memory.log_interaction(user_text, reply_text)
+            return reply_text
+
+        # In hybrid mode, if Groq candidates are exhausted before any tool ran, cascade to Local Ollama or Gemini:
+        if self.provider in ("hybrid", "auto") and self.openai_client == getattr(self, "groq_client", None):
+            if getattr(self, "ollama_client", None):
+                logger.warning(f"All Groq candidates exhausted ({last_error}). Seamlessly falling back to LOCAL OLLAMA...")
+                self.openai_client = self.ollama_client
+                self.openai_model = self.ollama_model
+                return self._process_openai_compatible_query(user_text, sentence_callback)
+            elif self.gemini_client:
+                logger.warning(f"All Groq candidates exhausted ({last_error}). Seamlessly falling back to GEMINI...")
+                return self._process_gemini_query(user_text, sentence_callback)
 
         logger.warning(f"All candidate models exhausted on {self.provider.upper()} (last error: {last_error}).")
         return (

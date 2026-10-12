@@ -57,8 +57,10 @@ def extract_text_from_pdf(file_path: str, max_pages: int = 50) -> str:
                 from google.genai import types
                 client = genai.Client(api_key=gemini_key)
                 pdf_bytes = p.read_bytes()
+                cfg = load_config()
+                gem_model = cfg.get("llm", {}).get("model", "gemini-3.8-flash")
                 response = client.models.generate_content(
-                    model="gemini-2.5-flash",
+                    model=gem_model,
                     contents=[
                         types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
                         "Extract all readable text, tables, dates, and information from this document verbatim."
@@ -202,8 +204,9 @@ def process_staged_document(identifier: str = "", user_context: str = "") -> str
             from google import genai
             from google.genai import types
             client = genai.Client(api_key=gemini_key)
+            gem_model = cfg.get("llm", {}).get("model", "gemini-3.8-flash")
             res = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model=gem_model,
                 contents=f"{system_prompt}\n\n{user_prompt}",
                 config=types.GenerateContentConfig(temperature=0.1, response_mime_type="application/json")
             )
@@ -211,6 +214,29 @@ def process_staged_document(identifier: str = "", user_context: str = "") -> str
                 extracted_data = json.loads(res.text.strip())
         except Exception as e:
             logger.debug(f"Gemini document extraction notice: {e}")
+
+    # Fallback to Local Ollama (Tier 1 offline intellect)
+    if not extracted_data:
+        try:
+            from openai import OpenAI
+            ollama_base = cfg.get("llm", {}).get("ollama_base_url", "http://127.0.0.1:11434/v1")
+            ollama_model = cfg.get("llm", {}).get("ollama_model", "qwen3.5:2b-q4_K_M")
+            client = OpenAI(api_key="ollama", base_url=ollama_base, max_retries=0, timeout=60.0)
+            res = client.chat.completions.create(
+                model=ollama_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1,
+                max_tokens=1500,
+            )
+            content = res.choices[0].message.content.strip()
+            content = re.sub(r"^```(?:json)?\s*", "", content)
+            content = re.sub(r"\s*```$", "", content)
+            extracted_data = json.loads(content)
+        except Exception as e:
+            logger.debug(f"Ollama document extraction notice: {e}")
 
     # If extraction returned nothing, build fallback knowledge archive
     if not extracted_data:
