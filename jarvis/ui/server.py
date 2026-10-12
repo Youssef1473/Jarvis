@@ -208,13 +208,13 @@ class JarvisUIService:
                 )
 
             # Broadcast WebSocket notification
-            asyncio.create_task(self.broadcast({
+            self.broadcast({
                 "type": "document_staged",
                 "filename": filename,
                 "id": doc_info.get("id"),
                 "size_kb": round(file_size / 1024, 1),
                 "message": f"Staged '{filename}'. Standing by for Sir's briefing."
-            }))
+            })
 
             if self.orchestrator and hasattr(self.orchestrator, "sfx"):
                 try:
