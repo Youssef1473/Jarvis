@@ -11,10 +11,30 @@ from starlette.responses import HTMLResponse, JSONResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 import uvicorn
+import psutil
 
 from jarvis.skills.os_control import get_raw_battery_info
 
 logger = logging.getLogger("Jarvis.UI")
+
+_gpu_telemetry_cache = {"data": None, "timestamp": 0.0}
+
+
+def _get_cached_gpu_telemetry() -> Optional[Dict[str, Any]]:
+    """Caches GPU telemetry for 6 seconds to avoid spawning nvidia-smi constantly."""
+    now = time.time()
+    if now - _gpu_telemetry_cache["timestamp"] < 6.0 and _gpu_telemetry_cache["data"] is not None:
+        return _gpu_telemetry_cache["data"]
+    try:
+        from jarvis.skills.system_watchdog import _query_gpu_telemetry
+        res = _query_gpu_telemetry()
+        if res:
+            _gpu_telemetry_cache["data"] = res
+            _gpu_telemetry_cache["timestamp"] = now
+            return res
+    except Exception:
+        pass
+    return _gpu_telemetry_cache.get("data")
 
 
 class JarvisUIService:
@@ -44,6 +64,8 @@ class JarvisUIService:
             Route("/api/command", endpoint=self._handle_command, methods=["POST"]),
             Route("/api/action", endpoint=self._handle_action, methods=["POST"]),
             Route("/api/mute", endpoint=self._handle_mute, methods=["POST"]),
+            Route("/api/notes", endpoint=self._handle_notes, methods=["GET"]),
+            Route("/api/timers", endpoint=self._handle_timers, methods=["GET"]),
             WebSocketRoute("/ws", endpoint=self._handle_websocket),
         ]
         return Starlette(routes=routes)
@@ -104,6 +126,48 @@ class JarvisUIService:
             return JSONResponse({"is_muted": is_muted})
         return JSONResponse({"error": "Orchestrator not connected"}, status_code=503)
 
+    async def _handle_notes(self, request):
+        """Returns recent captured notes from data/notes/notes.md for HUD drawer."""
+        notes_path = Path("data/notes/notes.md")
+        if not notes_path.exists():
+            return JSONResponse({"notes": []})
+        try:
+            raw = notes_path.read_text(encoding="utf-8")
+            blocks = [b.strip() for b in raw.split("### ") if b.strip() and not b.startswith("# Jarvis")]
+            notes_list = []
+            for block in reversed(blocks[-15:]):
+                lines = block.splitlines()
+                header = lines[0].strip() if lines else "General"
+                parts = header.split(" | ")
+                dt_str = parts[0].strip() if len(parts) > 1 else header
+                cat = parts[1].strip() if len(parts) > 1 else "General"
+                body = " ".join([l.lstrip("-•* ").strip() for l in lines[1:] if l.strip()])
+                notes_list.append({"timestamp": dt_str, "category": cat, "content": body})
+            return JSONResponse({"notes": notes_list})
+        except Exception as e:
+            logger.warning(f"Error reading notes for HUD: {e}")
+            return JSONResponse({"error": str(e), "notes": []})
+
+    async def _handle_timers(self, request):
+        """Returns live countdown timers for HUD drawer."""
+        try:
+            from jarvis.skills.timers import _active_timers, _timer_lock
+            now = time.time()
+            timers_list = []
+            with _timer_lock:
+                for t_info in _active_timers.values():
+                    rem = max(0, int(t_info.get("end_time", now) - now))
+                    timers_list.append({
+                        "id": t_info.get("id", ""),
+                        "label": t_info.get("label", "Timer"),
+                        "duration": t_info.get("duration", 0),
+                        "remaining": rem,
+                    })
+            return JSONResponse({"timers": timers_list})
+        except Exception as e:
+            logger.warning(f"Error reading timers for HUD: {e}")
+            return JSONResponse({"timers": []})
+
     async def _handle_websocket(self, websocket: WebSocket):
         await websocket.accept()
         self.connected_clients.add(websocket)
@@ -151,30 +215,58 @@ class JarvisUIService:
     def _gather_telemetry(self) -> Dict[str, Any]:
         """Collects current hardware and model telemetry without blocking."""
         bat = get_raw_battery_info()
-        active_model = "qwen3.5:2b-q4_K_M"
-        tier = "local"
-        provider = "ollama"
-        specialist_status = {"gemini": "ADD KEY", "groq": "ADD KEY", "grok": "METERED / OFF", "claude": "METERED / OFF"}
+        cpu_val = round(psutil.cpu_percent(interval=None), 1)
+        mem = psutil.virtual_memory()
+        ram_pct = mem.percent
+        ram_used_gb = round(mem.used / (1024 ** 3), 1)
+        ram_total_gb = round(mem.total / (1024 ** 3), 1)
+
+        gpu_info = _get_cached_gpu_telemetry()
+        gpu_temp = gpu_info.get("temp_c", 0) if gpu_info else 0
+        gpu_name = gpu_info.get("name", "RTX 3050 (CUDA FP16)") if gpu_info else "RTX 3050 (CUDA FP16)"
+        gpu_vram = f"{gpu_info.get('vram_used', 0)} MB" if gpu_info else "Active"
+
+        timer_count = 0
+        try:
+            from jarvis.skills.timers import _active_timers, _timer_lock
+            with _timer_lock:
+                timer_count = len(_active_timers)
+        except Exception:
+            pass
+
+        active_model = "qwen/qwen3.8-27b + qwen3.5:2b"
+        tier = "TRI-TIER HYBRID"
+        provider = "hybrid"
+        specialist_status = {"gemini": "ACTIVE", "groq": "ACTIVE", "grok": "METERED / OFF", "claude": "METERED / OFF"}
         is_muted = False
 
         if self.orchestrator:
             is_muted = self.orchestrator.is_muted()
             if hasattr(self.orchestrator, "brain"):
+                p = getattr(self.orchestrator.brain, "provider", "hybrid")
+                provider = p
+                tier = "TRI-TIER HYBRID" if p in ("hybrid", "auto") else ("LOCAL" if p == "ollama" else "CLOUD")
                 active_model = getattr(self.orchestrator.brain, "openai_model", active_model)
-                provider = getattr(self.orchestrator.brain, "provider", "")
-                tier = "LOCAL" if provider == "ollama" else "CLOUD"
                 status_provider = getattr(self.orchestrator.brain, "specialist_status", None)
                 if callable(status_provider):
                     specialist_status = status_provider()
 
         return {
+            "cpu": cpu_val,
+            "ram_pct": ram_pct,
+            "ram_used_gb": ram_used_gb,
+            "ram_total_gb": ram_total_gb,
             "battery": bat.get("percent", 100),
             "charging": bat.get("charging", False),
-            "gpu": "RTX 3050 (CUDA FP16)",
+            "has_battery": bat.get("has_battery", False),
+            "gpu": gpu_name,
+            "gpu_temp": gpu_temp,
+            "gpu_vram": gpu_vram,
             "model": active_model,
             "tier": tier,
             "provider": provider,
             "specialists": specialist_status,
+            "active_timers": timer_count,
             "is_muted": is_muted,
             "timestamp": time.strftime("%H:%M:%S"),
         }

@@ -500,6 +500,120 @@
         width: 100%;
       }
     }
+
+    .thermal-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.74rem;
+      padding: 2px 7px;
+      border-radius: 3px;
+      border: 1px solid var(--holo-amber);
+      color: var(--holo-amber);
+      background: rgba(255, 170, 0, 0.12);
+      box-shadow: 0 0 6px rgba(255, 170, 0, 0.3);
+    }
+
+    /* Slide-out Holographic HUD Drawer */
+    .hud-drawer {
+      position: fixed;
+      top: 60px;
+      right: -440px;
+      width: 420px;
+      height: calc(100vh - 60px);
+      background: rgba(6, 11, 20, 0.95);
+      border-left: 1px solid var(--panel-border);
+      backdrop-filter: blur(20px);
+      z-index: 1000;
+      transition: right 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex;
+      flex-direction: column;
+      box-shadow: -15px 0 35px rgba(0, 0, 0, 0.75);
+    }
+    .hud-drawer.open {
+      right: 0;
+    }
+    .drawer-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--panel-border);
+      background: rgba(0, 240, 255, 0.04);
+    }
+    .drawer-title {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--holo-cyan);
+      letter-spacing: 2px;
+      text-shadow: var(--glow-cyan);
+    }
+    .drawer-close-btn {
+      background: transparent;
+      border: 1px solid var(--panel-border);
+      color: var(--text-dim);
+      border-radius: 3px;
+      padding: 4px 8px;
+      cursor: pointer;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      transition: all 0.2s;
+    }
+    .drawer-close-btn:hover {
+      border-color: var(--holo-crimson);
+      color: var(--holo-crimson);
+    }
+    .drawer-tabs {
+      display: flex;
+      gap: 8px;
+      padding: 10px 18px;
+      border-bottom: 1px dashed rgba(0, 240, 255, 0.15);
+      background: rgba(0, 0, 0, 0.2);
+    }
+    .drawer-tab {
+      padding: 6px 14px;
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.76rem;
+      background: transparent;
+      border: 1px solid var(--panel-border);
+      color: var(--text-dim);
+      border-radius: 3px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .drawer-tab.active {
+      border-color: var(--holo-cyan);
+      color: var(--holo-cyan);
+      background: rgba(0, 240, 255, 0.1);
+      box-shadow: 0 0 10px rgba(0, 240, 255, 0.25);
+    }
+    .drawer-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .drawer-card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(0, 240, 255, 0.15);
+      border-left: 3px solid var(--holo-cyan);
+      padding: 12px 14px;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      line-height: 1.45;
+    }
+    .drawer-card-header {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.74rem;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+      display: flex;
+      justify-content: space-between;
+    }
+    .drawer-card-timer {
+      border-left-color: var(--holo-amber);
+    }
   </style>
 </head>
 <body>
@@ -519,6 +633,9 @@
       <div class="pill">
         <span>ROUTING:</span>
         <span style="color: var(--holo-emerald); font-weight: bold;">LOCAL FIRST // CLOUD BY REQUEST</span>
+      </div>
+      <div class="pill" onclick="toggleDrawer()" style="cursor: pointer; border-color: var(--holo-cyan);">
+        <span style="color: var(--holo-cyan);">📋 TACTICAL ARCHIVE</span>
       </div>
       <div class="pill">
         <span id="clockDisplay">00:00:00</span>
@@ -540,12 +657,29 @@
           <span class="telemetry-val" id="osVal">WINDOWS 11 64-BIT</span>
         </div>
         <div class="telemetry-row">
-          <span class="telemetry-label">GPU ACCELERATION</span>
-          <span class="telemetry-val" id="gpuVal">RTX 3050 (CUDA FP16)</span>
+          <span class="telemetry-label">GPU STATUS</span>
+          <div style="display: flex; gap: 6px; align-items: center;">
+            <span class="telemetry-val" id="gpuVal" style="font-size: 0.8rem;">RTX 3050</span>
+            <span class="thermal-badge" id="gpuTempBadge">--°C</span>
+          </div>
         </div>
-        <div class="telemetry-row">
-          <span class="telemetry-label">CPU PLATFORM</span>
-          <span class="telemetry-val">INTEL CORE i5-12500H</span>
+        <div class="telemetry-row" style="flex-direction: column; align-items: flex-start; gap: 4px;">
+          <div style="display: flex; justify-content: space-between; width: 100%;">
+            <span class="telemetry-label">CPU LOAD</span>
+            <span class="telemetry-val" id="cpuVal">-- %</span>
+          </div>
+          <div class="meter-bar-container">
+            <div class="meter-bar" id="cpuMeter" style="background: linear-gradient(90deg, var(--holo-cyan), var(--holo-amber));"></div>
+          </div>
+        </div>
+        <div class="telemetry-row" style="flex-direction: column; align-items: flex-start; gap: 4px;">
+          <div style="display: flex; justify-content: space-between; width: 100%;">
+            <span class="telemetry-label">SYSTEM RAM</span>
+            <span class="telemetry-val" id="ramVal">-- GB (-- %)</span>
+          </div>
+          <div class="meter-bar-container">
+            <div class="meter-bar" id="ramMeter" style="background: linear-gradient(90deg, var(--holo-blue), var(--holo-cyan));"></div>
+          </div>
         </div>
         <div class="telemetry-row" style="flex-direction: column; align-items: flex-start; gap: 4px;">
           <div style="display: flex; justify-content: space-between; width: 100%;">
@@ -557,17 +691,16 @@
           </div>
         </div>
         <div class="telemetry-row">
-          <span class="telemetry-label">PRIMARY BRAIN</span>
-          <span class="telemetry-val" id="modelTierVal" style="color: var(--holo-emerald);">OLLAMA // LOCAL</span>
+          <span class="telemetry-label">COGNITIVE ROUTER</span>
+          <span class="telemetry-val" id="modelTierVal" style="color: var(--holo-emerald);">TRI-TIER HYBRID</span>
         </div>
         <div class="telemetry-row">
-          <span class="telemetry-label">ACTIVE MODEL</span>
-          <span class="telemetry-val" id="activeModelVal" style="font-size: 0.8rem;">qwen3.5:2b-q4_K_M</span>
+          <span class="telemetry-label">ACTIVE MODELS</span>
+          <span class="telemetry-val" id="activeModelVal" style="font-size: 0.72rem; line-height: 1.4;">GROQ LPU + OLLAMA + GEMINI</span>
         </div>
-        <div class="telemetry-row" style="flex-direction: column; align-items: flex-start; gap: 5px;">
-          <span class="telemetry-label">SPECIALIST LANES</span>
-          <span class="telemetry-val" id="specialistVal" style="font-size: 0.72rem; line-height: 1.6;">GEMINI ADD KEY · GROQ ADD KEY · GROK METERED/OFF · CLAUDE METERED/OFF</span>
-          <span class="telemetry-label" style="font-size: 0.72rem;">CONSULT GEMINI/GROQ // ACCOUNT QUOTAS APPLY</span>
+        <div class="telemetry-row">
+          <span class="telemetry-label">ACTIVE TIMERS</span>
+          <span class="telemetry-val" id="activeTimersVal" style="color: var(--holo-amber);">0 ACTIVE</span>
         </div>
         <div class="telemetry-row">
           <span class="telemetry-label">TTS ENGINE</span>
@@ -614,14 +747,23 @@
         <button class="btn-action" id="btnMute" onclick="toggleMute()">
           <span id="muteIcon">🎙️</span> <span id="muteText">MUTE VOX</span>
         </button>
+        <button class="btn-action" onclick="sendQuickCommand('Jarvis, initiate work protocol')">
+          <span>🛡️</span> WORK
+        </button>
+        <button class="btn-action" onclick="sendQuickCommand('Jarvis, give me my daily briefing')">
+          <span>🌅</span> BRIEFING
+        </button>
+        <button class="btn-action" onclick="sendQuickCommand('Jarvis, initiate lockdown protocol')">
+          <span>🔒</span> LOCKDOWN
+        </button>
+        <button class="btn-action" onclick="sendQuickCommand('Jarvis, optimize my PC')">
+          <span>🧹</span> OPTIMIZE
+        </button>
         <button class="btn-action" onclick="sendQuickCommand('Look at my screen and tell me what you see')">
-          <span>👁️</span> SCREEN VISION
+          <span>👁️</span> VISION
         </button>
-        <button class="btn-action" onclick="sendQuickCommand('System status check')">
-          <span>⚡</span> STATUS CHECK
-        </button>
-        <button class="btn-action" onclick="setVolume(50)">
-          <span>🔊</span> VOL 50%
+        <button class="btn-action" id="btnDrawer" onclick="toggleDrawer()">
+          <span>📋</span> ARCHIVE
         </button>
       </div>
 
@@ -638,6 +780,21 @@
       </div>
     </footer>
   </main>
+
+  <!-- Slide-out Holographic HUD Drawer -->
+  <aside class="hud-drawer" id="hudDrawer">
+    <div class="drawer-header">
+      <span class="drawer-title">// TACTICAL ARCHIVE</span>
+      <button class="drawer-close-btn" onclick="toggleDrawer()">✕ CLOSE</button>
+    </div>
+    <div class="drawer-tabs">
+      <button class="drawer-tab active" id="tabTimersBtn" onclick="switchDrawerTab('timers')">ACTIVE TIMERS (<span id="drawerTimerCount">0</span>)</button>
+      <button class="drawer-tab" id="tabNotesBtn" onclick="switchDrawerTab('notes')">RECENT NOTES</button>
+    </div>
+    <div class="drawer-body" id="drawerBody">
+      <div style="color: var(--text-dim); font-size: 0.85rem; text-align: center; margin-top: 20px;">Loading archive data...</div>
+    </div>
+  </aside>
 
   <!-- Interactive HUD Script -->
   <script>
@@ -897,24 +1054,47 @@
     }
 
     function updateTelemetry(data) {
+      if (data.cpu !== undefined) {
+        document.getElementById('cpuVal').textContent = `${data.cpu}%`;
+        const cpuMeter = document.getElementById('cpuMeter');
+        if (cpuMeter) cpuMeter.style.width = `${Math.min(100, Math.max(0, data.cpu))}%`;
+      }
+      if (data.ram_pct !== undefined) {
+        document.getElementById('ramVal').textContent = `${data.ram_used_gb} / ${data.ram_total_gb} GB (${data.ram_pct}%)`;
+        const ramMeter = document.getElementById('ramMeter');
+        if (ramMeter) ramMeter.style.width = `${Math.min(100, Math.max(0, data.ram_pct))}%`;
+      }
+      if (data.gpu_temp !== undefined && data.gpu_temp > 0) {
+        const tempBadge = document.getElementById('gpuTempBadge');
+        if (tempBadge) {
+          tempBadge.textContent = `${data.gpu_temp}°C`;
+          if (data.gpu_temp > 80) {
+            tempBadge.style.color = 'var(--holo-crimson)';
+            tempBadge.style.borderColor = 'var(--holo-crimson)';
+          } else {
+            tempBadge.style.color = 'var(--holo-amber)';
+            tempBadge.style.borderColor = 'var(--holo-amber)';
+          }
+        }
+      }
+      if (data.gpu) {
+        document.getElementById('gpuVal').textContent = data.gpu;
+      }
       if (data.battery !== undefined) {
         const bText = `${data.battery}% ${data.charging ? '⚡ CHARGING' : ''}`;
         document.getElementById('batteryVal').textContent = bText;
         document.getElementById('batteryMeter').style.width = `${data.battery}%`;
       }
+      if (data.active_timers !== undefined) {
+        document.getElementById('activeTimersVal').textContent = `${data.active_timers} ACTIVE`;
+        const dtCount = document.getElementById('drawerTimerCount');
+        if (dtCount) dtCount.textContent = data.active_timers;
+      }
       if (data.model) {
         document.getElementById('activeModelVal').textContent = data.model;
       }
       if (data.tier) {
-        document.getElementById('modelTierVal').textContent = `${String(data.provider || 'OLLAMA').toUpperCase()} // ${data.tier.toUpperCase()}`;
-      }
-      if (data.specialists) {
-        const s = data.specialists;
-        document.getElementById('specialistVal').textContent =
-          `GEMINI ${s.gemini || 'OFF'} · GROQ ${s.groq || 'OFF'} · GROK ${s.grok || 'OFF'} · CLAUDE ${s.claude || 'OFF'}`;
-      }
-      if (data.gpu) {
-        document.getElementById('gpuVal').textContent = data.gpu;
+        document.getElementById('modelTierVal').textContent = data.tier.toUpperCase();
       }
       if (data.is_muted !== undefined) {
         isMuted = data.is_muted;
@@ -928,6 +1108,93 @@
           muteText.textContent = "MUTE VOX";
         }
         updateHUDState(currentState);
+      }
+    }
+
+    // Holographic HUD Drawer Functions
+    let isDrawerOpen = false;
+    let activeDrawerTab = 'timers';
+
+    function toggleDrawer() {
+      isDrawerOpen = !isDrawerOpen;
+      const drawer = document.getElementById('hudDrawer');
+      if (isDrawerOpen) {
+        drawer.classList.add('open');
+        loadDrawerContent();
+      } else {
+        drawer.classList.remove('open');
+      }
+    }
+
+    function switchDrawerTab(tab) {
+      activeDrawerTab = tab;
+      document.getElementById('tabTimersBtn').classList.toggle('active', tab === 'timers');
+      document.getElementById('tabNotesBtn').classList.toggle('active', tab === 'notes');
+      loadDrawerContent();
+    }
+
+    function loadDrawerContent() {
+      const container = document.getElementById('drawerBody');
+      if (activeDrawerTab === 'timers') {
+        fetch('/api/timers')
+          .then(res => res.json())
+          .then(data => {
+            const timers = data.timers || [];
+            document.getElementById('drawerTimerCount').textContent = timers.length;
+            if (!timers.length) {
+              container.innerHTML = `
+                <div style="color: var(--text-dim); text-align: center; margin-top: 30px; font-size: 0.88rem;">
+                  ⏱️ No active countdown timers.<br>
+                  <span style="font-size: 0.78rem; opacity: 0.7;">Say "Jarvis, set a timer for 10 minutes" to create one.</span>
+                </div>
+              `;
+              return;
+            }
+            container.innerHTML = timers.map(t => `
+              <div class="drawer-card drawer-card-timer">
+                <div class="drawer-card-header">
+                  <span>${escapeHtml(t.label)}</span>
+                  <span style="color: var(--holo-amber);">${t.remaining}s remaining</span>
+                </div>
+                <div style="font-size: 0.8rem; color: var(--text-dim); margin-bottom: 6px;">
+                  Original duration: ${t.duration} seconds
+                </div>
+                <button class="drawer-close-btn" style="color: var(--holo-crimson); border-color: rgba(255, 51, 102, 0.4);" onclick="sendQuickCommand('Jarvis, cancel timer ${escapeHtml(t.label)}')">
+                  CANCEL TIMER
+                </button>
+              </div>
+            `).join('');
+          })
+          .catch(err => {
+            container.innerHTML = `<div style="color: var(--holo-crimson); font-size: 0.85rem;">Error loading timers: ${err}</div>`;
+          });
+      } else {
+        fetch('/api/notes')
+          .then(res => res.json())
+          .then(data => {
+            const notes = data.notes || [];
+            if (!notes.length) {
+              container.innerHTML = `
+                <div style="color: var(--text-dim); text-align: center; margin-top: 30px; font-size: 0.88rem;">
+                  📝 No captured notes in archive.<br>
+                  <span style="font-size: 0.78rem; opacity: 0.7;">Say "Jarvis, take a note that..." to capture thoughts.</span>
+                </div>
+              `;
+              return;
+            }
+            container.innerHTML = notes.map(n => `
+              <div class="drawer-card">
+                <div class="drawer-card-header">
+                  <span style="color: var(--holo-cyan);">${escapeHtml(n.category)}</span>
+                  <span>${escapeHtml(n.timestamp)}</span>
+                </div>
+                <div style="color: var(--text-main); font-size: 0.88rem;">${escapeHtml(n.content)}</div>
+              </div>
+            `).join('');
+          })
+          .catch(err => {
+            container.innerHTML = `<div style="color: var(--holo-crimson); font-size: 0.85rem;">Error loading notes: ${err}</div>`;
+          });
       }
     }
 
