@@ -3,7 +3,9 @@
 # ==============================================================================
 
 llm:
-  provider: "hybrid"              # Tri-Tier Hybrid: Local Ollama for OS actions, Groq 27B for fast conversation, Gemini for screen vision
+  provider: "hybrid"              # Providers: "hybrid", "antigravity" (Google AI Pro), "ollama", "groq", "gemini"
+  antigravity_model: "gemini-3.1-pro-low" # Google AI Pro Models: "gemini-3.1-pro-low", "gemini-3.8-flash-low", "claude-sonnet-4-6", "claude-opus-4-6-thinking"
+  antigravity_effort: "low"        # Reasoning effort: "low", "medium", "high"
   ollama_base_url: "http://127.0.0.1:11434/v1"
   ollama_model: "qwen3.5:2b-q4_K_M" # Compact local vision/tool model for 4 GB GPUs
   ollama_timeout_seconds: 180
@@ -16,12 +18,15 @@ llm:
   model: "gemini-3.8-flash"      # Gemini model for explicit provider mode
   specialists:
     enabled: true                # Specialists are invoked only with "consult <provider>: ..."
-    allow_metered_api_calls: false # Grok/Claude developer APIs are not assumed free
+    allow_metered_api_calls: false # Grok/Claude developer APIs are not assumed free (Antigravity handles Claude at $0)
     models:
-      gemini: "gemini-3.8-flash" # Free tier is rate-limited; use a Free-tier API project
+      antigravity: "gemini-3.1-pro-low" # Google AI Pro via local authenticated CLI session
+      pro: "gemini-3.1-pro-low"
+      gemini: "gemini-3.1-pro-low"
+      flash: "gemini-3.8-flash-low"
+      claude: "claude-sonnet-4-6" # Powered by local Antigravity session at $0
       groq: "qwen/qwen3.8-27b"
       grok: "grok-4.6"
-      claude: "claude-sonnet-4-6"
   temperature: 0.3
   max_output_tokens: 1024
 

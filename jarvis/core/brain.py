@@ -38,6 +38,7 @@ from jarvis.vision.screen_capture import ScreenPerception
 from jarvis.core.memory import MemoryManager
 from jarvis.core.safety import SafetyGate
 from jarvis.core.services import ManagedServiceManager
+from jarvis.core.antigravity_bridge import AntigravityBridge
 
 logger = logging.getLogger("Jarvis.Brain")
 
@@ -113,6 +114,19 @@ Universal Document & PDF Ingestion:
         "qwen/qwen3.8-27b",
         "openai/gpt-oss-120b",
         "openai/gpt-oss-20b",
+    ]
+
+    ANTIGRAVITY_CANDIDATE_MODELS = [
+        "gemini-3.1-pro-low",
+        "gemini-3.1-pro-high",
+        "gemini-3.8-flash-low",
+        "gemini-3.8-flash-medium",
+        "gemini-3.8-flash-high",
+        "gemini-3.7-flash-low",
+        "gemini-3.6-flash-low",
+        "claude-sonnet-4-6",
+        "claude-opus-4-6-thinking",
+        "gpt-oss-120b-medium",
     ]
 
     CODE_TOOL_NAMES = {
@@ -208,11 +222,20 @@ Universal Document & PDF Ingestion:
         self.gemini_task_mode = None
         self.gemini_tool_names: frozenset[str] = frozenset()
 
+        # Antigravity CLI Bridge (Google AI Pro integration)
+        self.antigravity_bridge = AntigravityBridge(config)
+        configured_ag_model = config.get("llm", {}).get("antigravity_model", "gemini-3.1-pro-low")
+        self.antigravity_candidates = [configured_ag_model] + [
+            m for m in self.ANTIGRAVITY_CANDIDATE_MODELS if m != configured_ag_model
+        ]
+        self.antigravity_model = self.antigravity_candidates[0]
+
         # Dynamic round-trip latency tracking in milliseconds
         self.last_latencies: Dict[str, float] = {
             "ollama": 0.0,
             "groq": 0.0,
             "gemini": 0.0,
+            "antigravity": 0.0,
         }
 
         # Initialize requested provider
@@ -222,6 +245,8 @@ Universal Document & PDF Ingestion:
             self._init_openai_compatible()
         elif self.provider == "gemini":
             self._init_gemini()
+        elif self.provider in ("antigravity", "agy"):
+            self._init_antigravity()
         else:
             logger.warning("Unknown configured LLM provider '%s'; defaulting to hybrid tri-tier.", self.provider)
             self.provider = "hybrid"
@@ -541,6 +566,14 @@ Universal Document & PDF Ingestion:
         self.gemini_tool_names = self.active_tool_names
         logger.info(f"Jarvis Gemini session initialized with model: {self.gemini_model} ({len(recent_turns)} prior turns restored).")
 
+    def _init_antigravity(self) -> bool:
+        """Initializes the local Antigravity CLI bridge using the user's Google AI Pro subscription."""
+        if not self.antigravity_bridge.is_available():
+            logger.error("Antigravity CLI ('agy') is not available on this machine.")
+            return False
+        logger.info(f"Jarvis Antigravity Core initialized with model: {self.antigravity_model}")
+        return True
+
     def should_capture_screen(self, query: str) -> bool:
         """Determines if the prompt requests visual inspection of screen pixels."""
         q = query.lower()
@@ -558,7 +591,11 @@ Universal Document & PDF Ingestion:
 
     def process_query(self, user_text: str, sentence_callback: Any = None) -> str:
         """Routes normal conversation to the configured primary model; consultations are explicit."""
-        consultation = re.match(r"^\s*(?:/consult|consult)\s+(gemini|groq|grok|claude)\s*:?\s*(.+)$", user_text, re.IGNORECASE | re.DOTALL)
+        consultation = re.match(
+            r"^\s*(?:/consult|consult)\s+(gemini|gemini-pro|gemini-flash|pro|flash|groq|grok|claude|sonnet|opus|gpt-oss|antigravity|agy)\s*:?\s*(.+)$",
+            user_text,
+            re.IGNORECASE | re.DOTALL,
+        )
         if consultation:
             provider, prompt = consultation.group(1).lower(), consultation.group(2).strip()
             result = self._consult_specialist(provider, prompt)
@@ -628,6 +665,8 @@ Universal Document & PDF Ingestion:
             elif self.gemini_client:
                 return self._process_gemini_query(user_text, sentence_callback)
 
+        if self.provider in ("antigravity", "agy"):
+            return self._process_antigravity_query(user_text, sentence_callback)
         if self.provider == "ollama" and not self.openai_client:
             return "My local Ollama link is unavailable. Start Ollama and confirm the configured model is installed."
         if self.provider == "groq" and not self.openai_client:
@@ -636,9 +675,9 @@ Universal Document & PDF Ingestion:
             return self._process_openai_compatible_query(user_text, sentence_callback)
         if self.provider == "gemini" and not self.gemini_client:
             return "Gemini is not connected. Configure GEMINI_API_KEY; I have not switched to another provider."
-        if self.provider != "gemini":
-            return f"No active model is configured for provider '{self.provider}', Sir."
-        return self._process_gemini_query(user_text, sentence_callback)
+        if self.provider == "gemini":
+            return self._process_gemini_query(user_text, sentence_callback)
+        return f"No active model is configured for provider '{self.provider}', Sir."
 
     def specialist_status(self) -> Dict[str, str]:
         """Return safe, non-secret availability info for the HUD."""
@@ -646,13 +685,15 @@ Universal Document & PDF Ingestion:
         specialists = llm_cfg.get("specialists", {})
         enabled = specialists.get("enabled", True)
         metered_enabled = specialists.get("allow_metered_api_calls", False)
+        ag_available = getattr(self, "antigravity_bridge", None) and self.antigravity_bridge.is_available()
         return {
             "hybrid": "ACTIVE" if self.provider in ("hybrid", "auto") else "STANDBY",
+            "antigravity": f"ACTIVE ({self.antigravity_model.upper()})" if self.provider in ("antigravity", "agy") else ("READY (PRO TIER)" if ag_available else "UNAVAILABLE"),
             "ollama": "ACTIVE" if (getattr(self, "ollama_client", None) or (self.provider == "ollama" and self.openai_client)) else "LOCAL PRIMARY",
-            "gemini": "ACTIVE" if self.gemini_client else ("KEY SET" if os.getenv("GEMINI_API_KEY") else "ADD KEY"),
+            "gemini": "ACTIVE" if self.gemini_client else ("READY (ANTIGRAVITY)" if ag_available else ("KEY SET" if os.getenv("GEMINI_API_KEY") else "ADD KEY")),
             "groq": "ACTIVE" if (getattr(self, "groq_client", None) or (self.provider == "groq" and self.openai_client)) else ("KEY SET" if os.getenv("GROQ_API_KEY") else "ADD KEY"),
             "grok": "READY" if enabled and metered_enabled and (os.getenv("XAI_API_KEY", "").strip() or os.getenv("GROK_API_KEY", "").strip()) else "METERED / OFF",
-            "claude": "READY" if enabled and metered_enabled and os.getenv("ANTHROPIC_API_KEY", "").strip() else "METERED / OFF",
+            "claude": "READY (ANTIGRAVITY)" if ag_available else ("READY" if enabled and metered_enabled and os.getenv("ANTHROPIC_API_KEY", "").strip() else "METERED / OFF"),
         }
 
     def get_latencies(self) -> Dict[str, float]:
@@ -665,6 +706,31 @@ Universal Document & PDF Ingestion:
         specialists = llm_cfg.get("specialists", {})
         if not specialists.get("enabled", True):
             return "Specialist consultations are disabled in config, Sir."
+
+        # Antigravity CLI Consultation (Google AI Pro & Claude Sonnet integration)
+        ag_models_map = {
+            "pro": "gemini-3.1-pro-low",
+            "gemini-pro": "gemini-3.1-pro-low",
+            "flash": "gemini-3.8-flash-low",
+            "gemini-flash": "gemini-3.8-flash-low",
+            "claude": "claude-sonnet-4-6",
+            "sonnet": "claude-sonnet-4-6",
+            "opus": "claude-opus-4-6-thinking",
+            "gpt-oss": "gpt-oss-120b-medium",
+            "antigravity": self.antigravity_model,
+            "agy": self.antigravity_model,
+        }
+        if (provider in ag_models_map or (provider == "gemini" and not os.getenv("GEMINI_API_KEY"))) and getattr(self, "antigravity_bridge", None) and self.antigravity_bridge.is_available():
+            target_model = ag_models_map.get(provider, self.antigravity_model)
+            logger.info("Routing specialist '%s' consultation to ANTIGRAVITY BRIDGE (%s)...", provider, target_model)
+            res = self.antigravity_bridge.generate_response(
+                prompt=prompt,
+                model=target_model,
+                system_instruction="You are a specialist consultant for Jarvis. Answer the user's specific request clearly and concisely.",
+                timeout=60.0
+            )
+            return (res.get("response") or f"{provider.title()} returned no text, Sir.").strip()
+
         if provider in {"grok", "claude"} and not specialists.get("allow_metered_api_calls", False):
             return (
                 f"{provider.title()} API consultations are disabled to protect your no-spend setting, Sir. "
@@ -1405,3 +1471,84 @@ Universal Document & PDF Ingestion:
                 return "I encountered a slight anomaly in my cognitive circuits, Sir. Please try again in a moment."
 
         return "My cognitive systems are temporarily congested, Sir. Please try again in a few moments."
+
+    def _process_antigravity_query(self, user_text: str, sentence_callback: Any = None) -> str:
+        """Processes queries using the local Antigravity CLI (Gemini 3.1 Pro, 3.8 Flash, Claude Sonnet)."""
+        t_start = time.perf_counter()
+        tools = SkillRegistry.get_openai_tools(self.active_tool_names)
+        system_instruction = self._get_system_instruction()
+
+        # If tools are relevant to this turn, embed tool schemas into the instruction
+        prompt = user_text
+        has_tools = bool(tools and self.active_tool_names)
+        if has_tools:
+            tool_signatures = []
+            for t in tools:
+                fn = t.get("function", {})
+                params = fn.get("parameters", {}).get("properties", {})
+                tool_signatures.append(f"- {fn.get('name')}: {fn.get('description')} (params: {list(params.keys())})")
+            tools_block = (
+                "Native OS & System Tools Available:\n" + "\n".join(tool_signatures) + "\n\n"
+                "If you need to perform an action or retrieve dynamic system/calendar data, respond with a JSON tool call:\n"
+                '{"tool": "<name>", "arguments": {<args>}}\n'
+                "Otherwise, respond with your direct conversational answer to Sir.\n\n"
+            )
+            prompt = tools_block + f"Sir asks: {user_text}"
+
+        # Stream directly if no tools needed
+        stream_cb = sentence_callback if not has_tools else None
+        res = self.antigravity_bridge.generate_response(
+            prompt=prompt,
+            model=self.antigravity_model,
+            system_instruction=system_instruction,
+            sentence_callback=stream_cb,
+            timeout=90.0,
+        )
+
+        reply_text = (res.get("response") or "").strip()
+        self.last_latencies["antigravity"] = float(res.get("duration_seconds", 0.0)) * 1000.0
+
+        # Check for tool call in output
+        tool_call_match = re.search(
+            r'\{[\s\r\n]*"tool"[\s\r\n]*:[\s\r\n]*"([^"]+)"[\s\r\n]*,[\s\r\n]*"arguments"[\s\r\n]*:[\s\r\n]*(\{.*?\})[\s\r\n]*\}',
+            reply_text,
+            re.DOTALL
+        )
+        if tool_call_match:
+            fn_name = tool_call_match.group(1).strip()
+            try:
+                fn_args = json.loads(tool_call_match.group(2))
+            except Exception:
+                fn_args = {}
+
+            logger.info("ANTIGRAVITY Tool call: %s(%s)", fn_name, fn_args)
+            is_safe, warning = self.safety.check_tool_call(fn_name, fn_args)
+            if not is_safe:
+                tool_result = f"Action halted: {warning}"
+            else:
+                tool_result = SkillRegistry.execute(fn_name, **fn_args)
+            logger.info("ANTIGRAVITY Tool result: %s", tool_result)
+
+            # Synthesize final spoken response with tool result
+            followup_prompt = (
+                f"Sir asked: {user_text}\n"
+                f"You called tool '{fn_name}', which produced the following result:\n{tool_result}\n\n"
+                f"Deliver a clear, concise final spoken update to Sir as JARVIS."
+            )
+            followup_res = self.antigravity_bridge.generate_response(
+                prompt=followup_prompt,
+                model=self.antigravity_model,
+                system_instruction=system_instruction,
+                sentence_callback=sentence_callback,
+                timeout=60.0,
+            )
+            reply = (followup_res.get("response") or str(tool_result)).strip()
+        else:
+            reply = reply_text
+
+        self.memory.log_interaction(user_text, reply, None)
+        self.memory.auto_learn_from_interaction(user_text, reply, provider=self.provider)
+        elapsed_ms = round((time.perf_counter() - t_start) * 1000, 1)
+        logger.info("Inference latency (antigravity - %s): %sms", self.antigravity_model, elapsed_ms)
+        return reply
+
