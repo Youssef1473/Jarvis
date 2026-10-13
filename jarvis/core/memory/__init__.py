@@ -262,6 +262,21 @@ class MemoryManager:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # Episodic Lessons & Self-Correction Buffer (Tier 3 Reflexion)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS episodic_lessons (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tool_name TEXT NOT NULL,
+                    trigger_context TEXT NOT NULL,
+                    failure_signature TEXT NOT NULL,
+                    lesson TEXT NOT NULL,
+                    hit_count INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(tool_name, failure_signature)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_lessons_tool ON episodic_lessons(tool_name)")
 
             # SQLite FTS5 Virtual Tables & Real-Time Sync Triggers
             try:
@@ -358,6 +373,38 @@ class MemoryManager:
                     END;
                 """)
 
+                # Episodic Lessons FTS5 Virtual Table & Triggers
+                cursor.execute("""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS episodic_lessons_fts USING fts5(
+                        tool_name,
+                        trigger_context,
+                        failure_signature,
+                        lesson,
+                        content='episodic_lessons',
+                        content_rowid='id'
+                    )
+                """)
+                cursor.execute("""
+                    CREATE TRIGGER IF NOT EXISTS episodic_lessons_ai AFTER INSERT ON episodic_lessons BEGIN
+                        INSERT INTO episodic_lessons_fts(rowid, tool_name, trigger_context, failure_signature, lesson)
+                        VALUES (new.id, new.tool_name, new.trigger_context, new.failure_signature, new.lesson);
+                    END;
+                """)
+                cursor.execute("""
+                    CREATE TRIGGER IF NOT EXISTS episodic_lessons_ad AFTER DELETE ON episodic_lessons BEGIN
+                        INSERT INTO episodic_lessons_fts(episodic_lessons_fts, rowid, tool_name, trigger_context, failure_signature, lesson)
+                        VALUES ('delete', old.id, old.tool_name, old.trigger_context, old.failure_signature, old.lesson);
+                    END;
+                """)
+                cursor.execute("""
+                    CREATE TRIGGER IF NOT EXISTS episodic_lessons_au AFTER UPDATE ON episodic_lessons BEGIN
+                        INSERT INTO episodic_lessons_fts(episodic_lessons_fts, rowid, tool_name, trigger_context, failure_signature, lesson)
+                        VALUES ('delete', old.id, old.tool_name, old.trigger_context, old.failure_signature, old.lesson);
+                        INSERT INTO episodic_lessons_fts(rowid, tool_name, trigger_context, failure_signature, lesson)
+                        VALUES (new.id, new.tool_name, new.trigger_context, new.failure_signature, new.lesson);
+                    END;
+                """)
+
                 # Schema metadata table for one-time migrations and rebuild tracking
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS schema_meta (
@@ -373,6 +420,7 @@ class MemoryManager:
                         cursor.execute("INSERT INTO facts_fts(facts_fts) VALUES('rebuild')")
                         cursor.execute("INSERT INTO documents_fts(documents_fts) VALUES('rebuild')")
                         cursor.execute("INSERT INTO interactions_fts(interactions_fts) VALUES('rebuild')")
+                        cursor.execute("INSERT INTO episodic_lessons_fts(episodic_lessons_fts) VALUES('rebuild')")
                         cursor.execute("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('fts5_initialized', '1')")
                     except Exception as rb_err:
                         logger.debug("FTS5 initial rebuild notice: %s", rb_err)
@@ -405,6 +453,8 @@ class MemoryManager:
                     text = f"{f['category']} {f['key']} {f['value']}"
                     vec = self.vector_engine.dense_vectorize(text)
                     blob = sqlite_vec.serialize_float32(vec)
+                    cursor.execute("INSERT OR REPLACE INTO facts_vec(fact_id, embedding) VALUES (?, ?)", (f["id"], blob))
+
                 # Documents sqlite-vec virtual table & sync triggers
                 cursor.execute("""
                     CREATE VIRTUAL TABLE IF NOT EXISTS documents_vec USING vec0(
@@ -431,6 +481,32 @@ class MemoryManager:
                     vec = self.vector_engine.dense_vectorize(text)
                     blob = sqlite_vec.serialize_float32(vec)
                     cursor.execute("INSERT OR REPLACE INTO documents_vec(doc_id, embedding) VALUES (?, ?)", (d["id"], blob))
+
+                # Lessons sqlite-vec virtual table & sync triggers
+                cursor.execute("""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS lessons_vec USING vec0(
+                        lesson_id INTEGER PRIMARY KEY,
+                        embedding float[64]
+                    )
+                """)
+                cursor.execute("""
+                    CREATE TRIGGER IF NOT EXISTS lessons_vec_ad AFTER DELETE ON episodic_lessons BEGIN
+                        DELETE FROM lessons_vec WHERE lesson_id = old.id;
+                    END;
+                """)
+                # Sync any unindexed lessons into lessons_vec
+                cursor.execute("""
+                    SELECT l.id, l.tool_name, l.trigger_context, l.failure_signature, l.lesson
+                    FROM episodic_lessons l
+                    LEFT JOIN lessons_vec lv ON l.id = lv.lesson_id
+                    WHERE lv.lesson_id IS NULL
+                """)
+                unindexed_lessons = cursor.fetchall()
+                for l in unindexed_lessons:
+                    text = f"{l['tool_name']} {l['trigger_context']} {l['failure_signature']} {l['lesson']}"
+                    vec = self.vector_engine.dense_vectorize(text)
+                    blob = sqlite_vec.serialize_float32(vec)
+                    cursor.execute("INSERT OR REPLACE INTO lessons_vec(lesson_id, embedding) VALUES (?, ?)", (l["id"], blob))
             except Exception as vec_err:
                 logger.debug("sqlite-vec virtual table initialization note: %s", vec_err)
 
@@ -1209,6 +1285,142 @@ class MemoryManager:
             with self._context_summary_lock:
                 self._context_summary_cache = summary
         return summary
+
+    # Tier 3: Episodic Reflection & Self-Correction
+    def record_episodic_lesson(
+        self,
+        tool_name: str,
+        trigger_context: str,
+        failure_signature: str,
+        lesson: str,
+    ) -> int:
+        """Records an episodic failure post-mortem or heuristic lesson in SQLite WAL."""
+        t_clean = (tool_name or "").strip()
+        f_clean = (failure_signature or "").strip()[:300]
+        c_clean = (trigger_context or "").strip()[:300]
+        l_clean = (lesson or "").strip()
+
+        if not t_clean or not l_clean:
+            return 0
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO episodic_lessons (
+                    tool_name, trigger_context, failure_signature, lesson, hit_count, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(tool_name, failure_signature) DO UPDATE SET
+                    hit_count = episodic_lessons.hit_count + 1,
+                    lesson = excluded.lesson,
+                    trigger_context = excluded.trigger_context,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (t_clean, c_clean, f_clean, l_clean))
+            cursor.execute("SELECT id FROM episodic_lessons WHERE tool_name = ? AND failure_signature = ?", (t_clean, f_clean))
+            row = cursor.fetchone()
+            lesson_id = row["id"] if row else cursor.lastrowid
+
+            # Index into lessons_vec
+            try:
+                import sqlite_vec
+                embed_text = f"{t_clean} {c_clean} {f_clean} {l_clean}"
+                vec = self.vector_engine.dense_vectorize(embed_text)
+                blob = sqlite_vec.serialize_float32(vec)
+                cursor.execute("INSERT OR REPLACE INTO lessons_vec(lesson_id, embedding) VALUES (?, ?)", (lesson_id, blob))
+            except Exception as e:
+                logger.debug(f"sqlite-vec lesson indexing notice: {e}")
+
+            conn.commit()
+            logger.info(f"Recorded episodic lesson #{lesson_id} for tool '{t_clean}': {l_clean[:60]}...")
+            return lesson_id
+
+    def recall_episodic_lessons(
+        self,
+        query: str,
+        tool_name: Optional[str] = None,
+        top_k: int = 3,
+        min_sim: float = 0.30,
+        k_rrf: int = 60,
+    ) -> List[Dict[str, Any]]:
+        """Recalls relevant episodic lessons using Hybrid RRF search (FTS5 BM25 + sqlite-vec KNN)."""
+        if not query:
+            return []
+
+        # 1. FTS5 Search
+        fts_matches = []
+        sanitized = sanitize_fts5_query(query)
+        if sanitized:
+            try:
+                with self._get_connection() as conn:
+                    cursor = conn.cursor()
+                    sql = """
+                        SELECT l.id, l.tool_name, l.trigger_context, l.failure_signature, l.lesson, l.hit_count
+                        FROM episodic_lessons_fts lf
+                        JOIN episodic_lessons l ON lf.rowid = l.id
+                        WHERE episodic_lessons_fts MATCH ?
+                    """
+                    params = [sanitized]
+                    if tool_name:
+                        sql += " AND l.tool_name = ?"
+                        params.append(tool_name.strip())
+                    sql += " ORDER BY bm25(episodic_lessons_fts) ASC LIMIT ?"
+                    params.append(max(top_k * 2, 8))
+                    cursor.execute(sql, params)
+                    fts_matches = [dict(r) for r in cursor.fetchall()]
+            except Exception as e:
+                logger.debug(f"FTS5 lessons search fallback: {e}")
+
+        # 2. sqlite-vec KNN Search
+        vec_matches = []
+        try:
+            import sqlite_vec
+            q_vec = self.vector_engine.dense_vectorize(query)
+            q_blob = sqlite_vec.serialize_float32(q_vec)
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                sql = """
+                    SELECT l.id, l.tool_name, l.trigger_context, l.failure_signature, l.lesson, l.hit_count, lv.distance
+                    FROM lessons_vec lv
+                    JOIN episodic_lessons l ON lv.lesson_id = l.id
+                    WHERE lv.embedding MATCH ? AND k = ?
+                """
+                params = [q_blob, max(top_k * 2, 8)]
+                if tool_name:
+                    sql += " AND l.tool_name = ?"
+                    params.append(tool_name.strip())
+                sql += " ORDER BY lv.distance ASC"
+                cursor.execute(sql, params)
+                for r in cursor.fetchall():
+                    dist = float(r["distance"])
+                    cos_sim = max(0.0, 1.0 - ((dist * dist) / 2.0))
+                    if cos_sim >= min_sim:
+                        item = dict(r)
+                        item["sim"] = round(cos_sim, 3)
+                        vec_matches.append(item)
+        except Exception as e:
+            logger.debug(f"sqlite-vec lessons KNN search fallback: {e}")
+
+        # 3. Reciprocal Rank Fusion
+        scores: Dict[int, float] = {}
+        lesson_map: Dict[int, Dict[str, Any]] = {}
+
+        for rank, item in enumerate(fts_matches, start=1):
+            l_id = item["id"]
+            scores[l_id] = scores.get(l_id, 0.0) + (1.0 / (k_rrf + rank))
+            lesson_map[l_id] = item
+
+        for rank, item in enumerate(vec_matches, start=1):
+            l_id = item["id"]
+            scores[l_id] = scores.get(l_id, 0.0) + (1.0 / (k_rrf + rank))
+            if l_id not in lesson_map:
+                lesson_map[l_id] = item
+
+        sorted_ids = sorted(scores.keys(), key=lambda lid: scores[lid], reverse=True)
+        results = []
+        for l_id in sorted_ids[:top_k]:
+            res_item = dict(lesson_map[l_id])
+            res_item["rrf_score"] = round(scores[l_id], 4)
+            results.append(res_item)
+        return results
 
 
 from .obsidian_sync import (

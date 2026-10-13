@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import re
 import sys
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from jarvis.skills.base import SkillRegistry
 
@@ -182,3 +182,75 @@ def verify_learned_habits() -> str:
         )
 
     return "\n\n".join(lines)
+
+
+_memory_instance = None
+
+
+def set_memory_manager(mgr: Any) -> None:
+    """Sets the shared singleton MemoryManager instance for episodic reflection."""
+    global _memory_instance
+    _memory_instance = mgr
+
+
+def _get_memory():
+    global _memory_instance
+    if _memory_instance is None:
+        from jarvis.core.config import load_config
+        from jarvis.core.memory import MemoryManager
+        cfg = load_config()
+        _memory_instance = MemoryManager(cfg)
+    return _memory_instance
+
+
+@SkillRegistry.register(
+    name="recall_episodic_lessons",
+    description=(
+        "Recalls past episodic reflection lessons and self-correction heuristics using Hybrid RRF search. "
+        "Helps Jarvis retrieve past mistakes, failure signatures, and learned operational rules."
+    ),
+)
+def recall_episodic_lessons(query: str, tool_name: str = "", top_k: int = 3) -> str:
+    """Recalls past episodic failure lessons and heuristics."""
+    mem = _get_memory()
+    t_name = tool_name.strip() if tool_name else None
+    lessons = mem.recall_episodic_lessons(query=query, tool_name=t_name, top_k=top_k)
+    if not lessons:
+        return f"No prior episodic failure lessons found for '{query}', Sir."
+
+    lines = [f"### Past Episodic Lessons & Reflexion Heuristics ({len(lessons)} Found)\n"]
+    for i, item in enumerate(lessons, start=1):
+        t = item.get("tool_name", "unknown")
+        sig = item.get("failure_signature", "unknown")
+        les = item.get("lesson", "")
+        hits = item.get("hit_count", 1)
+        rrf = item.get("rrf_score", 0.0)
+        lines.append(
+            f"**{i}. Tool: `{t}`** (Failures encountered: {hits}x | RRF Relevance: {rrf:.3f})\n"
+            f"   • Signature: `{sig[:120]}`\n"
+            f"   • Heuristic Rule: {les}"
+        )
+    return "\n\n".join(lines)
+
+
+@SkillRegistry.register(
+    name="record_episodic_lesson",
+    description=(
+        "Records an episodic failure post-mortem or heuristic operational rule into persistent memory. "
+        "Guarantees Jarvis remembers what went wrong and avoids repeating the same mistake."
+    ),
+)
+def record_episodic_lesson(tool_name: str, failure_signature: str, lesson: str, trigger_context: str = "") -> str:
+    """Explicitly records an episodic lesson or correction into SQLite WAL."""
+    mem = _get_memory()
+    lesson_id = mem.record_episodic_lesson(
+        tool_name=tool_name,
+        trigger_context=trigger_context or f"manual_record:{tool_name}",
+        failure_signature=failure_signature,
+        lesson=lesson,
+    )
+    if lesson_id:
+        return f"Episodic lesson #{lesson_id} successfully cataloged for tool '{tool_name}', Sir. I shall incorporate this heuristic moving forward."
+    return "Failed to record episodic lesson."
+
+

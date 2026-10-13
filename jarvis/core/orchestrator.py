@@ -55,6 +55,11 @@ class JarvisOrchestrator:
             prod_skills.set_memory_manager(self.memory)
         except Exception:
             pass
+        try:
+            import jarvis.skills.self_evolution as evo_skills
+            evo_skills.set_memory_manager(self.memory)
+        except Exception:
+            pass
         self.safety = SafetyGate(config)
         self.stt = SpeechToText(config)
         self.tts = TextToSpeech(config)
