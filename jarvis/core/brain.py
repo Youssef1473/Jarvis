@@ -38,6 +38,7 @@ import jarvis.skills.self_evolution
 import jarvis.skills.photo_manager
 import jarvis.skills.diagnostics
 import jarvis.skills.browser_cdp
+import jarvis.skills.windows_uia
 from jarvis.vision.screen_capture import ScreenPerception
 from jarvis.core.memory import MemoryManager
 from jarvis.core.safety import SafetyGate
@@ -871,6 +872,8 @@ Autonomous Self-Building & Dynamic Feature Creation:
             return "Auditing Python heap allocations and memory metrics, Sir."
         elif name == "list_open_browser_tabs":
             return "Inspecting open browser tabs via DevTools channel, Sir."
+        elif name == "inspect_window_controls":
+            return "Inspecting native window UI controls via Accessibility tree, Sir."
 
         # Self-Evolution & Code Building
         elif name == "create_or_update_custom_skill":

@@ -857,6 +857,15 @@ def focus_window(title: str) -> str:
     if not target:
         return "Window title or application name cannot be empty, Sir."
 
+    # 0. UIA Semantic Focus Fast-Path: Bypasses Win32 lock via pywinauto
+    try:
+        from jarvis.skills.windows_uia import focus_window_uia
+        uia_title = focus_window_uia(target)
+        if uia_title:
+            return f"Switched focus to '{uia_title}', Sir."
+    except Exception as e:
+        logger.debug(f"UIA focus bypass: {e}")
+
     try:
         import win32gui
         import win32con
