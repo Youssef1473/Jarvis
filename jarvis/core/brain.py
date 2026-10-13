@@ -41,6 +41,7 @@ from jarvis.core.memory import MemoryManager
 from jarvis.core.safety import SafetyGate
 from jarvis.core.services import ManagedServiceManager
 from jarvis.core.antigravity_bridge import AntigravityBridge
+from jarvis.core.reflex_engine import DynamicReflexEngine
 
 logger = logging.getLogger("Jarvis.Brain")
 
@@ -298,6 +299,36 @@ Autonomous Self-Building & Dynamic Feature Creation:
             logger.warning("Unknown configured LLM provider '%s'; defaulting to hybrid tri-tier.", self.provider)
             self.provider = "hybrid"
             self._init_hybrid_providers()
+
+        # Dynamic Reflex Engine & Learned Habit Memory
+        db_path = getattr(self.memory, "db_path", "data/jarvis_memory.db")
+        self.reflex_engine = DynamicReflexEngine(db_path=db_path)
+        import jarvis.skills.self_evolution as self_evo
+        self_evo.set_reflex_engine(self.reflex_engine)
+        self._current_turn_executed_tools: List[Tuple[str, Dict[str, Any]]] = []
+
+    def _record_tool_execution(self, tool_name: str, tool_args: Dict[str, Any], tool_result: Any = None):
+        """Tracks executed tools during the current turn for habit promotion."""
+        if not hasattr(self, "_current_turn_executed_tools"):
+            self._current_turn_executed_tools = []
+        res_str = str(tool_result or "")
+        if any(res_str.startswith(err) for err in ("Failed to", "Action halted", "Could not find", "Error:")):
+            return
+        self._current_turn_executed_tools.append((tool_name, dict(tool_args or {})))
+
+    def _finalize_turn_habit(self, user_text: str, turn_start_time: float):
+        """If the turn successfully executed a single safe action, promote it to a learned habit."""
+        if not hasattr(self, "_current_turn_executed_tools") or not hasattr(self, "reflex_engine"):
+            return
+        if len(self._current_turn_executed_tools) == 1:
+            fn_name, fn_args = self._current_turn_executed_tools[0]
+            elapsed_ms = (time.perf_counter() - turn_start_time) * 1000.0
+            self.reflex_engine.record_habit(
+                trigger_query=user_text,
+                skill_name=fn_name,
+                skill_kwargs=fn_args,
+                turn1_latency_ms=elapsed_ms,
+            )
 
     def _get_system_instruction(self) -> str:
         """Assembles runtime capabilities and relevant persistent memory."""
@@ -643,13 +674,40 @@ Autonomous Self-Building & Dynamic Feature Creation:
         Bypasses slow cloud round-trips for instant physical and spoken execution.
         """
         lower = norm_text.lower().strip()
-        # Strip common leading fillers and polite preambles: "no,", "hey jarvis,", "i want you to", "could you", etc.
-        clean = re.sub(
-            r"^(?:no[,.]?|hey jarvis[,.]?|jarvis[,.]?|okay jarvis[,.]?|ok jarvis[,.]?|please|i want you to|could you(?: please)?|can you(?: please)?|would you(?: please)?)\s+",
-            "",
-            lower,
-        ).strip()
-        clean = re.sub(r"[.!?,]+$", "", clean).strip()
+        # Strip common leading fillers and polite preambles iteratively
+        prev = None
+        while prev != lower:
+            prev = lower
+            lower = re.sub(
+                r"^(?:no[,.]?|hey jarvis[,.]?|jarvis[,.]?|okay jarvis[,.]?|ok jarvis[,.]?|please|i want you to|could you(?: please)?|can you(?: please)?|would you(?: please)?)\s+",
+                "",
+                lower,
+            ).strip()
+        clean = re.sub(r"[.!?,]+$", "", lower).strip()
+
+        # Habit Learning Audit & Verification
+        if re.search(r"^(?:verify\s+(?:your\s+|my\s+)?learning|what\s+have\s+you\s+learned|list\s+learned\s+habits|audit\s+learned\s+habits|check\s+your\s+learning|show\s+(?:your\s+)?learned\s+habits)$", clean):
+            return SkillRegistry.execute("verify_learned_habits")
+
+        if re.search(r"^(?:clear|reset|wipe|delete)\s+(?:all\s+)?(?:learned\s+)?habits$", clean):
+            count = self.reflex_engine.clear_habits() if hasattr(self, "reflex_engine") and self.reflex_engine else 0
+            return f"Cleared {count} learned habits from memory, Sir."
+
+        # Check Dynamic Learned Habit Cache (<0.2ms lookup)
+        if hasattr(self, "reflex_engine") and self.reflex_engine:
+            habit = self.reflex_engine.check_habit(clean)
+            if habit:
+                t0 = time.perf_counter()
+                fn_name = habit["skill_name"]
+                fn_args = habit.get("skill_kwargs", {})
+                try:
+                    res = SkillRegistry.execute(fn_name, **fn_args)
+                    refl_ms = (time.perf_counter() - t0) * 1000.0
+                    self.reflex_engine.record_hit(habit["id"], refl_ms)
+                    logger.info(f"Learned habit executed in {refl_ms:.2f}ms: {fn_name}({fn_args})")
+                    return str(res) if res is not None else "Done, Sir."
+                except Exception as e:
+                    logger.warning(f"Error executing dynamic habit {fn_name}: {e}")
 
         # Disallow reflex execution if Sir is asking a question or self-evolution
         if any(clean.startswith(w) for w in ("how ", "why ", "what is ", "what are ", "who is ", "can you explain", "explain ")) or any(
@@ -696,17 +754,31 @@ Autonomous Self-Building & Dynamic Feature Creation:
         if re.search(r"^(?:battery status|battery level|battery percentage|check battery|how much battery)$", clean):
             return SkillRegistry.execute("get_battery_status")
 
-        # 4. Browser Tabs & Browsers
+        # 4. Browser Tabs & URL Navigation (<15ms)
+        url_match = re.search(
+            r"(https?://\S+|[a-zA-Z0-9_\-\.]+\.(?:com|org|net|io|edu|gov|dev|ai|app|co|uk|de|fr|ca|me|tv|xyz|gg)(?:/[^\s]*)?)",
+            clean,
+            re.IGNORECASE,
+        )
+        if url_match and any(v in clean for v in ("open", "go to", "navigate", "visit", "launch", "browse", "enter", "tab", "load", "in brave", "in chrome", "in edge")):
+            target_url = url_match.group(1).rstrip(".,!?")
+            b = "brave"
+            if "chrome" in clean:
+                b = "chrome"
+            elif "edge" in clean or "msedge" in clean:
+                b = "msedge"
+            return SkillRegistry.execute("open_browser_tab", url=target_url, browser=b)
+
         # Brave variations (e.g. "open a tab in my current brave", "open a tab in brave", "open a tab and brave", "open brave", "new brave tab")
-        if re.search(r"^(?:open|launch|start|new)?\s*(?:a\s+)?(?:new\s+)?tab\s+(?:in|and|on|for)\s+(?:my\s+|the\s+)?(?:current\s+)?brave.*$|^(?:open|launch|start|open a|new)\s+(?:brave\s+tab|brave|brave browser)$|^brave\s+tab$", clean):
+        if re.search(r"^(?:open|launch|start|new)?\s*(?:a\s+)?(?:new\s+)?tab\s+(?:in|and|on|for)\s+(?:my\s+|the\s+)?(?:current\s+)?brave(?:\s+tab|\s+window)?$|^(?:open|launch|start|open a|new)\s+(?:brave\s+tab|brave|brave browser)$|^brave\s+tab$", clean):
             return SkillRegistry.execute("open_browser_tab", browser="brave")
 
         # Chrome variations
-        if re.search(r"^(?:open|launch|start|new)?\s*(?:a\s+)?(?:new\s+)?tab\s+(?:in|and|on|for)\s+chrome$|^(?:open|launch|start|open a|new)\s+(?:chrome\s+tab|chrome|chrome browser)$|^chrome\s+tab$", clean):
+        if re.search(r"^(?:open|launch|start|new)?\s*(?:a\s+)?(?:new\s+)?tab\s+(?:in|and|on|for)\s+chrome(?:\s+tab|\s+window)?$|^(?:open|launch|start|open a|new)\s+(?:chrome\s+tab|chrome|chrome browser)$|^chrome\s+tab$", clean):
             return SkillRegistry.execute("open_browser_tab", browser="chrome")
 
         # Edge variations
-        if re.search(r"^(?:open|launch|start|new)?\s*(?:a\s+)?(?:new\s+)?tab\s+(?:in|and|on|for)\s+edge$|^(?:open|launch|start|open a|new)\s+(?:edge\s+tab|edge|msedge)$|^edge\s+tab$", clean):
+        if re.search(r"^(?:open|launch|start|new)?\s*(?:a\s+)?(?:new\s+)?tab\s+(?:in|and|on|for)\s+edge(?:\s+tab|\s+window)?$|^(?:open|launch|start|open a|new)\s+(?:edge\s+tab|edge|msedge)$|^edge\s+tab$", clean):
             return SkillRegistry.execute("open_browser_tab", browser="msedge")
 
         # Generic new tab
@@ -817,6 +889,9 @@ Autonomous Self-Building & Dynamic Feature Creation:
 
     def process_query(self, user_text: str, sentence_callback: Any = None) -> str:
         """Routes normal conversation to the configured primary model; consultations are explicit."""
+        turn_start_time = time.perf_counter()
+        self._current_turn_executed_tools = []
+
         # Strip leading/trailing punctuation and whitespace for robust voice command recognition
         norm_text = re.sub(r"^[\s,;:.]+|[\s,!?:.]+$", "", (user_text or "").strip()).strip()
 
@@ -930,7 +1005,13 @@ Autonomous Self-Building & Dynamic Feature Creation:
         )
         self.active_tool_names = self._select_tools_for_query(user_text)
 
-        # Smart Tri-Tier Hybrid Dispatch (Token-Shielded Architecture)
+        # Smart Tri-Tier Hybrid Dispatch & Model Execution
+        reply = self._dispatch_llm_query(user_text, sentence_callback)
+        self._finalize_turn_habit(norm_text, turn_start_time)
+        return reply
+
+    def _dispatch_llm_query(self, user_text: str, sentence_callback: Any = None) -> str:
+        """Dispatches LLM reasoning across configured providers."""
         if self.provider in ("hybrid", "auto"):
             has_antigravity = getattr(self, "antigravity_bridge", None) and self.antigravity_bridge.is_available()
 
@@ -1455,6 +1536,7 @@ Autonomous Self-Building & Dynamic Feature Creation:
                                 sentence_callback(f"Action halted: {warning}")
                         else:
                             tool_result = SkillRegistry.execute(fn_name, **fn_args)
+                            self._record_tool_execution(fn_name, fn_args, tool_result)
                             last_tool_result = str(tool_result)
                             if fn_name in action_tools:
                                 has_action_completed = True
@@ -1599,7 +1681,11 @@ Autonomous Self-Building & Dynamic Feature Creation:
 
                         logger.info(f"{self.provider.upper()} Inline tool call: {fn_name}({fn_args})")
                         is_safe, warning = self.safety.check_tool_call(fn_name, fn_args)
-                        tool_result = f"Action halted: {warning}" if not is_safe else SkillRegistry.execute(fn_name, **fn_args)
+                        if not is_safe:
+                            tool_result = f"Action halted: {warning}"
+                        else:
+                            tool_result = SkillRegistry.execute(fn_name, **fn_args)
+                            self._record_tool_execution(fn_name, fn_args, tool_result)
                         last_tool_result = str(tool_result)
                         logger.info(f"{self.provider.upper()} Inline tool result: {tool_result}")
 
@@ -1781,6 +1867,7 @@ Autonomous Self-Building & Dynamic Feature Creation:
                                 sentence_callback(f"Action halted: {warning}")
                         else:
                             tool_result = SkillRegistry.execute(tool_name, **tool_args)
+                            self._record_tool_execution(tool_name, tool_args, tool_result)
 
                         logger.info(f"Tool result: {tool_result}")
                         tool_responses.append(types.Part.from_function_response(
@@ -1985,6 +2072,7 @@ Autonomous Self-Building & Dynamic Feature Creation:
                     sentence_callback(f"Action halted: {warning}")
             else:
                 tool_result = SkillRegistry.execute(fn_name, **fn_args)
+                self._record_tool_execution(fn_name, fn_args, tool_result)
             last_tool_result = str(tool_result)
             logger.info("ANTIGRAVITY Tool result: %s", last_tool_result[:250])
 
