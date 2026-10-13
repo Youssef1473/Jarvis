@@ -149,15 +149,34 @@ def kill_orphaned_jarvis_processes(exclude_pids=None):
     import os
     import psutil
 
+    current_pid = os.getpid()
     exclude = set(exclude_pids or set())
-    exclude.add(os.getpid())
+    exclude.add(current_pid)
+    try:
+        parent_pid = os.getppid()
+        if parent_pid:
+            exclude.add(parent_pid)
+    except Exception:
+        pass
+
+    try:
+        current_proc = psutil.Process(current_pid)
+        current_create_time = current_proc.create_time()
+    except Exception:
+        current_create_time = None
+
     terminated = []
 
     try:
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time']):
             try:
                 pid = proc.info['pid']
                 if pid in exclude:
+                    continue
+
+                # Guard: only terminate processes created before the current launcher
+                proc_ctime = proc.info.get('create_time')
+                if current_create_time and proc_ctime and proc_ctime >= current_create_time:
                     continue
 
                 cmdline_parts = proc.info.get('cmdline') or []

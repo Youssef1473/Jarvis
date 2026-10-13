@@ -100,6 +100,7 @@ def main():
     # Clean up any orphaned Jarvis processes left from prior crashes or forced terminal kills
     kill_orphaned_jarvis_processes()
 
+    logging.getLogger("Jarvis").info("Initializing neural models and subsystems (CUDA STT/TTS)...")
     orchestrator = JarvisOrchestrator(config)
 
     # Register automatic teardown so all tools and child processes terminate regardless of exit path
