@@ -11,7 +11,9 @@ These rules are loaded automatically on every interaction turn. All operations w
 * **Reuse Local Infrastructure First:** Never invent new classes, helpers, or external libraries if a native subsystem exists in the repository:
   * For tool creation and registration: Always use `@SkillRegistry.register` in `jarvis.skills.base`.
   * For local <15ms reflexes: Always use `DynamicReflexEngine` in `jarvis.core.reflex_engine`.
-  * For persistent storage or search: Always use `MemoryManager` with SQLite WAL + `sqlite-vec` KNN + FTS5 BM25 in `jarvis.core.memory`.
+  * For persistent storage & hybrid search: Always use `MemoryManager` with SQLite WAL + `sqlite-vec` KNN (`facts_vec`, `documents_vec`, `lessons_vec`) + FTS5 BM25 + Hybrid RRF in `jarvis.core.memory`.
+  * For episodic reflection & mistake avoidance: Always use `MemoryManager.record_episodic_lesson` and `JarvisBrain._synthesize_error_lesson`.
+  * For proactive desktop presence & idle tracking: Always use `JarvisHeartbeat` and `orchestrator.broadcast_ambient_telemetry`.
   * For risk gating & command sandboxing: Always route through `SafetyGate` in `jarvis.core.safety`.
   * For LLM inference & streaming: Always route through `AntigravityBridge` or `JarvisBrain` in `jarvis.core.brain`.
   * For browser control: Always prefer silent Chrome DevTools Protocol in `jarvis.skills.browser_cdp` before falling back to Win32 UIA.
@@ -64,10 +66,15 @@ These rules are loaded automatically on every interaction turn. All operations w
 * **Duplicate Tab Elimination Heuristics:** Before sending `Ctrl+T`, always inspect the active window title. If the active tab is already empty (`"about:blank"`, `"New Tab"`), reuse it directly via address bar navigation (`Ctrl+L`) to prevent redundant duplicate tabs.
 * **Window Automation:** Use semantic UI Automation (`pywinauto` UIA backend) to focus and inspect windows, restoring minimized windows to bypass the Windows `SetForegroundWindow` lock. Avoid blind `pyautogui` keypresses with arbitrary `time.sleep()`.
 
-### Memory & Persistence Invariant: WAL Mode + sqlite-vec
+### Memory & Persistence Invariant: WAL Mode + sqlite-vec Hybrid RRF
 * All SQLite connections must use WAL journal mode, `synchronous=NORMAL`, and `mmap_size=268435456` (256MB).
 * Connections must be opened via the `@contextlib.contextmanager` `_get_connection()` pattern and closed deterministically.
-* Semantic similarity must utilize native `sqlite-vec` KNN virtual tables (`facts_vec USING vec0`) with L2-normalized 64-dim float vectors and real-time SQL triggers.
+* Semantic similarity must utilize native `sqlite-vec` KNN virtual tables (`facts_vec`, `documents_vec`, `lessons_vec USING vec0`) with L2-normalized 64-dim float vectors and real-time SQL triggers, fused with FTS5 BM25 via Hybrid Reciprocal Rank Fusion (RRF).
+
+### Proactive Presence Invariant: Silent HUD First, Zero Interruption Fatigue
+* Ambient desktop presence operates on the Wake-Decide-Sleep model via sub-0.01ms Win32 `GetLastInputInfo` (idle threshold 300s) and sub-0.05ms `GetForegroundWindow`.
+* Routine presence transitions and window context changes must be dispatched silently to the Holographic HUD WebSocket (`type: "ambient_telemetry"`).
+* Spoken voice is strictly gated to critical system warnings (battery < 15%) or imminent calendar events (<=10m away) to eliminate "Clippy" interruption fatigue.
 
 ### Subprocess & Lifecycle Invariant: Zero Orphaned Processes
 * Every background process or subprocess spawned (Ollama, Kokoro, Whisper, HUD) must be registered with `ManagedServiceManager`.
@@ -81,7 +88,7 @@ These rules are loaded automatically on every interaction turn. All operations w
 2. **PROHIBITED:** Hardcoded blind sleeps (`time.sleep(1.0)` or higher) in production paths. Use condition variables, event loops, or non-blocking socket probes with tight timeouts.
 3. **PROHIBITED:** `subprocess.run(shell=True)` or raw string formatting in shell commands. Use argument lists with `close_fds=True` and pass through `SafetyGate`.
 4. **PROHIBITED:** Storing secrets, API keys, or raw user tokens in plaintext logs or database records.
-5. **PROHIBITED:** Breaking test compatibility. All 129 existing tests in `tests/` must remain green on every single commit.
+5. **PROHIBITED:** Breaking test compatibility. All 148 existing tests in `tests/` must remain green on every single commit.
 
 ---
 

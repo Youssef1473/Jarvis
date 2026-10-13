@@ -43,26 +43,54 @@ conn.enable_load_extension(True)
 sqlite_vec.load(conn)
 conn.enable_load_extension(False)
 
-# Create virtual vector table for 384-dim (e.g. all-MiniLM-L6-v2) or custom embeddings
+# Create virtual vector tables for 64-dim L2 SIMD embeddings in Jarvis 2.0
 conn.execute("""
-CREATE VIRTUAL TABLE IF NOT EXISTS vec_memory USING vec0(
-    embedding float[384]
+CREATE VIRTUAL TABLE IF NOT EXISTS facts_vec USING vec0(
+    fact_id INTEGER PRIMARY KEY,
+    embedding float[64]
+);
+""")
+conn.execute("""
+CREATE VIRTUAL TABLE IF NOT EXISTS documents_vec USING vec0(
+    doc_id INTEGER PRIMARY KEY,
+    embedding float[64]
+);
+""")
+conn.execute("""
+CREATE VIRTUAL TABLE IF NOT EXISTS lessons_vec USING vec0(
+    lesson_id INTEGER PRIMARY KEY,
+    embedding float[64]
 );
 """)
 
-def serialize_vector(vec: list[float]) -> bytes:
-    return struct.pack(f"{len(vec)}f", *vec)
+# Serialization via official sqlite_vec helper
+blob = sqlite_vec.serialize_float32(query_vec)
 
-# KNN Query (sub-2ms)
-def search_nearest(conn, query_vec: list[float], limit=5):
+# KNN Query with Exact Cosine Similarity (sub-0.5ms)
+def search_nearest(conn, query_vec: list[float], limit=5, min_sim=0.30):
+    blob = sqlite_vec.serialize_float32(query_vec)
     cur = conn.execute("""
-        SELECT rowid, distance
-        FROM vec_memory
-        WHERE embedding MATCH ?
-        ORDER BY distance
-        LIMIT ?;
-    """, [serialize_vector(query_vec), limit])
-    return cur.fetchall()
+        SELECT fact_id, distance
+        FROM facts_vec
+        WHERE embedding MATCH ? AND k = ?
+        ORDER BY distance ASC
+    """, [blob, limit])
+    results = []
+    for r in cur.fetchall():
+        dist = float(r["distance"])
+        cos_sim = max(0.0, 1.0 - ((dist * dist) / 2.0))
+        if cos_sim >= min_sim:
+            results.append({"id": r["fact_id"], "sim": cos_sim})
+    return results
+
+# Hybrid Reciprocal Rank Fusion (RRF: FTS5 BM25 + sqlite-vec KNN)
+def hybrid_rrf_rank(fts_matches, vec_matches, k_rrf=60):
+    scores = {}
+    for rank, item in enumerate(fts_matches, start=1):
+        scores[item["id"]] = scores.get(item["id"], 0.0) + (1.0 / (k_rrf + rank))
+    for rank, item in enumerate(vec_matches, start=1):
+        scores[item["id"]] = scores.get(item["id"], 0.0) + (1.0 / (k_rrf + rank))
+    return sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
 ```
 
 ---
