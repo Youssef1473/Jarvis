@@ -36,6 +36,8 @@ import jarvis.skills.deep_research
 import jarvis.skills.document_ingest
 import jarvis.skills.self_evolution
 import jarvis.skills.photo_manager
+import jarvis.skills.diagnostics
+import jarvis.skills.browser_cdp
 from jarvis.vision.screen_capture import ScreenPerception
 from jarvis.core.memory import MemoryManager
 from jarvis.core.safety import SafetyGate
@@ -753,6 +755,12 @@ Autonomous Self-Building & Dynamic Feature Creation:
             return SkillRegistry.execute("get_system_vitals")
         if re.search(r"^(?:battery status|battery level|battery percentage|check battery|how much battery)$", clean):
             return SkillRegistry.execute("get_battery_status")
+        if re.search(r"^(?:run\s+)?(?:system diagnostics|runtime diagnostics|profile runtime|thread telemetry|diagnose performance)$", clean):
+            return SkillRegistry.execute("profile_runtime")
+        if re.search(r"^(?:audit\s+)?(?:memory heap|heap allocations|memory leak check|check memory leaks)$", clean):
+            return SkillRegistry.execute("audit_memory_heap")
+        if re.search(r"^(?:list\s+)?(?:open browser tabs|browser tabs|open tabs|what tabs are open)$", clean):
+            return SkillRegistry.execute("list_open_browser_tabs")
 
         # 4. Browser Tabs & URL Navigation (<15ms)
         services_map = {
@@ -857,6 +865,12 @@ Autonomous Self-Building & Dynamic Feature Creation:
             return "Checking system vitals and hardware telemetry, Sir."
         elif name == "get_battery_status":
             return "Checking battery levels, Sir."
+        elif name == "profile_runtime":
+            return "Running diagnostic runtime telemetry on active threads, Sir."
+        elif name == "audit_memory_heap":
+            return "Auditing Python heap allocations and memory metrics, Sir."
+        elif name == "list_open_browser_tabs":
+            return "Inspecting open browser tabs via DevTools channel, Sir."
 
         # Self-Evolution & Code Building
         elif name == "create_or_update_custom_skill":

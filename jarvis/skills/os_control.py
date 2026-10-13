@@ -703,6 +703,16 @@ def open_browser_tab(url: str = "", browser: str = "brave", new_tab: bool = True
     if target_url and not target_url.startswith(("http://", "https://", "about:", "chrome:", "brave:")):
         target_url = "https://" + target_url
 
+    # 0. Sub-5ms Silent CDP Fast Path: If Chrome DevTools Protocol is available on port 9222
+    if browser_clean in ("brave", "chrome", "edge", "browser"):
+        try:
+            from jarvis.skills.browser_cdp import open_or_navigate_tab_cdp
+            cdp_res = open_or_navigate_tab_cdp(target_url, new_tab=new_tab)
+            if cdp_res:
+                return cdp_res
+        except Exception as e:
+            logger.debug(f"CDP fast path bypass: {e}")
+
     # 1. Fast Path: If an active browser window is already open, focus it and navigate
     try:
         import win32gui
