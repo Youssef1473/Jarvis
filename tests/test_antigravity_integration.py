@@ -65,7 +65,7 @@ class TestAntigravityIntegration(unittest.TestCase):
         buffer = "Good afternoon, Sir. All systems are operational. What would you like to review?"
         chunk, remaining = AntigravityBridge._extract_speech_chunk(buffer)
         self.assertIsNotNone(chunk)
-        self.assertTrue(any(c in chunk for c in ["Good afternoon, Sir.", "All systems"]))
+        self.assertTrue(any(c in chunk for c in ["Good afternoon", "All systems"]))
 
     def test_specialist_consultation_routing(self):
         """Verifies JarvisBrain _consult_specialist routes 'pro' and 'claude' via Antigravity without API keys."""

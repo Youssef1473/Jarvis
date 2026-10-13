@@ -507,17 +507,29 @@ class AntigravityBridge:
     @staticmethod
     def _extract_speech_chunk(buffer: str) -> Tuple[Optional[str], str]:
         """Extracts the next complete spoken sentence or natural clause from buffer."""
-        # 1. Prefer sentence terminal punctuation (. ! ? \n)
-        m = re.search(r'(?<!\d)(?<!\b[A-Za-z])[.!?\n]+(?!\d)(\s+|$)', buffer)
-        if m and m.start() >= 2:
-            idx = m.end()
-            return buffer[:idx].strip(), buffer[idx:]
-        # 2. Natural clause punctuation if buffer exceeds 60 characters
-        if len(buffer) > 60:
-            m_clause = re.search(r'(?:[,;]|(?<!\d):(?!\d))\s+', buffer[20:])
-            if m_clause:
-                cut_idx = 20 + m_clause.end()
-                return buffer[:cut_idx].strip(), buffer[cut_idx:]
+        m_term = re.search(r'(?<!\d)(?<!\b[A-Za-z])[.!?\n]+(?!\d)(\s+|$)', buffer)
+        m_clause = re.search(r'(?:[,;—]|(?<!\d):(?!\d))(\s+|$)', buffer)
+
+        candidates = []
+        if m_term and m_term.start() >= 2:
+            candidates.append((m_term.end(), m_term.start()))
+        if m_clause and m_clause.start() >= 3:
+            prefix_cand = buffer[:m_clause.start()].strip()
+            if prefix_cand and len(prefix_cand.split()) >= 1:
+                candidates.append((m_clause.end(), m_clause.start()))
+
+        if candidates:
+            candidates.sort(key=lambda x: x[1])
+            cut_idx = candidates[0][0]
+            prefix = buffer[:cut_idx].strip()
+            if prefix:
+                return prefix, buffer[cut_idx:]
+
+        if len(buffer) >= 80:
+            last_space = buffer.rfind(" ")
+            if last_space > 20:
+                return buffer[:last_space].strip(), buffer[last_space:]
+
         return None, buffer
 
     @staticmethod

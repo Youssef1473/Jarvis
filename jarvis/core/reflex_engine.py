@@ -6,6 +6,7 @@ the successful tool trajectory is analyzed and promoted to SQLite persistent mem
 On Turn 2, the command matches the in-memory habit cache and executes directly in <15ms,
 bypassing cloud LLM generation entirely.
 """
+import contextlib
 import datetime
 import json
 import logging
@@ -78,12 +79,16 @@ class DynamicReflexEngine:
         self._init_db()
         self._load_cache()
 
-    def _get_connection(self) -> sqlite3.Connection:
+    @contextlib.contextmanager
+    def _get_connection(self):
         conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA busy_timeout=5000;")
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            yield conn
+        finally:
+            conn.close()
 
     def _init_db(self):
         """Initializes learned_habits schema in SQLite."""

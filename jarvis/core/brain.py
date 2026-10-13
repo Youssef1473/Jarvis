@@ -1845,14 +1845,45 @@ Autonomous Self-Building & Dynamic Feature Creation:
                     if screenshot:
                         contents.append(screenshot)
 
-                response = self.gemini_chat.send_message(contents)
+                is_deep = (self.classify_query_tier(user_text) == "deep" or self.active_task_mode == "code")
+                call_config = None if is_deep else types.GenerateContentConfig(thinking_config=types.ThinkingConfig(thinking_budget=0))
+
+                text_buffer = ""
+                full_content_chunks = []
+                function_calls_accumulated = []
+
+                # Stream tokens directly to Kokoro-82M speech callback in real time
+                response_stream = self.gemini_chat.send_message_stream(contents, config=call_config)
+                for chunk in response_stream:
+                    if getattr(chunk, "function_calls", None):
+                        function_calls_accumulated.extend(chunk.function_calls)
+                    chunk_text = ""
+                    try:
+                        if hasattr(chunk, "candidates") and chunk.candidates:
+                            cand = chunk.candidates[0]
+                            if hasattr(cand, "content") and cand.content and cand.content.parts:
+                                text_parts = [p.text for p in cand.content.parts if getattr(p, "text", None)]
+                                chunk_text = "".join(text_parts)
+                    except Exception:
+                        chunk_text = getattr(chunk, "text", "") or ""
+
+                    if chunk_text:
+                        full_content_chunks.append(chunk_text)
+                        if sentence_callback:
+                            text_buffer += chunk_text
+                            s_clause, text_buffer = self._extract_next_speech_chunk(text_buffer)
+                            while s_clause:
+                                clean_clause = self._clean_speech_clause(s_clause)
+                                if clean_clause:
+                                    sentence_callback(clean_clause)
+                                s_clause, text_buffer = self._extract_next_speech_chunk(text_buffer)
 
                 gemini_tool_iterations = 0
                 max_gemini_tool_iterations = 16 if self.active_task_mode == "code" else 8
-                while response.function_calls and gemini_tool_iterations < max_gemini_tool_iterations:
+                while function_calls_accumulated and gemini_tool_iterations < max_gemini_tool_iterations:
                     gemini_tool_iterations += 1
                     tool_responses = []
-                    for call in response.function_calls:
+                    for call in function_calls_accumulated:
                         tool_name = call.name
                         tool_args = dict(call.args) if call.args else {}
                         logger.info(f"Tool call: {tool_name}({tool_args})")
@@ -1875,26 +1906,51 @@ Autonomous Self-Building & Dynamic Feature Creation:
                             response={"result": str(tool_result)}
                         ))
 
-                    response = self.gemini_chat.send_message(tool_responses)
+                    function_calls_accumulated = []
+                    followup_stream = self.gemini_chat.send_message_stream(tool_responses, config=call_config)
+                    for chunk in followup_stream:
+                        if getattr(chunk, "function_calls", None):
+                            function_calls_accumulated.extend(chunk.function_calls)
+                        chunk_text = ""
+                        try:
+                            if hasattr(chunk, "candidates") and chunk.candidates:
+                                cand = chunk.candidates[0]
+                                if hasattr(cand, "content") and cand.content and cand.content.parts:
+                                    text_parts = [p.text for p in cand.content.parts if getattr(p, "text", None)]
+                                    chunk_text = "".join(text_parts)
+                        except Exception:
+                            chunk_text = getattr(chunk, "text", "") or ""
 
-                if response.function_calls:
+                        if chunk_text:
+                            full_content_chunks.append(chunk_text)
+                            if sentence_callback:
+                                text_buffer += chunk_text
+                                s_clause, text_buffer = self._extract_next_speech_chunk(text_buffer)
+                                while s_clause:
+                                    clean_clause = self._clean_speech_clause(s_clause)
+                                    if clean_clause:
+                                        sentence_callback(clean_clause)
+                                    s_clause, text_buffer = self._extract_next_speech_chunk(text_buffer)
+
+                # Flush any remaining text in speech buffer to TTS
+                if sentence_callback and text_buffer.strip():
+                    clean_clause = self._clean_speech_clause(text_buffer.strip())
+                    if clean_clause:
+                        sentence_callback(clean_clause)
+
+                if function_calls_accumulated:
                     reply_text = (
                         "I reached the limit for tool steps on this request, "
                         "so I stopped before completing the remaining actions."
                     )
                 else:
-                    reply_text = response.text.strip() if response.text else "At your service, Sir."
+                    reply_text = "".join(full_content_chunks).strip() if full_content_chunks else "At your service, Sir."
                 self.memory.log_interaction(user_text, reply_text)
                 self.memory.auto_learn_from_interaction(user_text, reply_text, provider=self.provider)
 
-                if sentence_callback and reply_text:
-                    sentences = [s.strip() for s in re.split(r"(?<!\d)(?<=[.!?])(?!\d)\s+", reply_text) if s.strip()]
-                    for s in sentences:
-                        sentence_callback(s)
-
                 elapsed_ms = round((time.perf_counter() - t_start) * 1000, 1)
                 self.last_latencies["gemini"] = elapsed_ms
-                logger.info(f"Inference latency (gemini): {elapsed_ms}ms")
+                logger.info(f"Inference latency (gemini streaming): {elapsed_ms}ms")
 
                 return reply_text
 
