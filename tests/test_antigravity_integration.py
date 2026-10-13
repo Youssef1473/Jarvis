@@ -116,11 +116,18 @@ class TestAntigravityIntegration(unittest.TestCase):
         self.assertEqual(claude_cascade[0], "claude-sonnet-4-6")
         self.assertIn("gemini-3.8-flash-high", claude_cascade)
 
+        flash_med_cascade = self.bridge.get_candidate_cascade("gemini-3.8-flash-medium")
+        self.assertEqual(flash_med_cascade[0], "gemini-3.8-flash-medium")
+        self.assertIn("gemini-3.8-flash-high", flash_med_cascade)
+        self.assertIn("gemini-3.8-flash-low", flash_med_cascade)
+
     def test_prompt_complexity_auto_tiering(self):
-        """Verifies prompt classification routes correctly to Flash Low, Flash High, and Claude."""
+        """Verifies prompt classification routes correctly to Flash Low, Flash Medium, Flash High, and Claude."""
         self.assertEqual(self.bridge.classify_prompt_tier("def refactor_code(): return True"), "claude-sonnet-4-6")
         self.assertEqual(self.bridge.classify_prompt_tier("analyze the strategy and architecture of the codebase"), "gemini-3.8-flash-high")
         self.assertEqual(self.bridge.classify_prompt_tier("hello jarvis what time is it"), "gemini-3.8-flash-low")
+        self.assertEqual(self.bridge.classify_prompt_tier("what's the weather today"), "gemini-3.8-flash-low")
+        self.assertEqual(self.bridge.classify_prompt_tier("can you draft a polite response to this client email and summarize our progress"), "gemini-3.8-flash-medium")
 
     def test_voice_model_switching_commands(self):
         """Verifies voice commands dynamically switch models and auto-tiering with punctuation resilience."""

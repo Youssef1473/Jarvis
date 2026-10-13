@@ -76,8 +76,8 @@ class AntigravityBridge:
     }
 
     TIER_FLASH = [
-        "gemini-3.8-flash-high",
         "gemini-3.8-flash-medium",
+        "gemini-3.8-flash-high",
         "gemini-3.8-flash-low",
     ]
     TIER_ARGON = [
@@ -90,7 +90,7 @@ class AntigravityBridge:
         "claude-opus-4-6-thinking",
     ]
 
-    DEFAULT_MODEL = "gemini-3.8-flash-high"
+    DEFAULT_MODEL = "gemini-3.8-flash-medium"
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
@@ -154,33 +154,79 @@ class AntigravityBridge:
         """Builds a priority fallback cascade within the Google AI Pro fleet."""
         resolved = self.resolve_model(model)
         if "argon" in resolved:
-            pool = ["gemini-4-argon-high", "gemini-3.8-flash-high", "gemini-3.8-flash-medium"]
-        elif "flash" in resolved:
-            pool = list(self.TIER_FLASH)
+            pool = ["gemini-4-argon-high", "gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"]
+        elif resolved == "gemini-3.8-flash-low":
+            pool = ["gemini-3.8-flash-low", "gemini-3.8-flash-medium", "gemini-3.8-flash-high"]
+        elif resolved == "gemini-3.8-flash-medium":
+            pool = ["gemini-3.8-flash-medium", "gemini-3.8-flash-high", "gemini-3.8-flash-low"]
+        elif resolved == "gemini-3.8-flash-high":
+            pool = ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"]
         elif "claude" in resolved:
-            pool = list(self.TIER_CLAUDE) + ["gemini-3.8-flash-high"]
+            pool = list(self.TIER_CLAUDE) + ["gemini-3.8-flash-high", "gemini-3.8-flash-medium"]
         else:
-            pool = [resolved, "gemini-3.8-flash-high", "gemini-3.8-flash-low"]
+            pool = [resolved, "gemini-3.8-flash-medium", "gemini-3.8-flash-high", "gemini-3.8-flash-low"]
 
         # Ensure requested model is first
         ordered = [resolved] + [m for m in pool if m != resolved]
         return ordered
 
+    @staticmethod
+    def _matches_any_keyword(text: str, keywords: List[str]) -> bool:
+        """Matches whole words or exact phrases against lowercase text."""
+        for kw in keywords:
+            if " " in kw or kw.endswith(" "):
+                if kw in text:
+                    return True
+            else:
+                if re.search(r"\b" + re.escape(kw) + r"\b", text):
+                    return True
+        return False
+
     def classify_prompt_tier(self, prompt: str) -> str:
-        """Determines optimal Google AI Pro model tier based on task complexity."""
+        """Determines optimal Google AI Pro model tier based on task complexity and latency constraints.
+
+        Tiering Guidelines:
+        - Claude Sonnet 4.6: Software engineering, code editing, AST/syntax bugs, script generation.
+        - Gemini 3.8 Flash High: Deep reasoning, architectural evaluation, algorithms, complex timetables, self-evolution.
+        - Gemini 3.8 Flash Low: Sub-50ms latency voice turns, device reflexes, weather/time/battery lookups, short banter.
+        - Gemini 3.8 Flash Medium: Default general intelligence, email drafting, document summaries, everyday QA.
+        """
         p = prompt.lower().strip()
+        words = p.split()
+        word_count = len(words)
+
         # 1. Code & Technical Engineering -> Claude Sonnet 4.6
-        code_words = ["def ", "class ", "function", "refactor", "bug", "traceback", "git ", "compile", "script", "syntax", "patch", "pytest", "unittest", "repo", "import "]
-        if any(w in p for w in code_words):
+        code_words = [
+            "def ", "class ", "function", "refactor", "bug", "traceback", "git",
+            "compile", "script", "syntax", "patch", "pytest", "unittest", "repo",
+            "import ", "powershell", "regex"
+        ]
+        if self._matches_any_keyword(p, code_words):
             return "claude-sonnet-4-6"
 
-        # 2. Hard Reasoning, Math, Logic, Planning -> Gemini 3.8 Flash High (Max Reasoning Capacity)
-        reasoning_words = ["analyze", "plan", "strategy", "why does", "math", "calculate", "solve", "syllabus", "timetable", "essay", "architecture", "compare", "proof"]
-        if any(w in p for w in reasoning_words) or len(p.split()) > 25:
+        # 2. Hard Reasoning, Math, Logic, Planning, Dynamic Evolution -> Gemini 3.8 Flash High
+        high_reasoning_words = [
+            "analyze", "analysis", "strategy", "why does", "math", "calculate",
+            "solve", "syllabus", "timetable", "essay", "architecture", "compare",
+            "proof", "algorithm", "benchmark", "evaluate", "custom skill",
+            "create skill", "self build", "evolve", "conflict resolution"
+        ]
+        if self._matches_any_keyword(p, high_reasoning_words) or word_count > 30:
             return "gemini-3.8-flash-high"
 
-        # 3. Fast Voice, Banter, Greetings, Device control -> Gemini 3.8 Flash Low
-        return "gemini-3.8-flash-low"
+        # 3. Fast Voice, Quick Device Reflexes, Weather/Time/Vitals, Greetings -> Gemini 3.8 Flash Low
+        low_latency_words = [
+            "weather", "temperature", "forecast", "time", "date", "clock",
+            "battery", "charging", "volume", "mute", "unmute", "play", "pause",
+            "skip", "vitals", "cpu", "ram", "gpu", "hello", "hi", "hey", "good morning",
+            "good afternoon", "good evening", "how are you", "who are you",
+            "thank you", "thanks"
+        ]
+        if self._matches_any_keyword(p, low_latency_words) or word_count <= 8:
+            return "gemini-3.8-flash-low"
+
+        # 4. Standard Everyday Agent Tasks, Drafting, Summaries, General QA -> Gemini 3.8 Flash Medium
+        return "gemini-3.8-flash-medium"
 
     def generate_response(
         self,

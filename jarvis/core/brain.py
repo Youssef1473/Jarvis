@@ -152,13 +152,13 @@ Autonomous Self-Building & Dynamic Feature Creation:
     ]
 
     ANTIGRAVITY_CANDIDATE_MODELS = [
-        "gemini-3.8-flash-high",
         "gemini-3.8-flash-medium",
+        "gemini-3.8-flash-high",
         "gemini-3.8-flash-low",
-        "gemini-4-argon-high",
         "claude-sonnet-4-6",
         "claude-opus-4-6-thinking",
         "gpt-oss-120b-medium",
+        "gemini-4-argon-high",
     ]
 
     CODE_TOOL_NAMES = {
@@ -267,7 +267,7 @@ Autonomous Self-Building & Dynamic Feature Creation:
 
         # Antigravity CLI Bridge (Google AI Pro integration)
         self.antigravity_bridge = AntigravityBridge(config)
-        configured_ag_model = config.get("llm", {}).get("antigravity_model", "gemini-3.8-flash-high")
+        configured_ag_model = config.get("llm", {}).get("antigravity_model", "gemini-3.8-flash-medium")
         self.antigravity_candidates = [configured_ag_model] + [
             m for m in self.ANTIGRAVITY_CANDIDATE_MODELS if m != configured_ag_model
         ]
@@ -834,7 +834,7 @@ Autonomous Self-Building & Dynamic Feature Creation:
         )
         if auto_match and getattr(self, "antigravity_bridge", None) and self.antigravity_bridge.is_available():
             self.antigravity_auto_tiering = True
-            reply = "Dynamic model tiering activated, Sir. Routing automatically between Gemini 3.8 Flash High for reasoning, Gemini 3.8 Flash Low for speed, and Claude for code."
+            reply = "Dynamic model tiering activated, Sir. Routing automatically between Gemini 3.8 Flash High for reasoning, Gemini 3.8 Flash Low for speed, Gemini 3.8 Flash Medium for general tasks, and Claude for code."
             if sentence_callback:
                 sentence_callback(reply)
             return reply
@@ -1034,6 +1034,9 @@ Autonomous Self-Building & Dynamic Feature Creation:
             "gemini-pro": "gemini-3.8-flash-high",
             "flash": "gemini-3.8-flash-low",
             "gemini-flash": "gemini-3.8-flash-low",
+            "flash-low": "gemini-3.8-flash-low",
+            "flash-medium": "gemini-3.8-flash-medium",
+            "flash-high": "gemini-3.8-flash-high",
             "argon": "gemini-4-argon-high",
             "claude": "claude-sonnet-4-6",
             "sonnet": "claude-sonnet-4-6",
