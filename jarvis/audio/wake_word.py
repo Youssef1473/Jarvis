@@ -36,6 +36,7 @@ class WakeWordDetector:
         # Energy gate state: rolling pre-roll buffer to retain lead-in speech frames while idling
         self._preroll_buffer: deque = deque(maxlen=4)
         self._active_chunks_remaining = 0
+        self._affinity_set = False
 
     def _init_model(self):
         """Initializes openWakeWord model."""
@@ -65,6 +66,14 @@ class WakeWordDetector:
 
     def _audio_callback(self, indata, frames, time_info, status):
         """Processes audio chunks from the sounddevice InputStream with energy-gated zero-idle CPU."""
+        if not self._affinity_set:
+            try:
+                from jarvis.audio.affinity import pin_and_elevate_current_thread
+                pin_and_elevate_current_thread(tag="WakeWordStream")
+            except Exception:
+                pass
+            self._affinity_set = True
+
         if not self._is_running or self.model is None:
             return
 

@@ -6,6 +6,8 @@ import logging
 from typing import Dict, Any, Optional
 import numpy as np
 
+from jarvis.audio.affinity import pin_and_elevate_current_thread
+
 logger = logging.getLogger("Jarvis.STT")
 
 
@@ -123,6 +125,7 @@ class SpeechToText:
         """
         Transcribes audio array with turbo greedy decoding and automatic CPU fallback.
         """
+        pin_and_elevate_current_thread(tag="WhisperSTT")
         if self.model is None:
             logger.error("Whisper model is not initialized.")
             return ""

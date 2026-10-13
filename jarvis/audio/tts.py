@@ -15,22 +15,16 @@ import win32com.client
 
 from jarvis.audio.chunker import StreamingSentenceChunker
 from jarvis.audio.ring_buffer import AudioRingBuffer
+from jarvis.audio.affinity import pin_and_elevate_current_thread
 
 logger = logging.getLogger("Jarvis.TTS")
 
 __all__ = ["TextToSpeech", "StreamingSentenceChunker", "AudioRingBuffer"]
 
 
-def _set_thread_realtime_priority():
-    """Sets current thread priority to THREAD_PRIORITY_HIGHEST on Windows for zero audio jitter."""
-    try:
-        import ctypes
-        if sys.platform == "win32":
-            k32 = ctypes.windll.kernel32
-            k32.SetThreadPriority.argtypes = [ctypes.c_void_p, ctypes.c_int]
-            k32.SetThreadPriority(ctypes.c_void_p(-2), 2)  # THREAD_PRIORITY_HIGHEST = 2
-    except Exception as e:
-        logger.debug(f"Could not set thread real-time priority: {e}")
+def _set_thread_realtime_priority(tag: str = "KokoroTTS"):
+    """Pins current thread to P-Cores and sets priority to THREAD_PRIORITY_HIGHEST for zero audio jitter."""
+    pin_and_elevate_current_thread(tag=tag)
 
 
 class TextToSpeech:
@@ -291,7 +285,7 @@ class TextToSpeech:
 
             # Stage 1: Dedicated Synthesis Producer Worker with Real-Time Priority
             def _synth_worker():
-                _set_thread_realtime_priority()
+                _set_thread_realtime_priority("KokoroSynthWorker")
                 while self._stream_active and not self._stop_event.is_set():
                     try:
                         sentence = self._sentence_queue.get(timeout=0.05)
@@ -331,7 +325,7 @@ class TextToSpeech:
             def _audio_callback(outdata, frames, time_info, status):
                 nonlocal _cb_priority_elevated
                 if not _cb_priority_elevated:
-                    _set_thread_realtime_priority()
+                    _set_thread_realtime_priority("WASAPIPlaybackCallback")
                     _cb_priority_elevated = True
 
                 if self._stop_event.is_set():
@@ -368,7 +362,7 @@ class TextToSpeech:
                 self._output_stream = None
 
             def _playback_worker():
-                _set_thread_realtime_priority()
+                _set_thread_realtime_priority("WASAPIPlaybackWorker")
                 while self._stream_active and not self._stop_event.is_set():
                     try:
                         item = self._audio_queue.get(timeout=0.05)

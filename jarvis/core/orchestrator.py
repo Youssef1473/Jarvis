@@ -232,6 +232,11 @@ class JarvisOrchestrator:
 
         def record_and_process_vad():
             try:
+                from jarvis.audio.affinity import pin_and_elevate_current_thread
+                pin_and_elevate_current_thread(tag="OrchestratorVADCapture")
+            except Exception:
+                pass
+            try:
                 vad = self.wake_detector.get_vad()
                 if vad is None:
                     from openwakeword.vad import VAD
@@ -286,6 +291,11 @@ class JarvisOrchestrator:
 
     def _process_audio(self, audio_array: np.ndarray):
         """Transcribes audio, sends to brain, and delivers spoken output."""
+        try:
+            from jarvis.audio.affinity import pin_and_elevate_current_thread
+            pin_and_elevate_current_thread(tag="OrchestratorAudioWorker")
+        except Exception:
+            pass
         self.set_state("thinking")
         self.sfx.play_think()
         text = self.stt.transcribe(audio_array, sample_rate=self.sample_rate)
