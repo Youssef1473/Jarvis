@@ -40,6 +40,9 @@ class SpeechNormalizer:
         text = re.sub(r"https?://\S+", "", text)
         # Remove horizontal rules
         text = re.sub(r"[-*_]{2,}", "", text)
+        # Remove emojis and non-standard unicode symbols that disrupt TTS phoneme conversion
+        text = re.sub(r"[\U00010000-\U0010ffff]", "", text)
+        text = re.sub(r"[\u2600-\u26ff\u2700-\u27bf]", "", text)
         # Remove markdown markers (bold, italic, strikethrough, blockquotes)
         text = re.sub(r"[*_~`]", "", text)
         text = re.sub(r"^\s*#+\s*", "", text, flags=re.MULTILINE)
