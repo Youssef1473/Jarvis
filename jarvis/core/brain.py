@@ -334,16 +334,29 @@ Autonomous Self-Building & Dynamic Feature Creation:
         self._current_turn_executed_tools.append((tool_name, dict(tool_args or {})))
 
     def _finalize_turn_habit(self, user_text: str, turn_start_time: float):
-        """If the turn successfully executed a single safe action, promote it to a learned habit."""
+        """If the turn successfully executed safe actions, promote it to a learned habit."""
         if not hasattr(self, "_current_turn_executed_tools") or not hasattr(self, "reflex_engine"):
             return
-        if len(self._current_turn_executed_tools) == 1:
-            fn_name, fn_args = self._current_turn_executed_tools[0]
-            elapsed_ms = (time.perf_counter() - turn_start_time) * 1000.0
+        executed = self._current_turn_executed_tools
+        if not executed:
+            return
+
+        elapsed_ms = (time.perf_counter() - turn_start_time) * 1000.0
+
+        if len(executed) == 1:
+            fn_name, fn_args = executed[0]
             self.reflex_engine.record_habit(
                 trigger_query=user_text,
                 skill_name=fn_name,
                 skill_kwargs=fn_args,
+                turn1_latency_ms=elapsed_ms,
+            )
+        elif 2 <= len(executed) <= 5:
+            # Compound pipeline promotion for multi-action workflows
+            steps = [{"skill_name": name, "skill_kwargs": args} for name, args in executed]
+            self.reflex_engine.record_compound_habit(
+                trigger_query=user_text,
+                steps=steps,
                 turn1_latency_ms=elapsed_ms,
             )
 
@@ -396,6 +409,17 @@ Autonomous Self-Building & Dynamic Feature Creation:
         for keywords, tools in self.TOOL_INTENT_GROUPS:
             if any(keyword in query for keyword in keywords):
                 selected.update(tools)
+
+        # Dynamic Voyager Discovery: Scan registered tools in SkillRegistry
+        # to ensure custom skills and unmapped tools whose identifiers match the query are included
+        all_tools = SkillRegistry.get_all_tools()
+        query_words = set(re.findall(r"\b[a-z0-9_-]+\b", query))
+        for tool_name, tool_fn in all_tools.items():
+            if tool_name not in selected:
+                tool_tokens = set(tool_name.lower().split("_"))
+                if tool_tokens.issubset(query_words) or (len(tool_tokens) > 1 and len(tool_tokens & query_words) >= 2):
+                    selected.add(tool_name)
+
         return frozenset(selected)
 
     def _init_hybrid_providers(self) -> None:
@@ -717,14 +741,35 @@ Autonomous Self-Building & Dynamic Feature Creation:
                 t0 = time.perf_counter()
                 fn_name = habit["skill_name"]
                 fn_args = habit.get("skill_kwargs", {})
-                try:
-                    res = SkillRegistry.execute(fn_name, **fn_args)
-                    refl_ms = (time.perf_counter() - t0) * 1000.0
-                    self.reflex_engine.record_hit(habit["id"], refl_ms)
-                    logger.info(f"Learned habit executed in {refl_ms:.2f}ms: {fn_name}({fn_args})")
-                    return str(res) if res is not None else "Done, Sir."
-                except Exception as e:
-                    logger.warning(f"Error executing dynamic habit {fn_name}: {e}")
+
+                # Compound multi-step pipeline execution
+                if fn_name == "__compound__" and isinstance(fn_args, list):
+                    try:
+                        results = []
+                        for step in fn_args:
+                            step_name = step.get("skill_name")
+                            step_kwargs = step.get("skill_kwargs", {})
+                            step_res = SkillRegistry.execute(step_name, **step_kwargs)
+                            results.append(str(step_res))
+                            # Atomic failure halt: if any step failed, abort subsequent steps
+                            if any(str(step_res).startswith(err) for err in ("Failed to", "Action halted", "Could not find", "Error:")):
+                                logger.warning(f"Compound step '{step_name}' reported failure: {step_res}. Halting pipeline.")
+                                break
+                        refl_ms = (time.perf_counter() - t0) * 1000.0
+                        self.reflex_engine.record_hit(habit["id"], refl_ms)
+                        logger.info(f"Learned compound habit ({len(fn_args)} steps) executed in {refl_ms:.2f}ms")
+                        return results[-1] if results else "Done, Sir."
+                    except Exception as e:
+                        logger.warning(f"Error executing compound habit: {e}")
+                else:
+                    try:
+                        res = SkillRegistry.execute(fn_name, **fn_args)
+                        refl_ms = (time.perf_counter() - t0) * 1000.0
+                        self.reflex_engine.record_hit(habit["id"], refl_ms)
+                        logger.info(f"Learned habit executed in {refl_ms:.2f}ms: {fn_name}({fn_args})")
+                        return str(res) if res is not None else "Done, Sir."
+                    except Exception as e:
+                        logger.warning(f"Error executing dynamic habit {fn_name}: {e}")
 
         # Disallow reflex execution if Sir is asking a question or self-evolution
         if any(clean.startswith(w) for w in ("how ", "why ", "what is ", "what are ", "who is ", "can you explain", "explain ")) or any(

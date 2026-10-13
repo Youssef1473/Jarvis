@@ -68,6 +68,17 @@ def normalize_trigger_phrase(text: str) -> str:
     return " ".join(clean.split())
 
 
+_CONVERSATIONAL_PARTICLES = frozenset({
+    "my", "the", "this", "that", "a", "an", "for", "me", "to", "now", "please", "can", "you", "just"
+})
+
+
+def extract_significant_tokens(text: str) -> frozenset[str]:
+    """Extracts core action/target tokens, stripping minor conversational particles."""
+    words = re.findall(r"\b[a-z0-9_-]+\b", text.lower())
+    return frozenset(w for w in words if w not in _CONVERSATIONAL_PARTICLES and len(w) > 1)
+
+
 class DynamicReflexEngine:
     """Manages learned habits, in-memory reflex lookups, and SQLite persistence."""
 
@@ -130,11 +141,13 @@ class DynamicReflexEngine:
                             kwargs = json.loads(row["skill_kwargs"])
                         except Exception:
                             kwargs = {}
+                        is_compound = row["skill_name"] == "__compound__"
                         self._cache[row["trigger_phrase"]] = {
                             "id": row["id"],
                             "trigger_phrase": row["trigger_phrase"],
                             "skill_name": row["skill_name"],
                             "skill_kwargs": kwargs,
+                            "is_compound": is_compound,
                             "hit_count": row["hit_count"],
                             "turn1_latency_ms": float(row["turn1_latency_ms"] or 0.0),
                             "reflex_latency_ms": float(row["reflex_latency_ms"] or 0.0),
@@ -160,6 +173,14 @@ class DynamicReflexEngine:
             for phrase, h in self._cache.items():
                 if norm_key == phrase or (len(phrase) > 12 and (norm_key.endswith(phrase) or phrase.endswith(norm_key))):
                     return dict(h)
+
+            # 3. Fast token-set match (matches conversational variations like "open my calculator" vs "open calculator")
+            query_tokens = extract_significant_tokens(norm_key)
+            if len(query_tokens) >= 2:
+                for phrase, h in self._cache.items():
+                    phrase_tokens = extract_significant_tokens(phrase)
+                    if query_tokens == phrase_tokens:
+                        return dict(h)
 
         return None
 
@@ -219,6 +240,76 @@ class DynamicReflexEngine:
             return True
         except Exception as e:
             logger.warning(f"Failed to record learned habit: {e}")
+            return False
+
+    def record_compound_habit(
+        self,
+        trigger_query: str,
+        steps: List[Dict[str, Any]],
+        turn1_latency_ms: float = 0.0,
+    ) -> bool:
+        """Promotes a multi-step sequential action pipeline into the persistent habit cache."""
+        norm_key = normalize_trigger_phrase(trigger_query)
+        if not norm_key or len(norm_key) < 4:
+            return False
+
+        if not steps or len(steps) < 2 or len(steps) > 5:
+            return False
+
+        # Verify every step is safe and reflex-eligible
+        for s in steps:
+            s_name = s.get("skill_name")
+            if not s_name or s_name not in REFLEX_ELIGIBLE_TOOLS:
+                logger.debug(f"Compound step '{s_name}' is not reflex-eligible. Skipping promotion.")
+                return False
+
+        clean_steps = []
+        for s in steps:
+            s_kwargs = s.get("skill_kwargs", {})
+            clean_k = {k: v for k, v in s_kwargs.items() if isinstance(v, (str, int, float, bool, list, dict))}
+            clean_steps.append({
+                "skill_name": s["skill_name"],
+                "skill_kwargs": clean_k,
+            })
+
+        kwargs_json = json.dumps(clean_steps, sort_keys=True)
+
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO learned_habits (
+                        trigger_phrase, skill_name, skill_kwargs, hit_count,
+                        turn1_latency_ms, reflex_latency_ms, created_at, last_executed
+                    ) VALUES (?, '__compound__', ?, 1, ?, 0.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT(trigger_phrase) DO UPDATE SET
+                        skill_name = '__compound__',
+                        skill_kwargs = excluded.skill_kwargs,
+                        hit_count = learned_habits.hit_count + 1,
+                        turn1_latency_ms = CASE WHEN learned_habits.turn1_latency_ms <= 0 THEN excluded.turn1_latency_ms ELSE learned_habits.turn1_latency_ms END,
+                        last_executed = CURRENT_TIMESTAMP
+                """, (norm_key, kwargs_json, round(turn1_latency_ms, 2)))
+                conn.commit()
+                habit_id = cursor.lastrowid
+
+            with self._lock:
+                self._cache[norm_key] = {
+                    "id": habit_id,
+                    "trigger_phrase": norm_key,
+                    "skill_name": "__compound__",
+                    "skill_kwargs": clean_steps,
+                    "is_compound": True,
+                    "hit_count": 1,
+                    "turn1_latency_ms": round(turn1_latency_ms, 2),
+                    "reflex_latency_ms": 0.0,
+                    "created_at": datetime.datetime.now().isoformat(),
+                    "last_executed": datetime.datetime.now().isoformat(),
+                }
+
+            logger.info(f"Learned compound habit promoted: '{norm_key}' -> {len(clean_steps)} steps [Turn 1: {turn1_latency_ms:.1f}ms]")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to record compound habit: {e}")
             return False
 
     def record_hit(self, habit_id: int, reflex_latency_ms: float = 0.0):

@@ -125,6 +125,52 @@ class TestDynamicReflexEngine(unittest.TestCase):
         self.assertEqual(cleared, 1)
         self.assertIsNone(self.engine.check_habit("take snapshot"))
 
+    def test_token_set_conversational_matching(self):
+        """Tests that natural conversational variations hit the habit via token-set matching."""
+        self.engine.record_habit(
+            trigger_query="open calculator",
+            skill_name="launch_application",
+            skill_kwargs={"app_name": "calc"},
+            turn1_latency_ms=1600.0,
+        )
+        # Should hit with conversational particles
+        h1 = self.engine.check_habit("Jarvis please open my calculator")
+        self.assertIsNotNone(h1)
+        self.assertEqual(h1["skill_name"], "launch_application")
+
+        h2 = self.engine.check_habit("open the calculator for me")
+        self.assertIsNotNone(h2)
+        self.assertEqual(h2["skill_name"], "launch_application")
+
+    def test_record_compound_habit_and_whitelist(self):
+        """Tests compound habit recording and security whitelist enforcement."""
+        # Valid compound pipeline: 2 safe tools
+        ok = self.engine.record_compound_habit(
+            trigger_query="prepare coding session",
+            steps=[
+                {"skill_name": "open_browser_tab", "skill_kwargs": {"url": "https://github.com"}},
+                {"skill_name": "adjust_volume", "skill_kwargs": {"action": "set", "percent": 25}},
+            ],
+            turn1_latency_ms=2100.0,
+        )
+        self.assertTrue(ok)
+        habit = self.engine.check_habit("prepare coding session")
+        self.assertIsNotNone(habit)
+        self.assertEqual(habit["skill_name"], "__compound__")
+        self.assertTrue(habit.get("is_compound", False))
+        self.assertEqual(len(habit["skill_kwargs"]), 2)
+
+        # Dangerous step must reject entire compound promotion
+        bad = self.engine.record_compound_habit(
+            trigger_query="clean and run",
+            steps=[
+                {"skill_name": "open_browser_tab", "skill_kwargs": {}},
+                {"skill_name": "execute_powershell", "skill_kwargs": {"command": "dir"}},
+            ],
+        )
+        self.assertFalse(bad)
+        self.assertIsNone(self.engine.check_habit("clean and run"))
+
 
 class TestFastBrowserUrlReflex(unittest.TestCase):
     """Tests sub-15ms fast browser tab and URL navigation in JarvisBrain."""
@@ -277,6 +323,49 @@ class TestAdaptationProgressionAndVerification(unittest.TestCase):
         self.assertIsNotNone(res2)
         self.assertIn("Dynamic Reflex & Habit Audit", res2)
         self.assertIn("launch brave", res2)
+
+    def test_compound_habit_execution_in_brain(self):
+        """Verifies Turn 2 sub-25ms compound reflex execution and atomic failure halting."""
+        novel_cmd = "setup my workstation"
+        # Turn 1: Brain executes two tools
+        t0 = time.perf_counter()
+        self.brain._current_turn_executed_tools = []
+        self.brain._record_tool_execution("adjust_volume", {"percent": 20}, "Volume set to 20%")
+        self.brain._record_tool_execution("open_browser_tab", {"url": "github.com"}, "Opened tab")
+        self.brain._finalize_turn_habit(novel_cmd, t0 - 2.1)
+
+        # Verify compound habit was stored
+        habit = self.brain.reflex_engine.check_habit(novel_cmd)
+        self.assertIsNotNone(habit)
+        self.assertEqual(habit["skill_name"], "__compound__")
+
+        # Turn 2: Executes both steps via _try_fast_reflex in <25ms
+        executed_calls = []
+        def mock_exec_skill(name, **kwargs):
+            executed_calls.append((name, kwargs))
+            return f"Executed {name}"
+
+        with patch("jarvis.skills.base.SkillRegistry.execute", side_effect=mock_exec_skill):
+            start = time.perf_counter()
+            res = self.brain._try_fast_reflex("setup my workstation")
+            duration_ms = (time.perf_counter() - start) * 1000.0
+
+            self.assertEqual(len(executed_calls), 2)
+            self.assertEqual(executed_calls[0][0], "adjust_volume")
+            self.assertEqual(executed_calls[1][0], "open_browser_tab")
+            self.assertLess(duration_ms, 25.0)
+
+    def test_dynamic_voyager_skill_discovery(self):
+        """Verifies custom registered skills are dynamically discovered by _select_tools_for_query."""
+        @SkillRegistry.register(name="custom_deep_indexer", description="Indexes deep repository AST")
+        def _mock_custom():
+            return "Indexed"
+
+        try:
+            tools = self.brain._select_tools_for_query("can you run custom deep indexer please")
+            self.assertIn("custom_deep_indexer", tools)
+        finally:
+            SkillRegistry.unregister("custom_deep_indexer")
 
 
 if __name__ == "__main__":

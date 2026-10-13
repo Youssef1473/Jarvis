@@ -168,9 +168,15 @@ def verify_learned_habits() -> str:
         t1 = h["turn1_latency_ms"]
         refl = h["reflex_latency_ms"]
         refl_str = f"{refl:.1f}ms" if refl > 0 else "<15ms"
+        if skill == "__compound__" and isinstance(kwargs, list):
+            step_strs = [f"{s.get('skill_name')}()" for s in kwargs]
+            action_desc = f"Compound Pipeline ({' ➔ '.join(step_strs)})"
+        else:
+            action_desc = f"`{skill}({json.dumps(kwargs)})`"
+
         lines.append(
             f"**{i}. \"{phrase}\"**\n"
-            f"   • Action: `{skill}({json.dumps(kwargs)})`\n"
+            f"   • Action: {action_desc}\n"
             f"   • Hit Count: {hits} times\n"
             f"   • Adaptation Benchmark: Turn 1 ({t1:.0f}ms cloud reasoning) ➔ Turn 2 ({refl_str} local reflex)"
         )

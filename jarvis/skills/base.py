@@ -31,6 +31,16 @@ class SkillRegistry:
         return cls._tools
 
     @classmethod
+    def unregister(cls, name: str) -> bool:
+        """Unregisters a tool from the registry."""
+        if name in cls._tools:
+            del cls._tools[name]
+            cls._descriptions.pop(name, None)
+            cls._openai_tools_cache.clear()
+            return True
+        return False
+
+    @classmethod
     def get_openai_tools(cls, names: Iterable[str] | None = None) -> List[Dict[str, Any]]:
         """Return cached OpenAI-compatible schemas for every tool or a selected subset."""
         selected = set(names) if names is not None else None
