@@ -157,7 +157,11 @@ class MemoryManager:
     def _get_connection(self):
         conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
         conn.execute("PRAGMA busy_timeout=5000;")
+        conn.execute("PRAGMA mmap_size=268435456;")
+        conn.execute("PRAGMA cache_size=-64000;")
+        conn.execute("PRAGMA temp_store=MEMORY;")
         conn.row_factory = sqlite3.Row
         try:
             with conn:
