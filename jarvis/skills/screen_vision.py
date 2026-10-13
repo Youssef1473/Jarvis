@@ -81,13 +81,15 @@ def inspect_screen(query: str = "Describe what is currently visible on the scree
     if analysis:
         return analysis
 
-    # 3. Graceful fallback using active OS window telemetry
+    # 3. Graceful fallback using active OS window telemetry & running apps
     try:
         from jarvis.skills.os_control import get_active_window, list_running_applications
         active = get_active_window()
+        apps = list_running_applications()
         return (
-            f"Visual cloud inference was momentarily unavailable, Sir. However, according to desktop telemetry: "
-            f"{active}."
+            f"Visual cloud inference was momentarily unavailable, Sir. However, according to desktop telemetry:\n"
+            f"{active}\n\n"
+            f"{apps}"
         )
     except Exception:
         return "I captured your screen display, Sir, but encountered a momentary delay in visual processing."

@@ -134,6 +134,19 @@ class TestShutdownLifecycle(unittest.TestCase):
         self.assertTrue(psutil.pid_exists(current_pid))
         self.assertIsInstance(killed, list)
 
+    def test_brain_shutdown_lifecycle(self):
+        """Verifies JarvisBrain.shutdown() halts managed service subprocesses cleanly."""
+        from jarvis.core.brain import JarvisBrain
+        from jarvis.core.memory import MemoryManager
+        from jarvis.core.safety import SafetyGate
+        mem = MemoryManager(self.config)
+        safety = SafetyGate(self.config)
+        brain = JarvisBrain(self.config, mem, safety)
+        
+        # Test explicit shutdown
+        brain.shutdown(timeout_seconds=0.5)
+        self.assertEqual(len(brain.service_manager._services), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

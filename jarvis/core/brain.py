@@ -303,12 +303,26 @@ Autonomous Self-Building & Dynamic Feature Creation:
             self.provider = "hybrid"
             self._init_hybrid_providers()
 
-        # Dynamic Reflex Engine & Learned Habit Memory
         db_path = getattr(self.memory, "db_path", "data/jarvis_memory.db")
         self.reflex_engine = DynamicReflexEngine(db_path=db_path)
         import jarvis.skills.self_evolution as self_evo
         self_evo.set_reflex_engine(self.reflex_engine)
         self._current_turn_executed_tools: List[Tuple[str, Dict[str, Any]]] = []
+
+    def shutdown(self, timeout_seconds: float = 2.0):
+        """Cleanly terminates managed service subprocesses and background workers."""
+        if hasattr(self, "service_manager") and self.service_manager:
+            try:
+                self.service_manager.stop_all(timeout_seconds=timeout_seconds)
+            except Exception as e:
+                logger.debug("Service manager shutdown notice: %s", e)
+
+    def __del__(self):
+        """Ensures spawned processes are not orphaned when the brain instance is collected."""
+        try:
+            self.shutdown(timeout_seconds=1.0)
+        except Exception:
+            pass
 
     def _record_tool_execution(self, tool_name: str, tool_args: Dict[str, Any], tool_result: Any = None):
         """Tracks executed tools during the current turn for habit promotion."""

@@ -52,7 +52,7 @@ class TextToSpeech:
         self.rate = tts_cfg.get("rate", "+10%")
         self.volume = tts_cfg.get("volume", "+0%")
         self.pitch = tts_cfg.get("pitch", "+0Hz")
-        self.stream_timeout_seconds = max(10.0, float(tts_cfg.get("stream_timeout_seconds", 300)))
+        self.stream_timeout_seconds = max(5.0, float(tts_cfg.get("stream_timeout_seconds", 15.0)))
         
         self._is_speaking = False
         self._stop_event = threading.Event()
