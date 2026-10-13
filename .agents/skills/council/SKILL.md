@@ -88,8 +88,10 @@ flowchart TD
     Stage3 --> Exec["Execution & Test Verification"]
 ```
 
-### Stage 1: Independent Formulations
+### Stage 1: Independent Formulations & Deep Technical Research
 * The Chairman presents the problem statement, affected files, and performance/safety constraints.
+* **Mandatory Deep Failure-Mode Probing:** Advisors must actively research edge cases, OS error codes (e.g. Win32 ERROR_BUSY), thread contention (Kokoro audio workers vs LLM streaming), and API quota limits rather than reviewing surface code.
+* **State-of-the-Art Research:** Each advisor evaluates production-grade systems patterns (lock-free buffers, CDP reconnection state machines, AST safety gates, sqlite-vec SIMD optimization) to find the most useful enhancements.
 * Each persona generates an independent proposal without being influenced by the others.
 
 ### Stage 2: Cross-Critique & Vulnerability Hunt
@@ -98,13 +100,14 @@ flowchart TD
 * The Security Auditor checks all proposals for injection vectors or safety gate bypasses.
 * The Implementer flags excessive complexity or unmaintainable abstractions.
 
-### Stage 3: Chairman Synthesis & Action Plan
-* The Chairman reviews all points of consensus and unresolved dissent.
+### Stage 3: Chairman Synthesis & Comprehensive Intelligence Briefing
+* The Chairman reviews all points of consensus, research discoveries, and unresolved dissent.
 * Outputs a decisive **Council Report** formatted as:
   1. **Consensus Verdict:** Core architectural approach approved by the council.
-  2. **Identified Risks & Mitigations:** Explicit traps spotted during cross-critique and how they are countered.
-  3. **Implementation Plan:** Contiguous, minimal file edits to be made.
-  4. **Verification Gate:** Specific test commands (`pytest tests/...`) to confirm zero regressions.
+  2. **Technical Discoveries:** Actionable, research-backed engineering patterns uncovered to enhance Jarvis's speed, memory, or intelligence.
+  3. **Identified Failure Modes & Mitigations:** Explicit traps spotted during cross-critique and how they are countered.
+  4. **Implementation Plan:** Contiguous, minimal file edits to be made.
+  5. **Verification Gate:** Specific test commands (`.venv\Scripts\python.exe -m unittest discover tests`) to confirm zero regressions.
 
 ---
 
@@ -112,5 +115,6 @@ flowchart TD
 
 When executing this skill during a session:
 1. **Spawn or Model the Personas:** Use `invoke_subagent` for parallel independent reviews, or explicitly delineate the three perspectives in your deliberation trace.
-2. **Present Clear Findings:** Provide the synthesized Council Report to the user with actionable next steps before executing high-risk file modifications.
+2. **Comprehensive Intelligence Feedback:** Never summarize away crucial technical nuance. Gather all specialized insights, research discoveries, and trade-offs from the Council and brief Sir with complete, non-generic clarity.
+3. **Present Clear Findings:** Provide the synthesized Council Report to the user with actionable next steps before executing high-risk file modifications.
 3. **Verify Empirically:** Never declare a council-approved implementation complete without executing the relevant test suites and checking tool outputs.

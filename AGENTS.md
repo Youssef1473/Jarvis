@@ -18,6 +18,11 @@ These rules are loaded automatically on every interaction turn. All operations w
   * For desktop & window control: Always prefer semantic `pywinauto` UIA in `jarvis.skills.windows_uia`.
 * **Zero-Assumption Pre-Read:** Never modify or write a function without first grepping and viewing its existing call-sites, imports, and definitions. Ground every change in actual codebase AST and signatures.
 
+### Council Intelligence Gathering & Synthesis Directive
+* **Deep Research Over Surface Responses:** Whenever handling non-trivial architectural decisions, concurrency models, or debugging challenges, convene or consult the Council under the **Deep Research & Technical Discovery Mandate** ([`.agents/skills/council/SKILL.md`](.agents/skills/council/SKILL.md)).
+* **Mandatory Failure-Mode Probing:** Advisors must actively probe hidden edge cases, Win32 error codes, thread contention, and API quota limits rather than reviewing surface code.
+* **Full Information Feedback:** Never summarize away crucial technical nuance. Gather the Council's deep research, edge-case probes, and state-of-the-art discoveries, and deliver the complete synthesized intelligence directly back to Sir.
+
 ---
 
 ## 2. Architectural Blueprint & Subsystem Invariants
@@ -28,6 +33,7 @@ These rules are loaded automatically on every interaction turn. All operations w
 │  - Fast Reflex Engine (<15ms Local Regex / Habit Routing)              │
 │  - AntigravityBridge (Local CLI / Sidecar Clause Streaming)            │
 │  - Gemini Specialist Consultation (Cloud Fallback)                     │
+│  - Deterministic Subprocess Lifecycle Management (shutdown / __del__)  │
 └───────────────────┬────────────────────────────────┬───────────────────┘
                     │                                │
                     ▼                                ▼
@@ -51,15 +57,21 @@ These rules are loaded automatically on every interaction turn. All operations w
 ### Audio Engine Invariant: Audio Thread Starvation Is a Fatal Bug
 * The audio engine operates on dedicated worker threads with P-core CPU affinity (affinity mask `0xFF`, thread priority `THREAD_PRIORITY_HIGHEST`).
 * **Strict Rule:** Never run blocking network I/O, heavy disk queries, or LLM inference on the audio synthesis (`KokoroSynthWorker`) or playback (`WASAPIPlaybackWorker`) threads. All speech streaming must pass through non-blocking queues (`queue.Queue`).
+* Instant speech interruption via `TextToSpeech.stop()` must clear `AudioRingBuffer` atomically in `<1 microsecond`.
 
-### Desktop & Browser Control Invariant: Zero Focus Stealing
+### Desktop & Browser Control Invariant: Zero Focus Stealing & Zero Duplicate Tabs
 * **Browser Automation:** All browser actions (tab opening, querying, navigation) must target Chrome DevTools Protocol (`127.0.0.1:9222`) first via silent JSON-RPC frames without window thrashing. Win32 keystrokes (`Ctrl+L`, `Ctrl+T`) are fallback-only.
-* **Window Automation:** Use semantic UI Automation (`pywinauto` UIA backend) to focus and inspect windows. Avoid blind `pyautogui` keypresses with arbitrary `time.sleep()`.
+* **Duplicate Tab Elimination Heuristics:** Before sending `Ctrl+T`, always inspect the active window title. If the active tab is already empty (`"about:blank"`, `"New Tab"`), reuse it directly via address bar navigation (`Ctrl+L`) to prevent redundant duplicate tabs.
+* **Window Automation:** Use semantic UI Automation (`pywinauto` UIA backend) to focus and inspect windows, restoring minimized windows to bypass the Windows `SetForegroundWindow` lock. Avoid blind `pyautogui` keypresses with arbitrary `time.sleep()`.
 
 ### Memory & Persistence Invariant: WAL Mode + sqlite-vec
 * All SQLite connections must use WAL journal mode, `synchronous=NORMAL`, and `mmap_size=268435456` (256MB).
 * Connections must be opened via the `@contextlib.contextmanager` `_get_connection()` pattern and closed deterministically.
-* Semantic similarity must utilize native `sqlite-vec` KNN virtual tables (`facts_vec USING vec0`) with L2-normalized 64-dim float vectors.
+* Semantic similarity must utilize native `sqlite-vec` KNN virtual tables (`facts_vec USING vec0`) with L2-normalized 64-dim float vectors and real-time SQL triggers.
+
+### Subprocess & Lifecycle Invariant: Zero Orphaned Processes
+* Every background process or subprocess spawned (Ollama, Kokoro, Whisper, HUD) must be registered with `ManagedServiceManager`.
+* `JarvisBrain` must expose deterministic `shutdown()` and `__del__()` hooks that invoke `service_manager.stop_all(timeout_seconds=2.0)`, guaranteeing that no child processes outlive the application or emit Python `ResourceWarning`.
 
 ---
 
@@ -69,7 +81,7 @@ These rules are loaded automatically on every interaction turn. All operations w
 2. **PROHIBITED:** Hardcoded blind sleeps (`time.sleep(1.0)` or higher) in production paths. Use condition variables, event loops, or non-blocking socket probes with tight timeouts.
 3. **PROHIBITED:** `subprocess.run(shell=True)` or raw string formatting in shell commands. Use argument lists with `close_fds=True` and pass through `SafetyGate`.
 4. **PROHIBITED:** Storing secrets, API keys, or raw user tokens in plaintext logs or database records.
-5. **PROHIBITED:** Breaking test compatibility. All 128 existing tests in `tests/` must remain green on every single commit.
+5. **PROHIBITED:** Breaking test compatibility. All 129 existing tests in `tests/` must remain green on every single commit.
 
 ---
 
