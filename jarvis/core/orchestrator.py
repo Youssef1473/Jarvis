@@ -112,6 +112,18 @@ class JarvisOrchestrator:
         if getattr(self, "ui_service", None):
             self.ui_service.broadcast_state(new_state)
 
+    def broadcast_ambient_telemetry(self, data: Dict[str, Any]):
+        """Dispatches ambient desktop context and presence telemetry to the Holographic HUD."""
+        if getattr(self, "ui_service", None):
+            try:
+                self.ui_service.broadcast({
+                    "type": "ambient_telemetry",
+                    "data": data,
+                    "timestamp": time.strftime("%H:%M:%S"),
+                })
+            except Exception:
+                pass
+
     def is_muted(self) -> bool:
         """Returns True if voice listening is currently muted."""
         return self._is_muted

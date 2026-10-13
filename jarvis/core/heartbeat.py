@@ -24,8 +24,15 @@ class SYSTEM_POWER_STATUS(ctypes.Structure):
     ]
 
 
+class LASTINPUTINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.UINT),
+        ("dwTime", wintypes.DWORD),
+    ]
+
+
 class JarvisHeartbeat:
-    """Ambient background monitor coordinating proactive spoken alerts and briefings."""
+    """Ambient background monitor coordinating proactive spoken alerts, briefings, and desktop presence."""
 
     def __init__(self, orchestrator: Any, config: Dict[str, Any]):
         self.orchestrator = orchestrator
@@ -39,6 +46,13 @@ class JarvisHeartbeat:
         self.battery_alerts = hb_cfg.get("battery_alerts", True)
         self.ergonomic_alerts = hb_cfg.get("ergonomic_reminders", True)
         self.email_alerts = hb_cfg.get("email_notifications", True)
+        self.desktop_presence = hb_cfg.get("desktop_presence", True)
+        self.idle_threshold_seconds = hb_cfg.get("idle_threshold_seconds", 300)
+
+        # Presence & active window state tracking (Wake-Decide-Sleep)
+        self._is_user_idle = False
+        self._last_active_window = ""
+        self._last_return_alert = 0.0
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -132,6 +146,8 @@ class JarvisHeartbeat:
             try:
                 now = time.time()
                 if now >= self._startup_grace_period:
+                    if self.desktop_presence:
+                        self._check_desktop_presence()
                     if self.auto_briefing:
                         self._check_morning_briefing()
                     if self.calendar_alerts:
@@ -148,6 +164,119 @@ class JarvisHeartbeat:
             # Laptop Thermal Profile: relax timer frequency on battery power to prevent waking CPU cores
             sleep_duration = self.tick_interval * 2 if self._is_on_battery() else self.tick_interval
             time.sleep(sleep_duration)
+
+    def get_idle_seconds(self) -> float:
+        """Returns the number of seconds since the last physical keyboard or mouse input (<0.01ms)."""
+        try:
+            lii = LASTINPUTINFO()
+            lii.cbSize = ctypes.sizeof(LASTINPUTINFO)
+            if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
+                millis = ctypes.windll.kernel32.GetTickCount() - lii.dwTime
+                return max(0.0, float(millis) / 1000.0)
+        except Exception as e:
+            logger.debug(f"Win32 GetLastInputInfo notice: {e}")
+        return 0.0
+
+    def get_active_window_title(self) -> str:
+        """Returns the window title of the current foreground window in <0.05ms."""
+        try:
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            if hwnd:
+                length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+                if length > 0:
+                    buf = ctypes.create_unicode_buffer(length + 1)
+                    ctypes.windll.user32.GetWindowTextW(hwnd, buf, length + 1)
+                    return buf.value.strip()
+        except Exception as e:
+            logger.debug(f"Win32 GetForegroundWindow notice: {e}")
+        return ""
+
+    def _check_desktop_presence(self):
+        """Monitors user presence and active workstation context (Wake-Decide-Sleep architecture)."""
+        idle_sec = self.get_idle_seconds()
+        current_title = self.get_active_window_title()
+
+        # 1. User Idle / Absence State Transition
+        if idle_sec >= self.idle_threshold_seconds:
+            if not self._is_user_idle:
+                self._is_user_idle = True
+                logger.info(f"Workstation user presence transitioned to IDLE ({idle_sec:.0f}s elapsed).")
+                if hasattr(self.orchestrator, "broadcast_ambient_telemetry"):
+                    self.orchestrator.broadcast_ambient_telemetry({
+                        "event": "user_idle",
+                        "idle_duration_s": round(idle_sec, 1),
+                    })
+        elif self._is_user_idle and idle_sec < 15.0:
+            # 2. User Return Detection (User resumed activity after >idle_threshold_seconds)
+            self._is_user_idle = False
+            logger.info("Workstation user presence transitioned to ACTIVE (Sir has returned).")
+            self._handle_user_return(current_title)
+
+        # 3. Active Window Focus Transition Tracking
+        if current_title and current_title != self._last_active_window:
+            self._last_active_window = current_title
+            try:
+                self.orchestrator.memory.remember_fact(
+                    "active_desktop_context",
+                    current_title,
+                    category="workstation"
+                )
+            except Exception as e:
+                logger.debug(f"Could not stage active desktop context: {e}")
+
+            if hasattr(self.orchestrator, "broadcast_ambient_telemetry"):
+                self.orchestrator.broadcast_ambient_telemetry({
+                    "event": "window_focus",
+                    "title": current_title,
+                })
+
+    def _handle_user_return(self, current_title: str):
+        """Processes user return: stages context, updates HUD, and checks for imminent meetings."""
+        now = time.time()
+        # Cooldown of at least 5 minutes between return alerts to prevent flapping
+        if now - self._last_return_alert < 300:
+            return
+
+        self._last_return_alert = now
+
+        if current_title:
+            try:
+                self.orchestrator.memory.remember_fact(
+                    "active_desktop_context",
+                    current_title,
+                    category="workstation"
+                )
+            except Exception:
+                pass
+
+        if hasattr(self.orchestrator, "broadcast_ambient_telemetry"):
+            self.orchestrator.broadcast_ambient_telemetry({
+                "event": "user_returned",
+                "active_context": current_title,
+            })
+
+        # Check for urgent upcoming calendar events starting in <= 10 minutes
+        try:
+            events = self.orchestrator.memory.get_calendar_events()
+            dt_now = datetime.datetime.now()
+            for event in events:
+                eid = event["id"]
+                if eid in self._alerted_event_ids:
+                    continue
+                start_dt = self._parse_time(event["start_time"], event.get("created_at"))
+                if not start_dt:
+                    continue
+                delta_minutes = int((start_dt - dt_now).total_seconds() // 60)
+                if 0 <= delta_minutes <= 10:
+                    title = event["title"]
+                    loc = f" at {event['location']}" if event.get("location") else ""
+                    time_desc = "shortly" if delta_minutes <= 1 else f"in {delta_minutes} minutes"
+                    msg = f"Welcome back, Sir. Quick reminder: '{title}' commences {time_desc}{loc}."
+                    if self.speak_proactive(msg):
+                        self._mark_event_alerted(eid)
+                        break
+        except Exception as e:
+            logger.debug(f"Return calendar check notice: {e}")
 
     def _is_on_battery(self) -> bool:
         """Returns True if workstation is running on battery power (unplugged)."""
