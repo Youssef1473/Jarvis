@@ -755,34 +755,59 @@ Autonomous Self-Building & Dynamic Feature Creation:
             return SkillRegistry.execute("get_battery_status")
 
         # 4. Browser Tabs & URL Navigation (<15ms)
+        services_map = {
+            "youtube": "https://youtube.com",
+            "google": "https://google.com",
+            "github": "https://github.com",
+            "reddit": "https://reddit.com",
+            "twitter": "https://x.com",
+            "chatgpt": "https://chatgpt.com",
+            "gmail": "https://mail.google.com",
+            "netflix": "https://netflix.com",
+            "spotify": "https://open.spotify.com",
+            "twitch": "https://twitch.tv",
+        }
+
+        service_target = None
+        for svc_name, svc_url in services_map.items():
+            if re.search(rf"\b{svc_name}\b", clean) and any(
+                w in clean for w in ("tab", "open", "launch", "navigate", "go to", "visit", "browse", "enter", "in brave", "in chrome", "in edge")
+            ):
+                service_target = svc_url
+                break
+
         url_match = re.search(
             r"(https?://\S+|[a-zA-Z0-9_\-\.]+\.(?:com|org|net|io|edu|gov|dev|ai|app|co|uk|de|fr|ca|me|tv|xyz|gg)(?:/[^\s]*)?)",
             clean,
             re.IGNORECASE,
         )
-        if url_match and any(v in clean for v in ("open", "go to", "navigate", "visit", "launch", "browse", "enter", "tab", "load", "in brave", "in chrome", "in edge")):
-            target_url = url_match.group(1).rstrip(".,!?")
+        if (url_match or service_target) and any(v in clean for v in ("open", "go to", "navigate", "visit", "launch", "browse", "enter", "tab", "load", "in brave", "in chrome", "in edge")):
+            target_url = url_match.group(1).rstrip(".,!?") if url_match else service_target
             b = "brave"
             if "chrome" in clean:
                 b = "chrome"
             elif "edge" in clean or "msedge" in clean:
                 b = "msedge"
-            return SkillRegistry.execute("open_browser_tab", url=target_url, browser=b)
+            reuse_tab = any(k in clean for k in ("in that tab", "in that brave tab", "in the tab", "in this tab", "in that window", "in the active tab", "enter a link in that brave tab"))
+            call_kwargs = {"url": target_url, "browser": b}
+            if reuse_tab:
+                call_kwargs["new_tab"] = False
+            return SkillRegistry.execute("open_browser_tab", **call_kwargs)
 
-        # Brave variations (e.g. "open a tab in my current brave", "open a tab in brave", "open a tab and brave", "open brave", "new brave tab")
-        if re.search(r"^(?:open|launch|start|new)?\s*(?:a\s+)?(?:new\s+)?tab\s+(?:in|and|on|for)\s+(?:my\s+|the\s+)?(?:current\s+)?brave(?:\s+tab|\s+window)?$|^(?:open|launch|start|open a|new)\s+(?:brave\s+tab|brave|brave browser)$|^brave\s+tab$", clean):
+        # Brave variations (e.g. "open a tab in my current brave", "open a tab in brave", "open a tab and brave", "open brave", "new brave tab", "open a brave tab for me")
+        if re.search(r"^(?:open|launch|start|new)?\s*(?:a\s+)?(?:new\s+)?tab\s+(?:in|and|on|for)\s+(?:my\s+|the\s+)?(?:current\s+)?brave(?:\s+tab|\s+window)?(?:\s+for\s+me|\s+please)?$|^(?:open|launch|start|open a|new)\s+(?:brave\s+tab|brave|brave browser)(?:\s+for\s+me|\s+please)?$|^brave\s+tab$", clean):
             return SkillRegistry.execute("open_browser_tab", browser="brave")
 
         # Chrome variations
-        if re.search(r"^(?:open|launch|start|new)?\s*(?:a\s+)?(?:new\s+)?tab\s+(?:in|and|on|for)\s+chrome(?:\s+tab|\s+window)?$|^(?:open|launch|start|open a|new)\s+(?:chrome\s+tab|chrome|chrome browser)$|^chrome\s+tab$", clean):
+        if re.search(r"^(?:open|launch|start|new)?\s*(?:a\s+)?(?:new\s+)?tab\s+(?:in|and|on|for)\s+chrome(?:\s+tab|\s+window)?(?:\s+for\s+me|\s+please)?$|^(?:open|launch|start|open a|new)\s+(?:chrome\s+tab|chrome|chrome browser)(?:\s+for\s+me|\s+please)?$|^chrome\s+tab$", clean):
             return SkillRegistry.execute("open_browser_tab", browser="chrome")
 
         # Edge variations
-        if re.search(r"^(?:open|launch|start|new)?\s*(?:a\s+)?(?:new\s+)?tab\s+(?:in|and|on|for)\s+edge(?:\s+tab|\s+window)?$|^(?:open|launch|start|open a|new)\s+(?:edge\s+tab|edge|msedge)$|^edge\s+tab$", clean):
+        if re.search(r"^(?:open|launch|start|new)?\s*(?:a\s+)?(?:new\s+)?tab\s+(?:in|and|on|for)\s+edge(?:\s+tab|\s+window)?(?:\s+for\s+me|\s+please)?$|^(?:open|launch|start|open a|new)\s+(?:edge\s+tab|edge|msedge)(?:\s+for\s+me|\s+please)?$|^edge\s+tab$", clean):
             return SkillRegistry.execute("open_browser_tab", browser="msedge")
 
         # Generic new tab
-        if re.search(r"^(?:open|launch|new)?\s*(?:a\s+)?(?:new\s+)?tab$", clean):
+        if re.search(r"^(?:open|launch|new)?\s*(?:a\s+)?(?:new\s+)?tab(?:\s+for\s+me|\s+please)?$", clean):
             return SkillRegistry.execute("open_browser_tab")
 
         # 5. Window Switching / Focus

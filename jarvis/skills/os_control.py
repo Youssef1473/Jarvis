@@ -691,18 +691,19 @@ def take_desktop_screenshot(filename: str = "") -> str:
 
 @SkillRegistry.register(
     name="open_browser_tab",
-    description="Opens a new tab or navigates to a specific URL in Brave, Chrome, Edge, or the desktop browser."
+    description="Opens a new tab or navigates to a specific URL in Brave, Chrome, Edge, or the desktop browser. Reuses active empty tabs automatically without duplicate tabs."
 )
-def open_browser_tab(url: str = "", browser: str = "brave") -> str:
+def open_browser_tab(url: str = "", browser: str = "brave", new_tab: bool = True) -> str:
     """Opens a new tab or URL in the requested desktop browser.
-    If the browser is already running on the desktop, focuses the active window and presses Ctrl+T.
+    If the browser is already running on the desktop, focuses the active window and navigates.
+    Reuses existing empty New Tab pages without redundant duplicate tabs.
     """
     browser_clean = (browser or "brave").lower().strip()
     target_url = url.strip()
     if target_url and not target_url.startswith(("http://", "https://", "about:", "chrome:", "brave:")):
         target_url = "https://" + target_url
 
-    # 1. Fast Path: If an active browser window is already open, focus it and press Ctrl+T immediately!
+    # 1. Fast Path: If an active browser window is already open, focus it and navigate
     try:
         import win32gui
         import win32con
@@ -710,10 +711,14 @@ def open_browser_tab(url: str = "", browser: str = "brave") -> str:
         matched_hwnds = []
 
         def _enum_win(hwnd, _):
-            if win32gui.IsWindowVisible(hwnd):
-                w_title = win32gui.GetWindowText(hwnd).strip()
-                if w_title and browser_clean in w_title.lower():
-                    matched_hwnds.append((hwnd, w_title))
+            try:
+                if win32gui.IsWindowVisible(hwnd):
+                    w_title = win32gui.GetWindowText(hwnd).strip()
+                    if w_title and browser_clean in w_title.lower():
+                        matched_hwnds.append((hwnd, w_title))
+            except Exception:
+                pass
+            return True
 
         win32gui.EnumWindows(_enum_win, None)
 
@@ -723,9 +728,22 @@ def open_browser_tab(url: str = "", browser: str = "brave") -> str:
             win32gui.SetForegroundWindow(hwnd)
             time.sleep(0.06)
             pyautogui.FAILSAFE = False
-            pyautogui.hotkey("ctrl", "t")
+
+            # Check if current tab is an empty New Tab / blank page
+            is_blank_tab = any(
+                k in found_title.lower()
+                for k in ("new tab", "about:blank", "speed dial", "start page")
+            )
+
             if target_url:
-                time.sleep(0.05)
+                # If sitting on a blank tab or new_tab is False, reuse the active tab directly via address bar!
+                if not is_blank_tab and new_tab:
+                    pyautogui.hotkey("ctrl", "t")
+                    time.sleep(0.05)
+                else:
+                    pyautogui.hotkey("ctrl", "l")
+                    time.sleep(0.04)
+
                 old_clip = pyperclip.paste()
                 pyperclip.copy(target_url)
                 pyautogui.hotkey("ctrl", "v")
@@ -741,7 +759,11 @@ def open_browser_tab(url: str = "", browser: str = "brave") -> str:
 
                 threading.Thread(target=_restore, daemon=True).start()
                 return f"Opened '{target_url}' in your active {browser_clean.title()} window, Sir."
-            return f"Opened a new tab in your active {browser_clean.title()} window, Sir."
+            else:
+                # Blank tab requested
+                if not is_blank_tab or new_tab:
+                    pyautogui.hotkey("ctrl", "t")
+                return f"Opened a new tab in your active {browser_clean.title()} window, Sir."
     except Exception as e:
         logger.debug(f"Active window tab notice: {e}")
 
