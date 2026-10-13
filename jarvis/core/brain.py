@@ -643,8 +643,12 @@ Autonomous Self-Building & Dynamic Feature Creation:
         Bypasses slow cloud round-trips for instant physical and spoken execution.
         """
         lower = norm_text.lower().strip()
-        # Strip common leading fillers: "no,", "hey jarvis,", "jarvis,", "okay jarvis,", "ok jarvis,", "please"
-        clean = re.sub(r"^(?:no[,.]?|hey jarvis[,.]?|jarvis[,.]?|okay jarvis[,.]?|ok jarvis[,.]?|please)\s+", "", lower).strip()
+        # Strip common leading fillers and polite preambles: "no,", "hey jarvis,", "i want you to", "could you", etc.
+        clean = re.sub(
+            r"^(?:no[,.]?|hey jarvis[,.]?|jarvis[,.]?|okay jarvis[,.]?|ok jarvis[,.]?|please|i want you to|could you(?: please)?|can you(?: please)?|would you(?: please)?)\s+",
+            "",
+            lower,
+        ).strip()
         clean = re.sub(r"[.!?,]+$", "", clean).strip()
 
         # Disallow reflex execution if Sir is asking a question or self-evolution

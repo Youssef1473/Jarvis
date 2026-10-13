@@ -245,14 +245,22 @@ class JarvisOrchestrator:
                 block_size = 1280
                 sample_rate = self.sample_rate
 
+                audio_cfg = self.config.get("audio", {})
+                silence_threshold = float(audio_cfg.get("silence_threshold_seconds", 1.4))
+                max_record_seconds = float(audio_cfg.get("max_record_seconds", 15.0))
+                initial_timeout_seconds = float(audio_cfg.get("initial_timeout_seconds", 3.5))
+
+                chunk_duration = block_size / sample_rate
+                max_chunks = int(max_record_seconds / chunk_duration)
+                initial_timeout_chunks = int(initial_timeout_seconds / chunk_duration)
+                silence_chunks_needed = max(14, int(silence_threshold / chunk_duration))
+
                 speech_started = False
                 silence_chunk_count = 0
-                max_chunks = int(7.0 * sample_rate / block_size)
-                initial_timeout_chunks = int(2.5 * sample_rate / block_size)
 
                 with sd.InputStream(samplerate=sample_rate, channels=1, dtype="float32", blocksize=block_size) as stream:
                     for chunk_idx in range(max_chunks):
-                        if self._is_recording:
+                        if self._is_recording or getattr(self, "_stopped", False):
                             break
 
                         data, _ = stream.read(block_size)
@@ -262,16 +270,21 @@ class JarvisOrchestrator:
                         data_int16 = (data[:, 0] * 32767).astype(np.int16)
                         vad_score = vad.predict(data_int16)
 
-                        if vad_score >= 0.35:
+                        if vad_score >= 0.32:
                             speech_started = True
                             silence_chunk_count = 0
                         elif speech_started:
-                            if vad_score < 0.28:
+                            if vad_score < 0.25:
                                 silence_chunk_count += 1
-                                # 7 silent chunks * 80ms = ~560ms of silence -> auto-cutoff!
-                                if silence_chunk_count >= 7:
-                                    logger.info(f"VAD auto-cutoff triggered (speech concluded at {chunk_idx * 0.08:.1f}s).")
+                                if silence_chunk_count >= silence_chunks_needed:
+                                    logger.info(
+                                        f"VAD speech concluded at {chunk_idx * chunk_duration:.1f}s "
+                                        f"({silence_chunk_count * chunk_duration:.2f}s pause)."
+                                    )
                                     break
+                            else:
+                                # Intermediate sound / soft consonant: decay silence count rather than increment
+                                silence_chunk_count = max(0, silence_chunk_count - 1)
                         else:
                             if chunk_idx >= initial_timeout_chunks:
                                 logger.info("VAD: no speech detected after wake word.")

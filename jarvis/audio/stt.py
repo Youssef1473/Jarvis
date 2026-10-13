@@ -3,6 +3,7 @@ import os
 import sys
 from pathlib import Path
 import logging
+import re
 from typing import Dict, Any, Optional
 import numpy as np
 
@@ -32,6 +33,29 @@ def _setup_nvidia_dll_paths():
 
 class SpeechToText:
     """Wrapper around faster-whisper with automatic GPU/CPU selection and runtime fallback."""
+
+    COMMON_PHONETIC_FIXES = [
+        (re.compile(r"\bbrave\s+tower\b", re.IGNORECASE), "Brave tab"),
+        (re.compile(r"\bbrave\s+top\b", re.IGNORECASE), "Brave tab"),
+        (re.compile(r"\bbrave\s+tap\b", re.IGNORECASE), "Brave tab"),
+        (re.compile(r"\bbrave\s+tag\b", re.IGNORECASE), "Brave tab"),
+        (re.compile(r"\bbe\s+open\s+it\b", re.IGNORECASE), "will you open it"),
+        (re.compile(r"\bchrome\s+tower\b", re.IGNORECASE), "Chrome tab"),
+        (re.compile(r"\bchrome\s+top\b", re.IGNORECASE), "Chrome tab"),
+        (re.compile(r"\bedge\s+tower\b", re.IGNORECASE), "Edge tab"),
+        (re.compile(r"\bvs\s+cold\b", re.IGNORECASE), "VS Code"),
+        (re.compile(r"\bvs\s+cope\b", re.IGNORECASE), "VS Code"),
+    ]
+
+    @classmethod
+    def clean_transcription(cls, text: str) -> str:
+        """Applies domain phonetic corrections for common browser and system commands."""
+        if not text:
+            return ""
+        cleaned = text
+        for pattern, replacement in cls.COMMON_PHONETIC_FIXES:
+            cleaned = pattern.sub(replacement, cleaned)
+        return cleaned.strip()
 
     def __init__(self, config: Dict[str, Any]):
         _setup_nvidia_dll_paths()
@@ -98,8 +122,8 @@ class SpeechToText:
         gc.collect()
 
     @staticmethod
-    def _trim_audio_silence(audio: np.ndarray, sample_rate: int = 16000, threshold: float = 0.012, pad_ms: int = 150) -> np.ndarray:
-        """Trims leading and trailing silence from audio array using RMS energy."""
+    def _trim_audio_silence(audio: np.ndarray, sample_rate: int = 16000, threshold: float = 0.008, pad_ms: int = 300) -> np.ndarray:
+        """Trims leading and trailing silence from audio array using RMS energy while protecting trailing phonemes."""
         if len(audio) == 0:
             return audio
 
@@ -123,7 +147,7 @@ class SpeechToText:
 
     def transcribe(self, audio_data: np.ndarray, sample_rate: int = 16000) -> str:
         """
-        Transcribes audio array with turbo greedy decoding and automatic CPU fallback.
+        Transcribes audio array with beam search decoding, domain prompt conditioning, and automatic fallback.
         """
         pin_and_elevate_current_thread(tag="WhisperSTT")
         if self.model is None:
@@ -141,7 +165,7 @@ class SpeechToText:
         if max_abs > 1.0:
             audio_data = audio_data / max_abs
 
-        # Energy-based silence pre-trimming
+        # Energy-based silence pre-trimming with safe 300ms boundary protection
         audio_to_transcribe = self._trim_audio_silence(audio_data, sample_rate=sample_rate) if self.trim_silence else audio_data
 
         try:
@@ -154,12 +178,12 @@ class SpeechToText:
                 initial_prompt=self.initial_prompt,
                 vad_filter=self.vad_filter,
                 vad_parameters=dict(
-                    min_silence_duration_ms=250,
-                    speech_pad_ms=150,
+                    min_silence_duration_ms=300,
+                    speech_pad_ms=200,
                 ),
             )
             text = " ".join([segment.text for segment in segments]).strip()
-            return text
+            return self.clean_transcription(text)
         except Exception as e:
             logger.warning(f"Transcription error encountered: {e}. Switching to CPU...")
             try:
@@ -174,12 +198,12 @@ class SpeechToText:
                     initial_prompt=self.initial_prompt,
                     vad_filter=self.vad_filter,
                     vad_parameters=dict(
-                        min_silence_duration_ms=250,
-                        speech_pad_ms=150,
+                        min_silence_duration_ms=300,
+                        speech_pad_ms=200,
                     ),
                 )
                 text = " ".join([segment.text for segment in segments]).strip()
-                return text
+                return self.clean_transcription(text)
             except Exception as e2:
                 logger.error(f"CPU transcription fallback also failed: {e2}")
                 return ""
