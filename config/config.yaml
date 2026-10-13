@@ -4,9 +4,10 @@
 
 llm:
   provider: "antigravity"              # Providers: "hybrid", "antigravity" (Google AI Pro), "ollama", "groq", "gemini"
-  antigravity_model: "gemini-3.8-flash-low" # Google AI Pro Models: "gemini-3.1-pro-low", "gemini-3.8-flash-low", "claude-sonnet-4-6", "claude-opus-4-6-thinking"
-  antigravity_effort: "low"        # Reasoning effort: "low", "medium", "high"
-  antigravity_auto_tiering: false  # Automatically route prompt to Flash (chat), Pro (reasoning), Claude (code)
+  antigravity_model: "gemini-3.8-flash-high" # Google AI Pro Models: "gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low", "claude-sonnet-4-6", "claude-opus-4-6-thinking"
+  antigravity_effort: "high"       # Reasoning effort: "high", "medium", "low" (High maxes thinking capacity)
+  antigravity_auto_tiering: false  # Automatically route prompt to Flash Low (chat), Flash High (reasoning), Claude (code)
+  staged_fallback_model: "gemini-4-argon-high" # Staged next-gen model; activates once server-side locks are lifted
   ollama_base_url: "http://127.0.0.1:11434/v1"
   ollama_model: "qwen3.5:2b-q4_K_M" # Compact local vision/tool model for 4 GB GPUs
   ollama_timeout_seconds: 180
@@ -21,10 +22,11 @@ llm:
     enabled: true                # Specialists are invoked only with "consult <provider>: ..."
     allow_metered_api_calls: false # Grok/Claude developer APIs are not assumed free (Antigravity handles Claude at $0)
     models:
-      antigravity: "gemini-3.1-pro-low" # Google AI Pro via local authenticated CLI session
-      pro: "gemini-3.1-pro-low"
-      gemini: "gemini-3.1-pro-low"
+      antigravity: "gemini-3.8-flash-high" # Google AI Pro via local authenticated CLI session (Max Reasoning)
+      pro: "gemini-3.8-flash-high"         # Re-routed to Gemini 3.8 Flash High
+      gemini: "gemini-3.8-flash-high"
       flash: "gemini-3.8-flash-low"
+      argon_staged: "gemini-4-argon-high"  # Staged for server-side lock release
       claude: "claude-sonnet-4-6" # Powered by local Antigravity session at $0
       groq: "qwen/qwen3.8-27b"
       grok: "grok-4.6"

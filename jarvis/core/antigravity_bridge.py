@@ -1,6 +1,6 @@
 """Antigravity CLI (agy) Bridge for Jarvis 2.0.
 Leverages authenticated Google Antigravity CLI sessions to tap into Google AI Pro
-(Gemini 3.1 Pro, Gemini 3.8 Flash, Claude Sonnet 4.6, Claude Opus 4.6) with zero API keys.
+(Gemini 3.8 Flash High/Medium/Low, Claude Sonnet 4.6, Claude Opus 4.6, and staged Gemini 4 Argon) with zero API keys.
 """
 import json
 import logging
@@ -17,38 +17,38 @@ logger = logging.getLogger("Jarvis.Antigravity")
 
 class AntigravityBridge:
     """Bridges Jarvis to local Google Antigravity CLI (`agy`) daemon/executable.
-    Enables zero-cost access to Gemini 3.1 Pro, Gemini 3.8 Flash, Claude Sonnet 4.6,
-    and Claude Opus using the user's active Google account subscription.
+    Enables zero-cost access to Gemini 3.8 Flash (High/Medium/Low), Claude Sonnet 4.6,
+    Claude Opus 4.6, and staged Gemini 4 Argon using the user's active Google account subscription.
     """
 
     # Comprehensive catalog of Antigravity models and convenient shorthand aliases
     MODEL_CATALOG: Dict[str, str] = {
-        # Gemini 3.8 Flash Tier (3 variants: low, medium, high)
-        "gemini-3.8-flash": "gemini-3.8-flash-low",
-        "gemini-3.8-flash-low": "gemini-3.8-flash-low",
-        "gemini-3.8-flash-medium": "gemini-3.8-flash-medium",
+        # Gemini 3.8 Flash Tier (Primary Active Engine - High, Medium, Low Reasoning)
+        "gemini-3.8-flash": "gemini-3.8-flash-high",
         "gemini-3.8-flash-high": "gemini-3.8-flash-high",
+        "gemini-3.8-flash-medium": "gemini-3.8-flash-medium",
+        "gemini-3.8-flash-low": "gemini-3.8-flash-low",
         "flash": "gemini-3.8-flash-low",
         "flash-low": "gemini-3.8-flash-low",
         "flash-medium": "gemini-3.8-flash-medium",
         "flash-high": "gemini-3.8-flash-high",
-        "3.8": "gemini-3.8-flash-low",
+        "3.8": "gemini-3.8-flash-high",
         "3.8-low": "gemini-3.8-flash-low",
         "3.8-medium": "gemini-3.8-flash-medium",
         "3.8-high": "gemini-3.8-flash-high",
         "gemini-flash": "gemini-3.8-flash-low",
 
-        # Gemini 3.1 Pro Tier (2 variants: low, high)
-        "gemini-3.1-pro": "gemini-3.1-pro-low",
-        "gemini-3.1-pro-low": "gemini-3.1-pro-low",
-        "gemini-3.1-pro-high": "gemini-3.1-pro-high",
-        "pro": "gemini-3.1-pro-low",
-        "pro-low": "gemini-3.1-pro-low",
-        "pro-high": "gemini-3.1-pro-high",
-        "3.1": "gemini-3.1-pro-low",
-        "3.1-low": "gemini-3.1-pro-low",
-        "3.1-high": "gemini-3.1-pro-high",
-        "gemini-pro": "gemini-3.1-pro-low",
+        # Legacy Pro Aliases -> Re-routed seamlessly to Gemini 3.8 Flash High
+        "gemini-3.1-pro": "gemini-3.8-flash-high",
+        "gemini-3.1-pro-low": "gemini-3.8-flash-high",
+        "gemini-3.1-pro-high": "gemini-3.8-flash-high",
+        "pro": "gemini-3.8-flash-high",
+        "pro-low": "gemini-3.8-flash-high",
+        "pro-high": "gemini-3.8-flash-high",
+        "3.1": "gemini-3.8-flash-high",
+        "3.1-low": "gemini-3.8-flash-high",
+        "3.1-high": "gemini-3.8-flash-high",
+        "gemini-pro": "gemini-3.8-flash-high",
 
         # Claude Frontier Tier (Available in Antigravity)
         "claude-sonnet-4-6": "claude-sonnet-4-6",
@@ -62,30 +62,42 @@ class AntigravityBridge:
         # Open-Weights Frontier Tier
         "gpt-oss-120b-medium": "gpt-oss-120b-medium",
         "gpt-oss": "gpt-oss-120b-medium",
+
+        # Staged Gemini 4 Argon Tier (Forward-Compatibility Placeholders)
+        "gemini-4-argon-high": "gemini-4-argon-high",
+        "gemini-4-argon-medium": "gemini-4-argon-medium",
+        "gemini-4-argon-low": "gemini-4-argon-low",
+        "gemini-4-argon": "gemini-4-argon-high",
+        "gemini-4": "gemini-4-argon-high",
+        "argon": "gemini-4-argon-high",
+        "argon-high": "gemini-4-argon-high",
+        "argon-medium": "gemini-4-argon-medium",
+        "argon-low": "gemini-4-argon-low",
     }
 
     TIER_FLASH = [
-        "gemini-3.8-flash-low",
-        "gemini-3.8-flash-medium",
         "gemini-3.8-flash-high",
+        "gemini-3.8-flash-medium",
+        "gemini-3.8-flash-low",
     ]
-    TIER_PRO = [
-        "gemini-3.1-pro-low",
-        "gemini-3.1-pro-high",
+    TIER_ARGON = [
+        "gemini-4-argon-high",
+        "gemini-4-argon-medium",
+        "gemini-4-argon-low",
     ]
     TIER_CLAUDE = [
         "claude-sonnet-4-6",
         "claude-opus-4-6-thinking",
     ]
 
-    DEFAULT_MODEL = "gemini-3.1-pro-low"
+    DEFAULT_MODEL = "gemini-3.8-flash-high"
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
         llm_cfg = self.config.get("llm", {})
         self.agy_path = self._find_agy_executable()
         self.configured_model = llm_cfg.get("antigravity_model", self.DEFAULT_MODEL)
-        self.effort = llm_cfg.get("antigravity_effort", "low")
+        self.effort = llm_cfg.get("antigravity_effort", "high")
         self.last_latency_ms: float = 0.0
         self.last_conversation_id: Optional[str] = None
 
@@ -141,14 +153,14 @@ class AntigravityBridge:
     def get_candidate_cascade(self, model: str) -> List[str]:
         """Builds a priority fallback cascade within the Google AI Pro fleet."""
         resolved = self.resolve_model(model)
-        if "flash" in resolved:
+        if "argon" in resolved:
+            pool = list(self.TIER_ARGON) + ["gemini-3.8-flash-high", "gemini-3.8-flash-medium"]
+        elif "flash" in resolved:
             pool = list(self.TIER_FLASH)
-        elif "pro" in resolved:
-            pool = list(self.TIER_PRO) + ["gemini-3.8-flash-low"]
         elif "claude" in resolved:
-            pool = list(self.TIER_CLAUDE) + ["gemini-3.1-pro-low", "gemini-3.8-flash-low"]
+            pool = list(self.TIER_CLAUDE) + ["gemini-3.8-flash-high"]
         else:
-            pool = [resolved, "gemini-3.8-flash-low", "gemini-3.1-pro-low"]
+            pool = [resolved, "gemini-3.8-flash-high", "gemini-3.8-flash-low"]
 
         # Ensure requested model is first
         ordered = [resolved] + [m for m in pool if m != resolved]
@@ -162,12 +174,12 @@ class AntigravityBridge:
         if any(w in p for w in code_words):
             return "claude-sonnet-4-6"
 
-        # 2. Hard Reasoning, Math, Logic, Planning -> Gemini 3.1 Pro
+        # 2. Hard Reasoning, Math, Logic, Planning -> Gemini 3.8 Flash High (Max Reasoning Capacity)
         reasoning_words = ["analyze", "plan", "strategy", "why does", "math", "calculate", "solve", "syllabus", "timetable", "essay", "architecture", "compare", "proof"]
         if any(w in p for w in reasoning_words) or len(p.split()) > 25:
-            return "gemini-3.1-pro-low"
+            return "gemini-3.8-flash-high"
 
-        # 3. Fast Voice, Banter, Greetings, Device control -> Gemini 3.8 Flash
+        # 3. Fast Voice, Banter, Greetings, Device control -> Gemini 3.8 Flash Low
         return "gemini-3.8-flash-low"
 
     def generate_response(

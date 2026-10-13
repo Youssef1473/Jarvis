@@ -16,7 +16,7 @@ class TestPCControlAndPerformance(unittest.TestCase):
     def setUp(self):
         self.config = load_config()
         self.config["llm"]["provider"] = "antigravity"
-        self.config["llm"]["antigravity_model"] = "gemini-3.1-pro-low"
+        self.config["llm"]["antigravity_model"] = "gemini-3.8-flash-high"
         self.config["llm"]["antigravity_auto_tiering"] = False
         self.memory = MemoryManager(self.config)
         self.safety = SafetyGate(self.config)

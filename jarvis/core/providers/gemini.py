@@ -21,7 +21,7 @@ class GeminiProvider(BaseProvider):
 
     def __init__(
         self,
-        model: str = "gemini-3.8-flash-low",
+        model: str = "gemini-3.8-flash-high",
         api_key: Optional[str] = None,
         use_antigravity: bool = True,
         config: Optional[Dict[str, Any]] = None,

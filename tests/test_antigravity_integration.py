@@ -28,23 +28,26 @@ class TestAntigravityIntegration(unittest.TestCase):
         """Verifies Antigravity CLI binary discovery and model catalog mappings."""
         self.assertTrue(self.bridge.is_available(), "agy binary should be discoverable in PATH")
         models = self.bridge.list_models()
-        self.assertGreaterEqual(len(models), 8)
-        self.assertIn("gemini-3.1-pro-low", models)
-        self.assertIn("gemini-3.1-pro-high", models)
-        self.assertIn("gemini-3.8-flash-low", models)
-        self.assertIn("gemini-3.8-flash-medium", models)
+        self.assertGreaterEqual(len(models), 6)
         self.assertIn("gemini-3.8-flash-high", models)
+        self.assertIn("gemini-3.8-flash-medium", models)
+        self.assertIn("gemini-3.8-flash-low", models)
         self.assertIn("claude-sonnet-4-6", models)
+        self.assertIn("claude-opus-4-6-thinking", models)
+        self.assertIn("gemini-4-argon-high", models)
+        self.assertNotIn("gemini-3.1-pro-low", models)
+        self.assertNotIn("gemini-3.1-pro-high", models)
         self.assertNotIn("gemini-3.7-flash-low", models)
         self.assertNotIn("gemini-3.6-flash-low", models)
 
         # Verify aliases
-        self.assertEqual(self.bridge.resolve_model("pro"), "gemini-3.1-pro-low")
-        self.assertEqual(self.bridge.resolve_model("gemini-pro"), "gemini-3.1-pro-low")
+        self.assertEqual(self.bridge.resolve_model("pro"), "gemini-3.8-flash-high")
+        self.assertEqual(self.bridge.resolve_model("gemini-pro"), "gemini-3.8-flash-high")
         self.assertEqual(self.bridge.resolve_model("flash"), "gemini-3.8-flash-low")
         self.assertEqual(self.bridge.resolve_model("claude"), "claude-sonnet-4-6")
         self.assertEqual(self.bridge.resolve_model("sonnet"), "claude-sonnet-4-6")
         self.assertEqual(self.bridge.resolve_model("opus"), "claude-opus-4-6-thinking")
+        self.assertEqual(self.bridge.resolve_model("argon"), "gemini-4-argon-high")
 
     def test_antigravity_batch_generation(self):
         """Verifies real response generation with Google Antigravity session."""
@@ -91,45 +94,54 @@ class TestAntigravityIntegration(unittest.TestCase):
         self.assertIn("25", reply)
 
     def test_cascade_pool_building(self):
-        """Verifies candidate fallback pools only contain Gemini 3.8 Flash and Gemini 3.1 Pro variants."""
+        """Verifies candidate fallback pools contain Gemini 3.8 Flash and staged Argon variants."""
         flash_cascade = self.bridge.get_candidate_cascade("flash")
         self.assertEqual(flash_cascade[0], "gemini-3.8-flash-low")
         self.assertIn("gemini-3.8-flash-medium", flash_cascade)
         self.assertIn("gemini-3.8-flash-high", flash_cascade)
-        # Ensure 3.7 and 3.6 are NOT present
+        # Ensure deprecated 3.7, 3.6, and 3.1 Pro are NOT present
         self.assertNotIn("gemini-3.7-flash-low", flash_cascade)
         self.assertNotIn("gemini-3.6-flash-low", flash_cascade)
+        self.assertNotIn("gemini-3.1-pro-low", flash_cascade)
 
         pro_cascade = self.bridge.get_candidate_cascade("pro")
-        self.assertEqual(pro_cascade[0], "gemini-3.1-pro-low")
-        self.assertIn("gemini-3.1-pro-high", pro_cascade)
+        self.assertEqual(pro_cascade[0], "gemini-3.8-flash-high")
         self.assertIn("gemini-3.8-flash-low", pro_cascade)
+
+        argon_cascade = self.bridge.get_candidate_cascade("argon")
+        self.assertEqual(argon_cascade[0], "gemini-4-argon-high")
+        self.assertIn("gemini-3.8-flash-high", argon_cascade)
 
         claude_cascade = self.bridge.get_candidate_cascade("claude")
         self.assertEqual(claude_cascade[0], "claude-sonnet-4-6")
-        self.assertIn("gemini-3.1-pro-low", claude_cascade)
+        self.assertIn("gemini-3.8-flash-high", claude_cascade)
 
     def test_prompt_complexity_auto_tiering(self):
-        """Verifies prompt classification routes correctly to Flash, Pro, and Claude."""
+        """Verifies prompt classification routes correctly to Flash Low, Flash High, and Claude."""
         self.assertEqual(self.bridge.classify_prompt_tier("def refactor_code(): return True"), "claude-sonnet-4-6")
-        self.assertEqual(self.bridge.classify_prompt_tier("analyze the strategy and architecture of the codebase"), "gemini-3.1-pro-low")
+        self.assertEqual(self.bridge.classify_prompt_tier("analyze the strategy and architecture of the codebase"), "gemini-3.8-flash-high")
         self.assertEqual(self.bridge.classify_prompt_tier("hello jarvis what time is it"), "gemini-3.8-flash-low")
 
     def test_voice_model_switching_commands(self):
         """Verifies voice commands dynamically switch models and auto-tiering with punctuation resilience."""
         brain = JarvisBrain(self.config, self.memory, self.safety)
         
-        # Test switch to pro with trailing period
+        # Test switch to pro with trailing period -> rerouted to gemini-3.8-flash-high
         res_pro = brain.process_query("Switch to Pro.")
-        self.assertIn("gemini-3.1-pro-low", res_pro)
+        self.assertIn("gemini-3.8-flash-high", res_pro)
         self.assertFalse(brain.antigravity_auto_tiering)
         self.assertEqual(brain.provider, "antigravity")
-        self.assertEqual(brain.antigravity_model, "gemini-3.1-pro-low")
+        self.assertEqual(brain.antigravity_model, "gemini-3.8-flash-high")
 
-        # Test switch to pro high
+        # Test switch to pro high -> gemini-3.8-flash-high
         res_pro_high = brain.process_query("switch to pro high")
-        self.assertIn("gemini-3.1-pro-high", res_pro_high)
-        self.assertEqual(brain.antigravity_model, "gemini-3.1-pro-high")
+        self.assertIn("gemini-3.8-flash-high", res_pro_high)
+        self.assertEqual(brain.antigravity_model, "gemini-3.8-flash-high")
+
+        # Test switch to argon (staged)
+        res_argon = brain.process_query("switch to argon")
+        self.assertIn("gemini-4-argon-high", res_argon)
+        self.assertEqual(brain.antigravity_model, "gemini-4-argon-high")
 
         # Test switch to flash
         res_flash = brain.process_query("switch to flash")

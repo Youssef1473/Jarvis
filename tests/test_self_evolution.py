@@ -91,19 +91,19 @@ def test_mock_greeter(target_name: str = "Sir") -> str:
         safety = SafetyGate(config)
         brain = JarvisBrain(config, memory, safety)
 
-        # 1. User locks model to Gemini 3.1 Pro High
-        brain.antigravity_model = "gemini-3.1-pro-high"
+        # 1. User locks model to Gemini 3.8 Flash High
+        brain.antigravity_model = "gemini-3.8-flash-high"
         brain.antigravity_auto_tiering = False
 
-        # When asking to build a feature, it must stay locked to gemini-3.1-pro-high
+        # When asking to build a feature, it must stay locked to gemini-3.8-flash-high
         prompt = "Add a feature to yourself to open a Brave tab"
         # Simulate model extraction logic
-        self.assertEqual(brain.antigravity_model, "gemini-3.1-pro-high")
+        self.assertEqual(brain.antigravity_model, "gemini-3.8-flash-high")
 
         # 2. User specifies a model directly in the prompt
         explicit_prompt = "Using Claude, add a feature to yourself to open a Brave tab"
         override_match = brain.process_query.__globals__["re"].search(
-            r"\b(?:use|using|with)\s+(pro|flash|claude|sonnet|opus|3\.8|3\.1)(?:\s+(low|medium|med|high))?\b",
+            r"\b(?:use|using|with)\s+(pro|flash|claude|sonnet|opus|argon|3\.8|3\.1|4)(?:\s+(low|medium|med|high))?\b",
             explicit_prompt,
             brain.process_query.__globals__["re"].IGNORECASE,
         )
@@ -113,7 +113,7 @@ def test_mock_greeter(target_name: str = "Sir") -> str:
         # 3. User specifies Pro High directly in the prompt
         pro_prompt = "Use Pro High to build a feature to check free disk space"
         override_match_pro = brain.process_query.__globals__["re"].search(
-            r"\b(?:use|using|with)\s+(pro|flash|claude|sonnet|opus|3\.8|3\.1)(?:\s+(low|medium|med|high))?\b",
+            r"\b(?:use|using|with)\s+(pro|flash|claude|sonnet|opus|argon|3\.8|3\.1|4)(?:\s+(low|medium|med|high))?\b",
             pro_prompt,
             brain.process_query.__globals__["re"].IGNORECASE,
         )

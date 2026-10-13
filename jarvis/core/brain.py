@@ -152,13 +152,10 @@ Autonomous Self-Building & Dynamic Feature Creation:
     ]
 
     ANTIGRAVITY_CANDIDATE_MODELS = [
-        "gemini-3.1-pro-low",
-        "gemini-3.1-pro-high",
-        "gemini-3.8-flash-low",
-        "gemini-3.8-flash-medium",
         "gemini-3.8-flash-high",
-        "gemini-3.7-flash-low",
-        "gemini-3.6-flash-low",
+        "gemini-3.8-flash-medium",
+        "gemini-3.8-flash-low",
+        "gemini-4-argon-high",
         "claude-sonnet-4-6",
         "claude-opus-4-6-thinking",
         "gpt-oss-120b-medium",
@@ -270,7 +267,7 @@ Autonomous Self-Building & Dynamic Feature Creation:
 
         # Antigravity CLI Bridge (Google AI Pro integration)
         self.antigravity_bridge = AntigravityBridge(config)
-        configured_ag_model = config.get("llm", {}).get("antigravity_model", "gemini-3.1-pro-low")
+        configured_ag_model = config.get("llm", {}).get("antigravity_model", "gemini-3.8-flash-high")
         self.antigravity_candidates = [configured_ag_model] + [
             m for m in self.ANTIGRAVITY_CANDIDATE_MODELS if m != configured_ag_model
         ]
@@ -837,13 +834,13 @@ Autonomous Self-Building & Dynamic Feature Creation:
         )
         if auto_match and getattr(self, "antigravity_bridge", None) and self.antigravity_bridge.is_available():
             self.antigravity_auto_tiering = True
-            reply = "Dynamic model tiering activated, Sir. Routing automatically between Gemini 3.8 Flash for speed, Gemini 3.1 Pro for reasoning, and Claude for code."
+            reply = "Dynamic model tiering activated, Sir. Routing automatically between Gemini 3.8 Flash High for reasoning, Gemini 3.8 Flash Low for speed, and Claude for code."
             if sentence_callback:
                 sentence_callback(reply)
             return reply
 
         switch_match = re.match(
-            r"^(?:switch to|use|activate|set model to|enable)\s+(pro|flash|claude|sonnet|opus|gemini|3\.8|3\.1)(?:\s+(low|medium|med|high))?(?:\s+(?:mode|model))?$",
+            r"^(?:switch to|use|activate|set model to|enable)\s+(pro|flash|claude|sonnet|opus|gemini|argon|3\.8|3\.1|4)(?:\s+(low|medium|med|high))?(?:\s+(?:mode|model))?$",
             norm_text,
             re.IGNORECASE,
         )
@@ -852,9 +849,11 @@ Autonomous Self-Building & Dynamic Feature Creation:
             variant = (switch_match.group(2) or "").lower().strip()
 
             if base_model in ("pro", "3.1", "gemini-pro"):
-                eff = "high" if variant == "high" else "low"
-                new_model = f"gemini-3.1-pro-{eff}"
-            elif base_model in ("flash", "3.8", "gemini-flash"):
+                new_model = "gemini-3.8-flash-high"
+            elif base_model in ("argon", "4"):
+                eff = "medium" if variant in ("medium", "med") else ("low" if variant == "low" else "high")
+                new_model = f"gemini-4-argon-{eff}"
+            elif base_model in ("flash", "3.8", "gemini-flash", "gemini"):
                 if variant in ("high",):
                     new_model = "gemini-3.8-flash-high"
                 elif variant in ("medium", "med"):
@@ -1031,10 +1030,11 @@ Autonomous Self-Building & Dynamic Feature Creation:
 
         # Antigravity CLI Consultation (Google AI Pro & Claude Sonnet integration)
         ag_models_map = {
-            "pro": "gemini-3.1-pro-low",
-            "gemini-pro": "gemini-3.1-pro-low",
+            "pro": "gemini-3.8-flash-high",
+            "gemini-pro": "gemini-3.8-flash-high",
             "flash": "gemini-3.8-flash-low",
             "gemini-flash": "gemini-3.8-flash-low",
+            "argon": "gemini-4-argon-high",
             "claude": "claude-sonnet-4-6",
             "sonnet": "claude-sonnet-4-6",
             "opus": "claude-opus-4-6-thinking",
@@ -1824,7 +1824,7 @@ Autonomous Self-Building & Dynamic Feature Creation:
         return "My cognitive systems are temporarily congested, Sir. Please try again in a few moments."
 
     def _process_antigravity_query(self, user_text: str, sentence_callback: Any = None) -> str:
-        """Processes queries using the local Antigravity CLI (Gemini 3.1 Pro, 3.8 Flash, Claude Sonnet)."""
+        """Processes queries using the local Antigravity CLI (Gemini 3.8 Flash High/Low, Claude Sonnet, Claude Opus)."""
         t_start = time.perf_counter()
         tools = SkillRegistry.get_openai_tools(self.active_tool_names)
         system_instruction = self._get_system_instruction()
@@ -1849,7 +1849,7 @@ Autonomous Self-Building & Dynamic Feature Creation:
 
         # Determine target model: honor explicit user prompt directives, active user model selection, and self-build rules
         model_override_match = re.search(
-            r"\b(?:use|using|with)\s+(pro|flash|claude|sonnet|opus|3\.8|3\.1)(?:\s+(low|medium|med|high))?\b",
+            r"\b(?:use|using|with)\s+(pro|flash|claude|sonnet|opus|argon|3\.8|3\.1|4)(?:\s+(low|medium|med|high))?\b",
             user_text,
             re.IGNORECASE,
         )
@@ -1857,8 +1857,10 @@ Autonomous Self-Building & Dynamic Feature Creation:
             base = model_override_match.group(1).lower().strip()
             var = (model_override_match.group(2) or "").lower().strip()
             if base in ("pro", "3.1"):
-                eff = "high" if var == "high" else "low"
-                target_model = f"gemini-3.1-pro-{eff}"
+                target_model = "gemini-3.8-flash-high"
+            elif base in ("argon", "4"):
+                eff = "medium" if var in ("medium", "med") else ("low" if var == "low" else "high")
+                target_model = f"gemini-4-argon-{eff}"
             elif base in ("flash", "3.8"):
                 if var == "high":
                     target_model = "gemini-3.8-flash-high"
