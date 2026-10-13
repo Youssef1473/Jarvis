@@ -40,6 +40,7 @@ import jarvis.skills.photo_manager
 import jarvis.skills.diagnostics
 import jarvis.skills.browser_cdp
 import jarvis.skills.windows_uia
+import jarvis.skills.voice_control
 from jarvis.vision.screen_capture import ScreenPerception
 from jarvis.core.memory import MemoryManager
 from jarvis.core.safety import SafetyGate
@@ -229,6 +230,8 @@ Autonomous Self-Building & Dynamic Feature Creation:
         (("hardware watchdog", "thermal monitor", "watchdog", "system health check", "hardware health", "check hardware"), {"check_hardware_health", "start_hardware_watchdog", "stop_hardware_watchdog"}),
         (("deep research", "research topic", "investigate", "in-depth research", "compile report"), {"deep_research", "web_search"}),
         (("pdf", "document", "staged", "import pdf", "uploaded", "that pdf", "the pdf", "syllabus", "intake", "file explorer"), {"process_staged_document", "list_staged_documents"}),
+        (("voice profile", "change voice", "switch voice", "voice style", "classic voice", "friday voice", "speed up voice", "speak faster", "speak slower", "audio device", "sound device", "headphones", "switch speaker"), {"set_voice_profile", "set_speech_rate", "get_voice_settings", "list_audio_devices", "set_audio_output_device"}),
+        (("find file", "search file", "where is", "look for file", "locate file", "search desktop", "find my file"), {"search_desktop_files_fast"}),
     )
 
     def __init__(
@@ -972,6 +975,26 @@ Autonomous Self-Building & Dynamic Feature Creation:
         app_match = re.search(r"^(?:open|launch)\s+(calculator|calc|notepad|spotify|discord|terminal|task manager|settings)$", clean)
         if app_match:
             return SkillRegistry.execute("launch_application", app_name=app_match.group(1))
+
+        # 7. Voice Profile & Speech Rate Fast Reflex (<15ms)
+        voice_match = re.search(r"^(?:switch to|change voice to|set voice to|activate)\s+(?:the\s+)?(classic|authoritative|crisp|friday|george|lewis|daniel|emma|alice)(?:\s+voice|\s+persona)?(?:\s+for\s+me|\s+please)?$", clean)
+        if voice_match:
+            v_name = voice_match.group(1).lower()
+            if v_name in ("classic", "authoritative", "crisp"):
+                v_name = f"jarvis_{v_name}"
+            return SkillRegistry.execute("set_voice_profile", profile_name=v_name)
+
+        speed_faster = re.search(r"^(?:speak faster|speed up voice|talk faster)(?:\s+for\s+me|\s+please)?$", clean)
+        if speed_faster:
+            return SkillRegistry.execute("set_speech_rate", speed=1.20)
+
+        speed_slower = re.search(r"^(?:speak slower|slow down voice|talk slower)(?:\s+for\s+me|\s+please)?$", clean)
+        if speed_slower:
+            return SkillRegistry.execute("set_speech_rate", speed=0.90)
+
+        speed_reset = re.search(r"^(?:reset voice speed|normal voice speed|reset speech rate)(?:\s+for\s+me|\s+please)?$", clean)
+        if speed_reset:
+            return SkillRegistry.execute("set_speech_rate", speed=1.05)
 
         return None
 

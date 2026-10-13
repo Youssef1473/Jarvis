@@ -226,6 +226,80 @@ def launch_application(app_name: str) -> str:
         return f"Could not find or launch application '{app_name}', Sir: {e}"
 
 
+@SkillRegistry.register(
+    name="launch_or_focus_application",
+    description="Idempotent application activator: if the application or window is already running, brings it to focus via UIA; if closed, launches it."
+)
+def launch_or_focus_application(app_name: str) -> str:
+    """Focuses open application or launches it if not currently running."""
+    cleaned = (app_name or "").strip()
+    if not cleaned:
+        return "Application name cannot be empty, Sir."
+
+    # First probe if window or process is already active
+    try:
+        from jarvis.skills.windows_uia import focus_window_uia
+        focused_title = focus_window_uia(cleaned)
+        if focused_title:
+            return f"Switched to running application '{focused_title}', Sir."
+    except Exception as e:
+        logger.debug(f"UIA probe in launch_or_focus_application: {e}")
+
+    # Fall back to Win32 window focus check
+    try:
+        from jarvis.skills.os_control import focus_window
+        res = focus_window(cleaned)
+        if "switched" in res.lower() or "focused" in res.lower():
+            return res
+    except Exception as e:
+        logger.debug(f"focus_window check in launch_or_focus_application: {e}")
+
+    # Not currently open -> launch detached process
+    return launch_application(cleaned)
+
+
+@SkillRegistry.register(
+    name="search_desktop_files_fast",
+    description="Fast file search prioritizing desktop and user folders (Documents, Downloads, Projects, Desktop) with depth-bounded traversal."
+)
+def search_desktop_files_fast(query: str, max_results: int = 10) -> str:
+    """Performs fast file search prioritizing user directories and project trees."""
+    q_clean = (query or "").lower().strip()
+    if not q_clean:
+        return "Please specify a file name or search term, Sir."
+
+    user_home = Path.home()
+    search_roots = [
+        user_home / "Projects",
+        user_home / "Desktop",
+        user_home / "Documents",
+        user_home / "Downloads",
+    ]
+
+    found = []
+    for root in search_roots:
+        if not root.exists():
+            continue
+        try:
+            for p in root.rglob(f"*{q_clean}*"):
+                if p.is_file():
+                    parts = p.parts
+                    if any(part.startswith(".") or part == "__pycache__" for part in parts):
+                        continue
+                    found.append(str(p))
+                    if len(found) >= max_results:
+                        break
+        except Exception:
+            continue
+        if len(found) >= max_results:
+            break
+
+    if not found:
+        return f"No files matching '{query}' were found across your primary directories, Sir."
+
+    return f"Found {len(found)} file(s) matching '{query}', Sir:\n" + "\n".join(f"- {p}" for p in found)
+
+
 def _send_vk(vk_code: int):
     """Sends a native Win32 virtual keyboard event cleanly without mouse fail-safe interference."""
     try:

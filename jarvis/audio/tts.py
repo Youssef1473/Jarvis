@@ -30,9 +30,25 @@ def _set_thread_realtime_priority(tag: str = "KokoroTTS"):
 class TextToSpeech:
     """Streams and plays synthesized neural audio with instant interrupt capability and local fallback."""
 
+    VOICE_PROFILES: Dict[str, Any] = {
+        "jarvis_classic": [("bm_george", 0.70), ("bm_daniel", 0.30)],
+        "jarvis_authoritative": [("bm_george", 0.50), ("bm_lewis", 0.50)],
+        "jarvis_crisp": [("bm_daniel", 0.80), ("bm_fable", 0.20)],
+        "friday": [("bf_emma", 0.70), ("bf_isabella", 0.30)],
+        "george": "bm_george",
+        "lewis": "bm_lewis",
+        "daniel": "bm_daniel",
+        "fable": "bm_fable",
+        "emma": "bf_emma",
+        "alice": "bf_alice",
+        "isabella": "bf_isabella",
+        "lily": "bf_lily",
+    }
+
     def __init__(self, config: Dict[str, Any]):
         tts_cfg = config.get("tts", {})
         self.engine = tts_cfg.get("engine", "kokoro").lower()
+        self._voice_cache: Dict[str, Any] = {}
         
         # Kokoro Neural Voice Settings
         self.kokoro_voice = tts_cfg.get("kokoro_voice", "bm_george")
@@ -135,6 +151,69 @@ class TextToSpeech:
             self._sapi.Rate = self.sapi_rate
         except Exception as e:
             logger.warning(f"Local SAPI5 voice initialization failed: {e}")
+
+    def _resolve_voice(self) -> Any:
+        """Resolves active voice into a string identifier or normalized blended latent style array."""
+        if not self._kokoro:
+            return self.kokoro_voice
+        target = self.kokoro_voice
+        if isinstance(target, str):
+            clean = target.lower().strip()
+            if clean in self._voice_cache:
+                return self._voice_cache[clean]
+
+            profile = self.VOICE_PROFILES.get(clean)
+            if profile:
+                if isinstance(profile, str):
+                    self._voice_cache[clean] = profile
+                    return profile
+                try:
+                    import numpy as np
+                    total_weight = sum(w for _, w in profile)
+                    blended = None
+                    for v_name, weight in profile:
+                        v_style = self._kokoro.get_voice_style(v_name)
+                        norm_w = weight / total_weight
+                        if blended is None:
+                            blended = (norm_w * v_style).astype(np.float32)
+                        else:
+                            blended += (norm_w * v_style).astype(np.float32)
+                    self._voice_cache[clean] = blended
+                    return blended
+                except Exception as e:
+                    logger.warning(f"Voice blend calculation error for '{clean}': {e}")
+                    return "bm_george"
+        return target
+
+    def set_voice_profile(self, profile_name: str) -> str:
+        """Dynamically switches active Kokoro voice to a named profile or voice ID."""
+        clean = (profile_name or "").lower().strip()
+        available_kokoro = self._kokoro.get_voices() if self._kokoro else []
+        if clean in self.VOICE_PROFILES or clean in available_kokoro:
+            self.kokoro_voice = clean
+            return f"Voice profile successfully set to '{clean}', Sir."
+        profiles_list = ", ".join(list(self.VOICE_PROFILES.keys())[:6])
+        return f"Unknown voice profile '{profile_name}'. Available profiles include: {profiles_list}..."
+
+    def set_speed(self, speed: float) -> str:
+        """Adjusts speech tempo multiplier (0.8x to 1.5x)."""
+        try:
+            val = float(speed)
+            val = max(0.75, min(1.50, val))
+            self.kokoro_speed = val
+            return f"Speech rate set to {val:.2f}x, Sir."
+        except Exception as e:
+            return f"Failed to set speech rate: {e}"
+
+    def get_voice_settings(self) -> Dict[str, Any]:
+        """Returns current TTS engine parameters and active voice profile."""
+        return {
+            "engine": self.engine,
+            "voice": self.kokoro_voice,
+            "speed": self.kokoro_speed,
+            "lang": self.kokoro_lang,
+            "profiles": list(self.VOICE_PROFILES.keys()),
+        }
 
     @property
     def is_speaking(self) -> bool:
@@ -308,7 +387,7 @@ class TextToSpeech:
                         try:
                             samples, sr = self._kokoro.create(
                                 chunk,
-                                voice=self.kokoro_voice,
+                                voice=self._resolve_voice(),
                                 speed=self.kokoro_speed,
                                 lang=self.kokoro_lang
                             )
@@ -540,7 +619,7 @@ class TextToSpeech:
                         break
                     samples, sr = self._kokoro.create(
                         chunk,
-                        voice=self.kokoro_voice,
+                        voice=self._resolve_voice(),
                         speed=self.kokoro_speed,
                         lang=self.kokoro_lang
                     )

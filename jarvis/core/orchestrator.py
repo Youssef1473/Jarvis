@@ -63,6 +63,11 @@ class JarvisOrchestrator:
         self.safety = SafetyGate(config)
         self.stt = SpeechToText(config)
         self.tts = TextToSpeech(config)
+        try:
+            import jarvis.skills.voice_control as voice_skills
+            voice_skills.set_tts_instance(self.tts)
+        except Exception:
+            pass
         self.service_manager = ManagedServiceManager()
         self.brain = JarvisBrain(config, self.memory, self.safety, service_manager=self.service_manager)
         self.hud = JarvisHUD()
