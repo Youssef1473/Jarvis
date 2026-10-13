@@ -154,7 +154,7 @@ class AntigravityBridge:
         """Builds a priority fallback cascade within the Google AI Pro fleet."""
         resolved = self.resolve_model(model)
         if "argon" in resolved:
-            pool = list(self.TIER_ARGON) + ["gemini-3.8-flash-high", "gemini-3.8-flash-medium"]
+            pool = ["gemini-4-argon-high", "gemini-3.8-flash-high", "gemini-3.8-flash-medium"]
         elif "flash" in resolved:
             pool = list(self.TIER_FLASH)
         elif "claude" in resolved:
@@ -396,7 +396,23 @@ class AntigravityBridge:
                     logger.debug("Non-critical stream JSON parse error on line: %s (%s)", line_str[:60], parse_err)
 
             proc.stdout.close()
+            stderr_out = ""
+            if proc.stderr:
+                try:
+                    stderr_out = proc.stderr.read().strip()
+                except Exception:
+                    pass
             proc.wait(timeout=5.0)
+
+            if proc.returncode != 0:
+                err_msg = stderr_out or f"CLI exited with code {proc.returncode}"
+                logger.warning("Antigravity streaming invocation error (%s): %s", model, err_msg)
+                return {
+                    "status": "ERROR",
+                    "response": f"Antigravity CLI error: {err_msg}",
+                    "duration_seconds": time.perf_counter() - t_start,
+                    "usage": {},
+                }
 
             # Flush any remaining text in speech buffer to TTS
             if speech_buffer.strip():
