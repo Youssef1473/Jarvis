@@ -77,6 +77,63 @@ class TestSqliteVecMemorySuite(unittest.TestCase):
 
         self.assertLess(avg_ms, 5.0, f"Average query latency should be < 5ms, was {avg_ms:.2f}ms")
 
+    def test_documents_vec_table_created(self):
+        """Verifies documents_vec virtual table exists in SQLite database."""
+        with self.memory._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='documents_vec'")
+            row = cursor.fetchone()
+            self.assertIsNotNone(row, "documents_vec virtual table must exist")
+
+    def test_save_document_populates_documents_vec_and_semantic_search(self):
+        """Verifies storing a document indexes into documents_vec and enables KNN search."""
+        doc_id = self.memory.save_document_knowledge(
+            title="Audio Engine Architecture",
+            category="architecture",
+            summary="P-core thread pinning and WASAPI low-latency playback worker with Kokoro ONNX",
+            raw_content="All speech streaming passes through lock-free ring buffers. Audio thread starvation is fatal."
+        )
+        self.assertGreater(doc_id, 0)
+
+        # Query semantically without exact keyword overlap
+        results = self.memory.semantic_search_documents("speech synthesis sound playback", top_k=2)
+        self.assertGreater(len(results), 0)
+        self.assertEqual(results[0]["title"], "Audio Engine Architecture")
+
+    def test_hybrid_search_facts_rrf_ranking(self):
+        """Verifies hybrid_search_facts fuses FTS5 BM25 and sqlite-vec KNN using RRF."""
+        self.memory.remember_fact("favorite_beverage", "double espresso coffee", "preference")
+        self.memory.remember_fact("code_editor", "VS Code and Cursor IDE", "development")
+
+        # Query should match favorite_beverage on both lexical and semantic vector fronts
+        fused = self.memory.hybrid_search_facts("double espresso", top_k=2)
+        self.assertGreater(len(fused), 0)
+        self.assertEqual(fused[0]["key"], "favorite_beverage")
+        self.assertIn("rrf_score", fused[0])
+        self.assertGreater(fused[0]["rrf_score"], 0.0)
+
+    def test_hybrid_search_documents_rrf_ranking(self):
+        """Verifies hybrid_search_documents fuses FTS5 BM25 and sqlite-vec KNN using RRF."""
+        self.memory.save_document_knowledge(
+            title="Desktop Automation Manual",
+            category="manual",
+            summary="Chrome DevTools Protocol port 9222 and pywinauto UIA backend",
+            raw_content="Sub-5ms silent tab inspection without synthetic keystrokes or focus stealing."
+        )
+        fused = self.memory.hybrid_search_documents("Chrome DevTools automation", limit=2)
+        self.assertGreater(len(fused), 0)
+        self.assertEqual(fused[0]["title"], "Desktop Automation Manual")
+        self.assertIn("rrf_score", fused[0])
+
+    def test_context_summary_hybrid_prioritization(self):
+        """Verifies get_context_summary(query=...) dynamically prioritizes relevant facts at the top."""
+        self.memory.remember_fact("favorite_beverage", "double espresso coffee", "preference")
+        self.memory.remember_fact("favorite_editor", "Cursor IDE and VSCode", "tools")
+
+        summary = self.memory.get_context_summary(query="what is my favorite IDE editor")
+        self.assertIn("[Directly Relevant Knowledge to Current Context]", summary)
+        self.assertIn("Favorite editor: Cursor IDE and VSCode", summary)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -360,9 +360,9 @@ Autonomous Self-Building & Dynamic Feature Creation:
                 turn1_latency_ms=elapsed_ms,
             )
 
-    def _get_system_instruction(self) -> str:
+    def _get_system_instruction(self, user_text: str = "") -> str:
         """Assembles runtime capabilities and relevant persistent memory."""
-        memory_summary = self.memory.get_context_summary()
+        memory_summary = self.memory.get_context_summary(query=user_text) if user_text else self.memory.get_context_summary()
         workspace = self.config.get("_base_dir", "")
         available_tools = SkillRegistry.get_openai_tools(self.active_tool_names)
         tool_lines = []

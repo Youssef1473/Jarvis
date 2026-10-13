@@ -405,7 +405,32 @@ class MemoryManager:
                     text = f"{f['category']} {f['key']} {f['value']}"
                     vec = self.vector_engine.dense_vectorize(text)
                     blob = sqlite_vec.serialize_float32(vec)
-                    cursor.execute("INSERT OR REPLACE INTO facts_vec(fact_id, embedding) VALUES (?, ?)", (f["id"], blob))
+                # Documents sqlite-vec virtual table & sync triggers
+                cursor.execute("""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS documents_vec USING vec0(
+                        doc_id INTEGER PRIMARY KEY,
+                        embedding float[64]
+                    )
+                """)
+                cursor.execute("""
+                    CREATE TRIGGER IF NOT EXISTS documents_vec_ad AFTER DELETE ON documents BEGIN
+                        DELETE FROM documents_vec WHERE doc_id = old.id;
+                    END;
+                """)
+                # Sync any unindexed documents into documents_vec
+                cursor.execute("""
+                    SELECT d.id, d.title, d.category, d.summary, d.raw_content
+                    FROM documents d
+                    LEFT JOIN documents_vec dv ON d.id = dv.doc_id
+                    WHERE dv.doc_id IS NULL
+                """)
+                unindexed_docs = cursor.fetchall()
+                for d in unindexed_docs:
+                    raw_snippet = (d["raw_content"] or "")[:500]
+                    text = f"{d['title']} {d['category']} {d['summary']} {raw_snippet}"
+                    vec = self.vector_engine.dense_vectorize(text)
+                    blob = sqlite_vec.serialize_float32(vec)
+                    cursor.execute("INSERT OR REPLACE INTO documents_vec(doc_id, embedding) VALUES (?, ?)", (d["id"], blob))
             except Exception as vec_err:
                 logger.debug("sqlite-vec virtual table initialization note: %s", vec_err)
 
@@ -547,6 +572,37 @@ class MemoryManager:
 
         scored.sort(key=lambda x: x["relevance_score"], reverse=True)
         return scored[:top_k]
+
+    def hybrid_search_facts(self, query: str, top_k: int = 5, k_rrf: int = 60) -> List[Dict[str, Any]]:
+        """Hybrid search combining FTS5 BM25 and sqlite-vec KNN via Reciprocal Rank Fusion (RRF)."""
+        fts_results = self.search_facts(query)
+        vec_results = self.semantic_search_facts(query, top_k=max(top_k * 2, 10))
+
+        # Map by unique key
+        scores: Dict[str, float] = {}
+        fact_map: Dict[str, Dict[str, Any]] = {}
+
+        # 1. RRF score from FTS5 ranking
+        for rank, f in enumerate(fts_results, start=1):
+            key = f["key"]
+            scores[key] = scores.get(key, 0.0) + (1.0 / (k_rrf + rank))
+            fact_map[key] = f
+
+        # 2. RRF score from Vector KNN ranking
+        for rank, f in enumerate(vec_results, start=1):
+            key = f["key"]
+            scores[key] = scores.get(key, 0.0) + (1.0 / (k_rrf + rank))
+            if key not in fact_map:
+                fact_map[key] = f
+
+        # Sort by fused score
+        sorted_keys = sorted(scores.keys(), key=lambda k: scores[k], reverse=True)
+        results = []
+        for key in sorted_keys[:top_k]:
+            item = dict(fact_map[key])
+            item["rrf_score"] = round(scores[key], 4)
+            results.append(item)
+        return results
 
     # Tasks & Reminders
     def add_task(self, description: str, due_date: Optional[str] = None) -> str:
@@ -738,8 +794,21 @@ class MemoryManager:
                 INSERT INTO documents (title, category, summary, raw_content, file_path)
                 VALUES (?, ?, ?, ?, ?)
             """, (title.strip(), category.lower().strip(), summary.strip(), raw_content.strip(), file_path.strip()))
+            doc_id = cursor.lastrowid
+
+            # Index into documents_vec
+            try:
+                import sqlite_vec
+                raw_snippet = (raw_content or "")[:500]
+                text = f"{title} {category} {summary} {raw_snippet}"
+                vec = self.vector_engine.dense_vectorize(text)
+                blob = sqlite_vec.serialize_float32(vec)
+                cursor.execute("INSERT OR REPLACE INTO documents_vec(doc_id, embedding) VALUES (?, ?)", (doc_id, blob))
+            except Exception as e:
+                logger.debug("sqlite-vec document indexing notice: %s", e)
+
             conn.commit()
-            return cursor.lastrowid
+            return doc_id
 
     def search_documents(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         """Searches archived document summaries and titles using FTS5 BM25 with LIKE fallback."""
@@ -773,6 +842,100 @@ class MemoryManager:
                 ORDER BY id DESC LIMIT ?
             """, (q, q, q, limit))
             return [dict(row) for row in cursor.fetchall()]
+
+    def semantic_search_documents(self, query: str, top_k: int = 5, min_score: float = 0.10) -> List[Dict[str, Any]]:
+        """Finds archived documents semantically relevant to query using sqlite-vec KNN search with TF-IDF fallback."""
+        try:
+            import sqlite_vec
+            q_vec = self.vector_engine.dense_vectorize(query)
+            q_blob = sqlite_vec.serialize_float32(q_vec)
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT d.id, d.title, d.category, d.summary, d.file_path, d.created_at, dv.distance
+                    FROM documents_vec dv
+                    JOIN documents d ON dv.doc_id = d.id
+                    WHERE dv.embedding MATCH ? AND k = ?
+                    ORDER BY dv.distance ASC
+                """, (q_blob, max(1, top_k * 2)))
+                knn_rows = cursor.fetchall()
+                if knn_rows:
+                    results = []
+                    for row in knn_rows:
+                        dist = float(row["distance"])
+                        sim = max(0.0, 1.0 - (dist / 2.0))
+                        if sim >= min_score:
+                            results.append({
+                                "id": row["id"],
+                                "title": row["title"],
+                                "category": row["category"],
+                                "summary": row["summary"],
+                                "file_path": row["file_path"],
+                                "created_at": row["created_at"],
+                                "relevance_score": round(sim, 3),
+                            })
+                    if results:
+                        results.sort(key=lambda x: x["relevance_score"], reverse=True)
+                        return results[:top_k]
+        except Exception as e:
+            logger.debug("sqlite-vec documents KNN search fallback: %s", e)
+
+        # In-Memory TF-IDF Fallback
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, title, category, summary, file_path, created_at, raw_content FROM documents ORDER BY id DESC LIMIT 100")
+            docs = [dict(r) for r in cursor.fetchall()]
+
+        if not docs:
+            return []
+
+        corpus = [f"{d['title']} {d['category']} {d['summary']} {(d.get('raw_content') or '')[:500]}" for d in docs]
+        idf = self.vector_engine.compute_idf(corpus)
+        query_vec = self.vector_engine.vectorize(query, idf)
+        if not query_vec:
+            return []
+
+        scored = []
+        for d, doc_text in zip(docs, corpus):
+            doc_vec = self.vector_engine.vectorize(doc_text, idf)
+            score = self.vector_engine.cosine_similarity(query_vec, doc_vec)
+            if score >= min_score:
+                d_copy = {k: v for k, v in d.items() if k != "raw_content"}
+                d_copy["relevance_score"] = round(score, 3)
+                scored.append(d_copy)
+
+        scored.sort(key=lambda x: x["relevance_score"], reverse=True)
+        return scored[:top_k]
+
+    def hybrid_search_documents(self, query: str, limit: int = 5, k_rrf: int = 60) -> List[Dict[str, Any]]:
+        """Hybrid search combining FTS5 BM25 and sqlite-vec KNN via Reciprocal Rank Fusion (RRF)."""
+        fts_results = self.search_documents(query, limit=max(limit * 2, 10))
+        vec_results = self.semantic_search_documents(query, top_k=max(limit * 2, 10))
+
+        scores: Dict[int, float] = {}
+        doc_map: Dict[int, Dict[str, Any]] = {}
+
+        # 1. RRF score from FTS5 ranking
+        for rank, d in enumerate(fts_results, start=1):
+            doc_id = d["id"]
+            scores[doc_id] = scores.get(doc_id, 0.0) + (1.0 / (k_rrf + rank))
+            doc_map[doc_id] = d
+
+        # 2. RRF score from Vector KNN ranking
+        for rank, d in enumerate(vec_results, start=1):
+            doc_id = d["id"]
+            scores[doc_id] = scores.get(doc_id, 0.0) + (1.0 / (k_rrf + rank))
+            if doc_id not in doc_map:
+                doc_map[doc_id] = d
+
+        # Sort by fused score
+        sorted_ids = sorted(scores.keys(), key=lambda d_id: scores[d_id], reverse=True)
+        results = []
+        for doc_id in sorted_ids[:limit]:
+            item = dict(doc_map[doc_id])
+            item["rrf_score"] = round(scores[doc_id], 4)
+            results.append(item)
+        return results
 
     def get_saved_calendars(self) -> List[Dict[str, Any]]:
         """Retrieves all calendar and schedule documents archived in memory."""
@@ -1028,7 +1191,7 @@ class MemoryManager:
 
         semantic_section = ""
         if query:
-            matched = self.semantic_search_facts(query, top_k=4, min_score=0.15)
+            matched = self.hybrid_search_facts(query, top_k=4)
             if matched:
                 lines = [f"• {m['key'].replace('_', ' ').capitalize()}: {m['value']}" for m in matched]
                 semantic_section = "[Directly Relevant Knowledge to Current Context]\n" + "\n".join(lines) + "\n\n"

@@ -86,13 +86,13 @@ def recall_fact(key: str) -> str:
     if val:
         return f"Stored fact for '{key}': {val}"
 
-    # Semantic vector recall fallback
-    matches = mem.semantic_search_facts(key, top_k=3, min_score=0.12)
+    # Hybrid FTS5 + Vector recall fallback via RRF
+    matches = mem.hybrid_search_facts(key, top_k=3)
     if matches:
         formatted = []
         for m in matches:
-            formatted.append(f"• [{m['category']}] {m['key']}: {m['value']} (Relevance: {m['relevance_score']:.0%})")
-        return f"Semantic memory recall for '{key}':\n" + "\n".join(formatted)
+            formatted.append(f"• [{m['category']}] {m['key']}: {m['value']}")
+        return f"Hybrid memory recall for '{key}':\n" + "\n".join(formatted)
 
     return f"No stored fact or semantic match found for '{key}'."
 
