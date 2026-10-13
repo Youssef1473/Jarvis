@@ -18,6 +18,8 @@ import threading
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from jarvis.core.memory import sanitize_fts5_query
+
 logger = logging.getLogger("Jarvis.Memory.Obsidian")
 
 
@@ -343,6 +345,60 @@ class ObsidianContextSyncEngine:
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_obsidian_chunks_path ON obsidian_chunks(file_path)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_obsidian_chunks_title ON obsidian_chunks(note_title)")
+
+        # Schema metadata table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS schema_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+
+        # SQLite FTS5 Virtual Table & Real-Time Sync Triggers for Obsidian Chunks
+        try:
+            conn.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS obsidian_chunks_fts USING fts5(
+                    note_title,
+                    breadcrumb,
+                    content,
+                    tags,
+                    wiki_links,
+                    content='obsidian_chunks',
+                    content_rowid='id'
+                )
+            """)
+            conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS obsidian_chunks_ai AFTER INSERT ON obsidian_chunks BEGIN
+                    INSERT INTO obsidian_chunks_fts(rowid, note_title, breadcrumb, content, tags, wiki_links)
+                    VALUES (new.id, new.note_title, new.breadcrumb, new.content, new.tags, new.wiki_links);
+                END;
+            """)
+            conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS obsidian_chunks_ad AFTER DELETE ON obsidian_chunks BEGIN
+                    INSERT INTO obsidian_chunks_fts(obsidian_chunks_fts, rowid, note_title, breadcrumb, content, tags, wiki_links)
+                    VALUES ('delete', old.id, old.note_title, old.breadcrumb, old.content, old.tags, old.wiki_links);
+                END;
+            """)
+            conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS obsidian_chunks_au AFTER UPDATE ON obsidian_chunks BEGIN
+                    INSERT INTO obsidian_chunks_fts(obsidian_chunks_fts, rowid, note_title, breadcrumb, content, tags, wiki_links)
+                    VALUES ('delete', old.id, old.note_title, old.breadcrumb, old.content, old.tags, old.wiki_links);
+                    INSERT INTO obsidian_chunks_fts(rowid, note_title, breadcrumb, content, tags, wiki_links)
+                    VALUES (new.id, new.note_title, new.breadcrumb, new.content, new.tags, new.wiki_links);
+                END;
+            """)
+
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM schema_meta WHERE key = 'obsidian_fts5_initialized'")
+            if not cursor.fetchone():
+                try:
+                    conn.execute("INSERT INTO obsidian_chunks_fts(obsidian_chunks_fts) VALUES('rebuild')")
+                    conn.execute("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('obsidian_fts5_initialized', '1')")
+                except Exception as rb_err:
+                    logger.debug("Obsidian FTS5 initial rebuild notice: %s", rb_err)
+        except Exception as fts_err:
+            logger.warning("Obsidian FTS5 virtual table could not be initialized: %s", fts_err)
+
         conn.commit()
 
     def _load_persisted_state(self, conn: sqlite3.Connection):
@@ -632,7 +688,50 @@ class ObsidianContextSyncEngine:
         limit: int = 5,
         tag_filter: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Queries Obsidian episodic context chunks using keyword relevance and semantic ranking."""
+        """Queries Obsidian episodic context chunks using FTS5 BM25 ranking with keyword hit-density fallback."""
+        sanitized = sanitize_fts5_query(query)
+        if sanitized:
+            try:
+                conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+                conn.row_factory = sqlite3.Row
+                try:
+                    sql = """
+                        SELECT c.id, c.file_path, c.note_title, c.breadcrumb, c.content, c.tags, c.wiki_links
+                        FROM obsidian_chunks_fts fts
+                        JOIN obsidian_chunks c ON fts.rowid = c.id
+                        WHERE obsidian_chunks_fts MATCH ?
+                    """
+                    params: List[Any] = [sanitized]
+                    if tag_filter:
+                        sql += " AND c.tags LIKE ?"
+                        params.append(f"%{tag_filter}%")
+                    sql += " ORDER BY bm25(obsidian_chunks_fts) ASC LIMIT ?"
+                    params.append(limit)
+
+                    cursor = conn.cursor()
+                    cursor.execute(sql, params)
+                    rows = cursor.fetchall()
+                    if rows:
+                        results = []
+                        for r in rows:
+                            raw_tags = r["tags"]
+                            raw_links = r["wiki_links"]
+                            results.append({
+                                "id": r["id"],
+                                "file_path": r["file_path"],
+                                "note_title": r["note_title"],
+                                "breadcrumb": r["breadcrumb"],
+                                "content": r["content"],
+                                "tags": json.loads(raw_tags) if isinstance(raw_tags, str) else (raw_tags or []),
+                                "wiki_links": json.loads(raw_links) if isinstance(raw_links, str) else (raw_links or []),
+                            })
+                        return results
+                finally:
+                    conn.close()
+            except Exception as e:
+                logger.debug("Obsidian FTS5 query_context fallback to LIKE: %s", e)
+
+        # Standard LIKE token hit-density fallback
         conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
         try:

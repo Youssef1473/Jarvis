@@ -1,4 +1,5 @@
 """Long-term persistent memory management and adaptive self-learning for Jarvis 2.0."""
+import contextlib
 import datetime
 import json
 import logging
@@ -12,6 +13,35 @@ import threading
 from typing import Dict, Any, List, Optional, Tuple
 
 logger = logging.getLogger("Jarvis.Memory")
+
+_FTS_STOPWORDS = {
+    'what', 'whats', 'who', 'when', 'where', 'why', 'how', 'tell', 'me', 'about',
+    'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+    'we', 'you', 'i', 'he', 'she', 'they', 'it', 'did', 'do', 'does', 'our',
+    'my', 'your', 'their', 'his', 'her', 'its', 'that', 'this', 'these', 'those',
+    'can', 'could', 'would', 'should', 'will', 'shall', 'may', 'might', 'must',
+    'say', 'said', 'saying', 'talk', 'talked', 'talking', 'ask', 'asked', 'asking',
+    'please', 'recall', 'remember', 'past', 'conversation', 'previous', 'discussed',
+    'regarding', 'concerning', 'related',
+    'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from', 'as', 'into',
+    'and', 'or', 'not', 'but', 'if', 'then', 'so', 'have', 'has', 'had'
+}
+
+
+def sanitize_fts5_query(query: str) -> Optional[str]:
+    """Sanitizes raw user query for safe SQLite FTS5 search.
+    Removes punctuation/special FTS operators, filters conversational stopwords,
+    and returns OR-delimited prefix wildcard terms, e.g. '"weather"* OR "tomorrow"*'.
+    Returns None if no searchable tokens remain."""
+    if not query or not isinstance(query, str):
+        return None
+    cleaned = re.sub(r"[^\w\s]", " ", query.lower())
+    words = [w for w in cleaned.split() if len(w) > 1]
+    filtered = [w for w in words if w not in _FTS_STOPWORDS]
+    tokens = filtered if filtered else words
+    if not tokens:
+        return None
+    return " OR ".join(f'"{t}"*' for t in tokens)
 
 
 class VectorMemoryEngine:
@@ -123,12 +153,17 @@ class MemoryManager:
         self.vector_engine = VectorMemoryEngine()
         self._init_db()
 
-    def _get_connection(self) -> sqlite3.Connection:
+    @contextlib.contextmanager
+    def _get_connection(self):
         conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA busy_timeout=5000;")
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def _init_db(self):
         """Initializes database schema."""
@@ -202,6 +237,123 @@ class MemoryManager:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+
+            # SQLite FTS5 Virtual Tables & Real-Time Sync Triggers
+            try:
+                # Facts FTS5 Virtual Table & Triggers
+                cursor.execute("""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
+                        category,
+                        key,
+                        value,
+                        content='facts',
+                        content_rowid='id'
+                    )
+                """)
+                cursor.execute("""
+                    CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
+                        INSERT INTO facts_fts(rowid, category, key, value)
+                        VALUES (new.id, new.category, new.key, new.value);
+                    END;
+                """)
+                cursor.execute("""
+                    CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
+                        INSERT INTO facts_fts(facts_fts, rowid, category, key, value)
+                        VALUES ('delete', old.id, old.category, old.key, old.value);
+                    END;
+                """)
+                cursor.execute("""
+                    CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
+                        INSERT INTO facts_fts(facts_fts, rowid, category, key, value)
+                        VALUES ('delete', old.id, old.category, old.key, old.value);
+                        INSERT INTO facts_fts(rowid, category, key, value)
+                        VALUES (new.id, new.category, new.key, new.value);
+                    END;
+                """)
+
+                # Documents FTS5 Virtual Table & Triggers
+                cursor.execute("""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+                        title,
+                        category,
+                        summary,
+                        raw_content,
+                        content='documents',
+                        content_rowid='id'
+                    )
+                """)
+                cursor.execute("""
+                    CREATE TRIGGER IF NOT EXISTS documents_ai AFTER INSERT ON documents BEGIN
+                        INSERT INTO documents_fts(rowid, title, category, summary, raw_content)
+                        VALUES (new.id, new.title, new.category, new.summary, new.raw_content);
+                    END;
+                """)
+                cursor.execute("""
+                    CREATE TRIGGER IF NOT EXISTS documents_ad AFTER DELETE ON documents BEGIN
+                        INSERT INTO documents_fts(documents_fts, rowid, title, category, summary, raw_content)
+                        VALUES ('delete', old.id, old.title, old.category, old.summary, old.raw_content);
+                    END;
+                """)
+                cursor.execute("""
+                    CREATE TRIGGER IF NOT EXISTS documents_au AFTER UPDATE ON documents BEGIN
+                        INSERT INTO documents_fts(documents_fts, rowid, title, category, summary, raw_content)
+                        VALUES ('delete', old.id, old.title, old.category, old.summary, old.raw_content);
+                        INSERT INTO documents_fts(rowid, title, category, summary, raw_content)
+                        VALUES (new.id, new.title, new.category, new.summary, new.raw_content);
+                    END;
+                """)
+
+                # Interactions FTS5 Virtual Table & Triggers
+                cursor.execute("""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS interactions_fts USING fts5(
+                        user_input,
+                        jarvis_reply,
+                        content='interactions',
+                        content_rowid='id'
+                    )
+                """)
+                cursor.execute("""
+                    CREATE TRIGGER IF NOT EXISTS interactions_ai AFTER INSERT ON interactions BEGIN
+                        INSERT INTO interactions_fts(rowid, user_input, jarvis_reply)
+                        VALUES (new.id, new.user_input, new.jarvis_reply);
+                    END;
+                """)
+                cursor.execute("""
+                    CREATE TRIGGER IF NOT EXISTS interactions_ad AFTER DELETE ON interactions BEGIN
+                        INSERT INTO interactions_fts(interactions_fts, rowid, user_input, jarvis_reply)
+                        VALUES ('delete', old.id, old.user_input, old.jarvis_reply);
+                    END;
+                """)
+                cursor.execute("""
+                    CREATE TRIGGER IF NOT EXISTS interactions_au AFTER UPDATE ON interactions BEGIN
+                        INSERT INTO interactions_fts(interactions_fts, rowid, user_input, jarvis_reply)
+                        VALUES ('delete', old.id, old.user_input, old.jarvis_reply);
+                        INSERT INTO interactions_fts(rowid, user_input, jarvis_reply)
+                        VALUES (new.id, new.user_input, new.jarvis_reply);
+                    END;
+                """)
+
+                # Schema metadata table for one-time migrations and rebuild tracking
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS schema_meta (
+                        key TEXT PRIMARY KEY,
+                        value TEXT
+                    )
+                """)
+
+                # One-time rebuild to backfill any pre-existing rows into FTS indexes
+                cursor.execute("SELECT 1 FROM schema_meta WHERE key = 'fts5_initialized'")
+                if not cursor.fetchone():
+                    try:
+                        cursor.execute("INSERT INTO facts_fts(facts_fts) VALUES('rebuild')")
+                        cursor.execute("INSERT INTO documents_fts(documents_fts) VALUES('rebuild')")
+                        cursor.execute("INSERT INTO interactions_fts(interactions_fts) VALUES('rebuild')")
+                        cursor.execute("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('fts5_initialized', '1')")
+                    except Exception as rb_err:
+                        logger.debug("FTS5 initial rebuild notice: %s", rb_err)
+            except Exception as fts_err:
+                logger.warning("SQLite FTS5 virtual tables could not be initialized (falling back to standard SQL): %s", fts_err)
+
             conn.commit()
 
     # Fact & Preference Management
@@ -231,7 +383,26 @@ class MemoryManager:
             return row["value"] if row else None
 
     def search_facts(self, query: str) -> List[Dict[str, str]]:
-        """Searches remembered facts matching a query keyword."""
+        """Searches remembered facts matching a query keyword using FTS5 BM25 with LIKE fallback."""
+        sanitized = sanitize_fts5_query(query)
+        if sanitized:
+            try:
+                with self._get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT f.category, f.key, f.value
+                        FROM facts_fts ft
+                        JOIN facts f ON ft.rowid = f.id
+                        WHERE facts_fts MATCH ?
+                        ORDER BY bm25(facts_fts) ASC
+                    """, (sanitized,))
+                    rows = [dict(row) for row in cursor.fetchall()]
+                    if rows:
+                        return rows
+            except Exception as e:
+                logger.debug("FTS5 facts search fallback to LIKE: %s", e)
+
+        # Fallback to standard LIKE matching
         q = f"%{query.lower().strip()}%"
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -467,7 +638,27 @@ class MemoryManager:
             return cursor.lastrowid
 
     def search_documents(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """Searches archived document summaries and titles."""
+        """Searches archived document summaries and titles using FTS5 BM25 with LIKE fallback."""
+        sanitized = sanitize_fts5_query(query)
+        if sanitized:
+            try:
+                with self._get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT d.id, d.title, d.category, d.summary, d.file_path, d.created_at
+                        FROM documents_fts df
+                        JOIN documents d ON df.rowid = d.id
+                        WHERE documents_fts MATCH ?
+                        ORDER BY bm25(documents_fts) ASC
+                        LIMIT ?
+                    """, (sanitized, limit))
+                    rows = [dict(row) for row in cursor.fetchall()]
+                    if rows:
+                        return rows
+            except Exception as e:
+                logger.debug("FTS5 documents search fallback to LIKE: %s", e)
+
+        # Fallback to standard LIKE matching
         q = f"%{query.lower().strip()}%"
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -543,7 +734,27 @@ class MemoryManager:
             return [dict(r) for r in reversed(rows)]
 
     def search_interactions(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """Searches past conversation logs by keyword or phrase across questions and answers."""
+        """Searches past conversation logs by keyword or phrase using FTS5 BM25 with LIKE fallback."""
+        sanitized = sanitize_fts5_query(query)
+        if sanitized:
+            try:
+                with self._get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT i.id, i.user_input, i.jarvis_reply, i.tool_calls, i.created_at
+                        FROM interactions_fts inf
+                        JOIN interactions i ON inf.rowid = i.id
+                        WHERE interactions_fts MATCH ?
+                        ORDER BY bm25(interactions_fts) ASC
+                        LIMIT ?
+                    """, (sanitized, limit))
+                    rows = [dict(r) for r in cursor.fetchall()]
+                    if rows:
+                        return rows
+            except Exception as e:
+                logger.debug("FTS5 interactions search fallback to LIKE: %s", e)
+
+        # Fallback to standard LIKE matching
         terms = [t.strip().lower() for t in query.split() if len(t.strip()) > 2]
         if not terms:
             terms = [query.strip().lower()]
