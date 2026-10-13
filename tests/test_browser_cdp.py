@@ -77,7 +77,9 @@ class TestBrowserCDPSuite(unittest.TestCase):
 
     def test_os_control_open_browser_tab_cdp_fallback_to_win32(self):
         """Verifies open_browser_tab falls back gracefully to Win32 when CDP is closed."""
-        with patch.object(b_cdp, "is_cdp_available", return_value=False):
+        with patch.object(b_cdp, "is_cdp_available", return_value=False), \
+             patch("subprocess.Popen"), \
+             patch("webbrowser.open_new_tab"):
             # Should proceed into win32gui without throwing exception
             res = os_ctrl.open_browser_tab(url="https://example.com", browser="brave")
             self.assertIsInstance(res, str)

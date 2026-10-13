@@ -1,10 +1,12 @@
-"""Automated tests for pywinauto Windows UI Automation (UIA) tools."""
 import sys
 import unittest
+import warnings
 from pathlib import Path
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+warnings.filterwarnings("ignore", message=".*Revert to STA COM threading mode.*")
 
 from jarvis.skills.base import SkillRegistry
 import jarvis.skills.windows_uia as w_uia

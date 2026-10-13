@@ -80,6 +80,10 @@ class TestShutdownLifecycle(unittest.TestCase):
 
         # Trigger stop_all
         sm.stop_all(timeout_seconds=2.0)
+        try:
+            proc.wait(timeout=1.0)
+        except Exception:
+            pass
 
         # Verify child process is dead
         time.sleep(0.2)

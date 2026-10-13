@@ -10,8 +10,12 @@ import datetime
 import subprocess
 import threading
 import time
+import warnings
 import webbrowser
 from pathlib import Path
+
+# Suppress benign pywinauto STA COM mode revert warning on Windows
+warnings.filterwarnings("ignore", message=".*Revert to STA COM threading mode.*")
 from typing import Dict, Any, Optional, List
 import pyautogui
 import psutil

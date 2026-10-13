@@ -103,6 +103,7 @@ class TextToSpeech:
                 from jarvis.audio.stt import _setup_nvidia_dll_paths
                 _setup_nvidia_dll_paths()
                 import onnxruntime as rt
+                rt.set_default_logger_severity(3)
                 from kokoro_onnx import Kokoro
                 t0 = time.time()
                 opts = rt.SessionOptions()

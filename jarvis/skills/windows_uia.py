@@ -4,8 +4,12 @@ and interact with native UI controls without blind synthetic keystrokes.
 """
 import logging
 import sys
+import warnings
 from typing import Dict, Any, List, Optional
 from jarvis.skills.base import SkillRegistry
+
+# Suppress benign pywinauto STA COM mode revert warning on Windows
+warnings.filterwarnings("ignore", message=".*Revert to STA COM threading mode.*")
 
 logger = logging.getLogger("Jarvis.WindowsUIA")
 
@@ -23,8 +27,10 @@ def focus_window_uia(title_query: str) -> Optional[str]:
         return None
 
     try:
-        from pywinauto import Desktop
-        d = Desktop(backend="uia")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            from pywinauto import Desktop
+            d = Desktop(backend="uia")
         clean_target = title_query.strip().lower()
 
         # Find matching window elements
@@ -60,8 +66,10 @@ def inspect_window_controls(window_title: str, max_depth: int = 2) -> str:
         return "Window title cannot be empty, Sir."
 
     try:
-        from pywinauto import Desktop
-        d = Desktop(backend="uia")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            from pywinauto import Desktop
+            d = Desktop(backend="uia")
         matched = None
         matched_title = ""
 
