@@ -4,6 +4,7 @@ import sys
 import logging
 import atexit
 import signal
+import warnings
 from pathlib import Path
 
 # Suppress third-party deprecation warnings (e.g. NumPy 2.5 shape assignment in sounddevice)
