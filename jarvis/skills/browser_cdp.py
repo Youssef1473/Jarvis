@@ -167,3 +167,51 @@ def list_open_browser_tabs() -> str:
         lines.append(f"{i}. {title} ({url})")
 
     return "\n".join(lines)
+
+
+def close_cdp_tab(
+    title_or_url: Optional[str] = None,
+    host: str = "127.0.0.1",
+    port: int = 9222
+) -> Optional[str]:
+    """Closes an open browser tab via Chrome DevTools Protocol (CDP) HTTP API.
+    
+    Returns status message if successfully closed via CDP, or None if CDP unavailable/failed.
+    """
+    if not is_cdp_available(host, port):
+        return None
+
+    try:
+        tabs = list_cdp_tabs(host, port)
+        if not tabs:
+            return "No open browser tabs detected via DevTools channel, Sir."
+
+        target_tab = None
+        if title_or_url and title_or_url.strip():
+            query_lower = title_or_url.lower().strip()
+            for t in tabs:
+                if query_lower in t.get("title", "").lower() or query_lower in t.get("url", "").lower():
+                    target_tab = t
+                    break
+        else:
+            # Default to active/first tab
+            target_tab = tabs[0]
+
+        if not target_tab:
+            return f"Could not find a browser tab matching '{title_or_url}' via DevTools channel, Sir."
+
+        tab_id = target_tab.get("id")
+        tab_title = target_tab.get("title") or "Browser Tab"
+        if not tab_id:
+            return None
+
+        close_url = f"http://{host}:{port}/json/close/{tab_id}"
+        req = urllib.request.Request(close_url)
+        with urllib.request.urlopen(req, timeout=0.25) as resp:
+            resp.read()
+
+        return f"Closed browser tab '{tab_title}' via silent DevTools channel, Sir."
+    except Exception as e:
+        logger.warning(f"CDP close tab encountered error: {e}")
+        return None
+

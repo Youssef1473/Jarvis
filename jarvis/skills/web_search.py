@@ -1,7 +1,10 @@
 import warnings
 import requests
-warnings.filterwarnings("ignore", category=RuntimeWarning, module="duckduckgo_search")
-from duckduckgo_search import DDGS
+warnings.filterwarnings("ignore", category=RuntimeWarning)
+try:
+    from ddgs import DDGS
+except ImportError:
+    from duckduckgo_search import DDGS
 from jarvis.skills.base import SkillRegistry
 
 
@@ -14,7 +17,10 @@ def web_search(query: str, max_results: int = 4) -> str:
     try:
         results = []
         with DDGS() as ddgs:
-            for r in ddgs.text(query, max_results=max_results):
+            raw_results = list(ddgs.text(query, max_results=max_results))
+            if not raw_results:
+                raw_results = list(ddgs.text(query, backend="html", max_results=max_results))
+            for r in raw_results:
                 title = r.get("title", "")
                 body = r.get("body", "")
                 link = r.get("href", "")

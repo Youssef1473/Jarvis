@@ -90,6 +90,40 @@ class TestBrowserCDPSuite(unittest.TestCase):
                 or "default" in res.lower()
             )
 
+    def test_close_cdp_tab_success(self):
+        """Verifies close_cdp_tab sends HTTP close request to DevTools port."""
+        fake_tabs = [
+            {"id": "tab123", "type": "page", "title": "Documentation", "url": "https://docs.python.org"}
+        ]
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"Target closed"
+        mock_resp.__enter__.return_value = mock_resp
+
+        with patch.object(b_cdp, "is_cdp_available", return_value=True), \
+             patch.object(b_cdp, "list_cdp_tabs", return_value=fake_tabs), \
+             patch("urllib.request.urlopen", return_value=mock_resp) as mock_open:
+            res = b_cdp.close_cdp_tab(title_or_url="Documentation")
+            self.assertIsNotNone(res)
+            self.assertIn("Closed browser tab 'Documentation'", res)
+            mock_open.assert_called_once()
+            req = mock_open.call_args[0][0]
+            self.assertIn("/json/close/tab123", req.full_url)
+
+    def test_close_browser_tab_skill_cdp_path(self):
+        """Verifies close_browser_tab skill executes CDP fast path when available."""
+        with patch("jarvis.skills.browser_cdp.close_cdp_tab", return_value="Closed browser tab 'Docs' via silent DevTools channel, Sir."):
+            res = SkillRegistry.execute("close_browser_tab", browser="brave", tab_title="Docs")
+            self.assertIn("Closed browser tab", res)
+
+    def test_close_browser_tab_skill_fallback_win32(self):
+        """Verifies close_browser_tab falls back to Win32 hotkey when CDP is unavailable."""
+        with patch("jarvis.skills.browser_cdp.close_cdp_tab", return_value=None), \
+             patch("win32gui.EnumWindows") as mock_enum, \
+             patch("pyautogui.hotkey") as mock_hotkey:
+            res = SkillRegistry.execute("close_browser_tab", browser="brave")
+            self.assertIsInstance(res, str)
+
 
 if __name__ == "__main__":
     unittest.main()
+

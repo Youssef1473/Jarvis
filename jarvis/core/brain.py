@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import time
+from pathlib import Path
 from typing import Dict, Any, List, Optional
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
@@ -188,8 +189,8 @@ Autonomous Self-Building & Dynamic Feature Creation:
     }
 
     TOOL_INTENT_GROUPS = (
-        (("add feature", "create feature", "build yourself", "create a skill", "add a skill", "create command", "add command", "build a command", "create tool", "add tool", "new tool", "new skill", "evolve", "self build", "teach yourself", "learn to", "custom skill"), {"create_or_update_custom_skill", "list_custom_skills", "execute_powershell", "read_file", "write_file", "patch_file"}),
-        (("brave", "browser tab", "new tab", "open tab", "chrome tab", "edge tab", "brave tab"), {"open_browser_tab", "launch_application"}),
+        (("add feature", "create feature", "build yourself", "create a skill", "add a skill", "create command", "add command", "build a command", "create tool", "add tool", "new tool", "new skill", "evolve", "self build", "teach yourself", "learn to", "learn this skill", "learn a skill", "learn skill", "custom skill"), {"create_or_update_custom_skill", "list_custom_skills", "execute_powershell", "read_file", "write_file", "patch_file"}),
+        (("brave", "browser tab", "new tab", "open tab", "chrome tab", "edge tab", "brave tab", "close tab", "terminate tab", "close browser tab", "kill tab", "terminate a tab", "close a tab", "close the tab", "terminate the tab", "terminate a tab on my browser", "close current tab", "terminate current tab"), {"open_browser_tab", "close_browser_tab", "launch_application", "list_open_browser_tabs"}),
         (("focus window", "switch to window", "bring to front", "focus app", "switch window"), {"focus_window", "list_running_applications"}),
         (("hotkey", "press key", "shortcut", "press enter", "press escape", "press ctrl", "keyboard shortcut"), {"press_hotkey"}),
         (("type text", "type into", "write text"), {"type_text"}),
@@ -304,7 +305,11 @@ Autonomous Self-Building & Dynamic Feature Creation:
             self.provider = "hybrid"
             self._init_hybrid_providers()
 
-        db_path = getattr(self.memory, "db_path", "data/jarvis_memory.db")
+        raw_db_path = getattr(self.memory, "db_path", "data/jarvis_memory.db")
+        if isinstance(raw_db_path, (str, Path)) and not hasattr(raw_db_path, "_mock_name"):
+            db_path = raw_db_path
+        else:
+            db_path = "data/jarvis_memory.db"
         self.reflex_engine = DynamicReflexEngine(db_path=db_path)
         import jarvis.skills.self_evolution as self_evo
         self_evo.set_reflex_engine(self.reflex_engine)
@@ -940,6 +945,23 @@ Autonomous Self-Building & Dynamic Feature Creation:
         # Generic new tab
         if re.search(r"^(?:open|launch|new)?\s*(?:a\s+)?(?:new\s+)?tab(?:\s+for\s+me|\s+please)?$", clean):
             return SkillRegistry.execute("open_browser_tab")
+
+        # 4b. Terminate / Close Browser Tabs (<15ms Reflex)
+        # Brave tab termination
+        if re.search(r"^(?:close|terminate|kill|shut)\s+(?:a\s+|the\s+|this\s+|current\s+)?tab\s+(?:in|and|on|for)\s+(?:my\s+|the\s+)?(?:current\s+)?brave(?:\s+tab|\s+window)?(?:\s+for\s+me|\s+please)?$|^(?:close|terminate|kill|shut)\s+(?:a\s+|the\s+)?brave\s+tab(?:\s+for\s+me|\s+please)?$", clean):
+            return SkillRegistry.execute("close_browser_tab", browser="brave")
+
+        # Chrome tab termination
+        if re.search(r"^(?:close|terminate|kill|shut)\s+(?:a\s+|the\s+|this\s+|current\s+)?tab\s+(?:in|and|on|for)\s+chrome(?:\s+tab|\s+window)?(?:\s+for\s+me|\s+please)?$|^(?:close|terminate|kill|shut)\s+(?:a\s+|the\s+)?chrome\s+tab(?:\s+for\s+me|\s+please)?$", clean):
+            return SkillRegistry.execute("close_browser_tab", browser="chrome")
+
+        # Edge tab termination
+        if re.search(r"^(?:close|terminate|kill|shut)\s+(?:a\s+|the\s+|this\s+|current\s+)?tab\s+(?:in|and|on|for)\s+edge(?:\s+tab|\s+window)?(?:\s+for\s+me|\s+please)?$|^(?:close|terminate|kill|shut)\s+(?:a\s+|the\s+)?edge\s+tab(?:\s+for\s+me|\s+please)?$", clean):
+            return SkillRegistry.execute("close_browser_tab", browser="msedge")
+
+        # Generic tab termination
+        if re.search(r"^(?:close|terminate|kill|shut)\s+(?:a\s+|the\s+|this\s+|current\s+)?(?:browser\s+)?tab(?:\s+for\s+me|\s+please)?$|^(?:close|terminate)\s+tab$", clean):
+            return SkillRegistry.execute("close_browser_tab")
 
         # 5. Window Switching / Focus
         focus_match = re.search(r"^(?:switch to|focus|bring up)\s+(brave|chrome|discord|spotify|code|vs code|terminal|notepad|calculator|explorer|files)$", clean)

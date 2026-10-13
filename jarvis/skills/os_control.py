@@ -852,6 +852,80 @@ def open_browser_tab(url: str = "", browser: str = "brave", new_tab: bool = True
 
 
 @SkillRegistry.register(
+    name="close_browser_tab",
+    description="Terminates or closes an active or matching tab in Brave, Chrome, Edge, or the desktop browser. Prefers silent CDP if attached, falling back to foreground Win32 shortcut."
+)
+def close_browser_tab(browser: str = "brave", tab_title: str = "") -> str:
+    """Terminates a tab in the requested browser.
+    
+    1. CDP fast path: Closes the matching or active tab silently over Chrome DevTools Protocol (port 9222).
+    2. Win32 fallback: Focuses the browser window and presses Ctrl+W without stealing overall workflow context.
+    """
+    browser_clean = (browser or "brave").lower().strip()
+
+    # 0. Sub-5ms Silent CDP Fast Path
+    if browser_clean in ("brave", "chrome", "edge", "browser"):
+        try:
+            from jarvis.skills.browser_cdp import close_cdp_tab
+            cdp_res = close_cdp_tab(title_or_url=tab_title)
+            if cdp_res:
+                return cdp_res
+        except Exception as e:
+            logger.debug(f"CDP close tab bypass: {e}")
+
+    # 1. Desktop Window Fallback via UIA / Win32 + Ctrl+W
+    try:
+        # First attempt UIA semantic focus to bypass Windows SetForegroundWindow lock
+        focused_via_uia = False
+        try:
+            from jarvis.skills.windows_uia import focus_window_uia
+            focused_title = focus_window_uia(browser_clean)
+            if focused_title:
+                focused_via_uia = True
+        except Exception as e:
+            logger.debug(f"UIA focus bypass in close_browser_tab: {e}")
+
+        if not focused_via_uia:
+            import win32gui
+            import win32con
+            _ensure_desktop_access()
+            matched_hwnds = []
+
+            def _enum_win(hwnd, _):
+                try:
+                    if win32gui.IsWindowVisible(hwnd):
+                        w_title = win32gui.GetWindowText(hwnd).strip()
+                        if w_title and browser_clean in w_title.lower():
+                            matched_hwnds.append((hwnd, w_title))
+                except Exception:
+                    pass
+                return True
+
+            win32gui.EnumWindows(_enum_win, None)
+
+            if matched_hwnds:
+                hwnd, found_title = matched_hwnds[0]
+                try:
+                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                    win32gui.SetForegroundWindow(hwnd)
+                except Exception:
+                    try:
+                        win32gui.BringWindowToTop(hwnd)
+                    except Exception:
+                        pass
+            else:
+                return f"No open {browser_clean.title()} window was found to close a tab, Sir."
+
+        time.sleep(0.06)
+        pyautogui.FAILSAFE = False
+        pyautogui.hotkey("ctrl", "w")
+        time.sleep(0.04)
+        return f"Closed active tab in your {browser_clean.title()} window, Sir."
+    except Exception as e:
+        return f"Failed to close browser tab: {e}"
+
+
+@SkillRegistry.register(
     name="focus_window",
     description="Switches focus and brings an open desktop application or window to the foreground by name (e.g. 'brave', 'code', 'spotify', 'terminal')."
 )

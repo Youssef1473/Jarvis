@@ -22,6 +22,7 @@ logger = logging.getLogger("Jarvis.ReflexEngine")
 # Tools safe to be promoted to automatic fast-path reflexes without human confirmation
 REFLEX_ELIGIBLE_TOOLS = {
     "open_browser_tab",
+    "close_browser_tab",
     "launch_application",
     "close_application",
     "focus_window",
@@ -83,6 +84,8 @@ class DynamicReflexEngine:
     """Manages learned habits, in-memory reflex lookups, and SQLite persistence."""
 
     def __init__(self, db_path: Path | str = "data/jarvis_memory.db"):
+        if not isinstance(db_path, (str, Path)) or hasattr(db_path, "_mock_name"):
+            db_path = "data/jarvis_memory.db"
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()

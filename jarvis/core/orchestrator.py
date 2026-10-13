@@ -163,6 +163,12 @@ class JarvisOrchestrator:
         if self._is_muted:
             return
 
+        ptt_mode = str(self.config.get("audio", {}).get("ptt_mode", "hold")).lower().strip()
+        if ptt_mode == "toggle" and self._is_recording:
+            # Second press in toggle mode concludes recording session
+            self._finalize_ptt_recording()
+            return
+
         if self.tts.is_speaking:
             self.tts.stop()
 
@@ -201,11 +207,8 @@ class JarvisOrchestrator:
             self._is_recording = False
             self.set_state("idle")
 
-    def _on_ptt_release(self):
-        """Called immediately when user releases PTT trigger."""
-        if not self._is_recording:
-            return
-
+    def _finalize_ptt_recording(self):
+        """Concludes PTT recording session and initiates audio processing."""
         press_duration = time.time() - getattr(self, "_ptt_press_time", 0.0)
         self._is_recording = False
 
@@ -217,13 +220,14 @@ class JarvisOrchestrator:
                 pass
             self._record_stream = None
 
-        # Filter out accidental mouse taps (< 220ms) if using mouse button
+        # Filter out accidental mouse taps (< 220ms) if using mouse button in hold mode
         is_mouse = getattr(self.hotkey_listener, "mouse_target_btn", None) is not None
-        if is_mouse and press_duration < 0.22:
+        ptt_mode = str(self.config.get("audio", {}).get("ptt_mode", "hold")).lower().strip()
+        if is_mouse and ptt_mode != "toggle" and press_duration < 0.22:
             self.set_state("idle")
             return
 
-        logger.info(f"PTT released (held {press_duration:.2f}s): Processing speech...")
+        logger.info(f"PTT concluded (duration {press_duration:.2f}s): Processing speech...")
         self.set_state("thinking")
 
         with self._lock:
@@ -234,6 +238,18 @@ class JarvisOrchestrator:
             audio_array = np.concatenate(self._recorded_frames, axis=0).flatten()
 
         threading.Thread(target=self._process_audio, args=(audio_array,), daemon=True).start()
+
+    def _on_ptt_release(self):
+        """Called immediately when user releases PTT trigger."""
+        if not self._is_recording:
+            return
+
+        ptt_mode = str(self.config.get("audio", {}).get("ptt_mode", "hold")).lower().strip()
+        if ptt_mode == "toggle":
+            # In toggle mode, releasing the key does NOT finish recording; user speaks until next press
+            return
+
+        self._finalize_ptt_recording()
 
     def _on_wake_word(self):
         """Called when openWakeWord detects 'Hey Jarvis'."""
@@ -263,16 +279,18 @@ class JarvisOrchestrator:
                 sample_rate = self.sample_rate
 
                 audio_cfg = self.config.get("audio", {})
-                silence_threshold = float(audio_cfg.get("silence_threshold_seconds", 1.4))
-                max_record_seconds = float(audio_cfg.get("max_record_seconds", 15.0))
+                base_silence_s = float(audio_cfg.get("silence_threshold_seconds", 1.4))
+                thinking_pause_s = float(audio_cfg.get("thinking_pause_seconds", 3.2))
+                max_record_seconds = float(audio_cfg.get("max_record_seconds", 35.0))
                 initial_timeout_seconds = float(audio_cfg.get("initial_timeout_seconds", 3.5))
+                hesitation_damping = bool(audio_cfg.get("hesitation_damping", True))
 
                 chunk_duration = block_size / sample_rate
                 max_chunks = int(max_record_seconds / chunk_duration)
                 initial_timeout_chunks = int(initial_timeout_seconds / chunk_duration)
-                silence_chunks_needed = max(14, int(silence_threshold / chunk_duration))
 
                 speech_started = False
+                active_speech_chunks = 0
                 silence_chunk_count = 0
 
                 with sd.InputStream(samplerate=sample_rate, channels=1, dtype="float32", blocksize=block_size) as stream:
@@ -283,25 +301,38 @@ class JarvisOrchestrator:
                         data, _ = stream.read(block_size)
                         captured_chunks.append(data.copy())
 
-                        # Convert float32 to int16 PCM for VAD scoring
-                        data_int16 = (data[:, 0] * 32767).astype(np.int16)
-                        vad_score = vad.predict(data_int16)
+                        # Compute RMS energy for micro-hesitation and breathing detection
+                        chunk_samples = data[:, 0]
+                        rms_energy = float(np.sqrt(np.mean(chunk_samples ** 2)))
 
-                        if vad_score >= 0.32:
+                        # Convert float32 to int16 PCM for VAD scoring
+                        data_int16 = (chunk_samples * 32767).astype(np.int16)
+                        vad_score = float(vad.predict(data_int16))
+
+                        if vad_score >= 0.30:
                             speech_started = True
+                            active_speech_chunks += 1
                             silence_chunk_count = 0
                         elif speech_started:
-                            if vad_score < 0.25:
+                            # Dynamic Adaptive Silence Scaling:
+                            # Scales pause tolerance from base_silence_s up to thinking_pause_s (e.g. 3.2s)
+                            # so Sir has ample breathing room to think during compound multi-clause sentences.
+                            spoken_duration_s = active_speech_chunks * chunk_duration
+                            dynamic_silence_s = min(thinking_pause_s, base_silence_s + (spoken_duration_s * 0.35))
+                            silence_chunks_needed = max(14, int(dynamic_silence_s / chunk_duration))
+
+                            # Hesitation & Murmur Damping:
+                            # Intermediate vocal energy (vad 0.12-0.29 or breathing RMS >= 0.0038) indicates active thinking
+                            if hesitation_damping and (0.12 <= vad_score < 0.30 or rms_energy >= 0.0038):
+                                silence_chunk_count = max(0, silence_chunk_count - 2)
+                            else:
                                 silence_chunk_count += 1
                                 if silence_chunk_count >= silence_chunks_needed:
                                     logger.info(
                                         f"VAD speech concluded at {chunk_idx * chunk_duration:.1f}s "
-                                        f"({silence_chunk_count * chunk_duration:.2f}s pause)."
+                                        f"({silence_chunk_count * chunk_duration:.2f}s pause, dynamic limit {dynamic_silence_s:.2f}s)."
                                     )
                                     break
-                            else:
-                                # Intermediate sound / soft consonant: decay silence count rather than increment
-                                silence_chunk_count = max(0, silence_chunk_count - 1)
                         else:
                             if chunk_idx >= initial_timeout_chunks:
                                 logger.info("VAD: no speech detected after wake word.")

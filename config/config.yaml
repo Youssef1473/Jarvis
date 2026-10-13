@@ -39,9 +39,12 @@ audio:
   wake_word_energy_threshold: 0.0035 # Sub-microsecond RMS energy gate to skip idle ONNX inferences (0% idle CPU)
   ptt_trigger: "fin"              # Hold Fin (End) key to speak, release to send
   ptt_key: "fin"                  # Backward compatibility alias
-  silence_threshold_seconds: 1.4  # Natural conversational pause duration before concluding utterance (prevents mid-sentence cutoff)
-  max_record_seconds: 15.0        # Maximum allowable utterance length for compound commands
+  ptt_mode: "hold"                # "hold" (hold key to speak) or "toggle" (tap once to start, tap again to finish)
+  silence_threshold_seconds: 1.4  # Base conversational pause duration for concise commands
+  thinking_pause_seconds: 3.2     # Dynamic extended pause allowance when thinking mid-utterance (prevents cutoff)
+  max_record_seconds: 35.0        # Maximum allowable utterance length for compound thoughts
   initial_timeout_seconds: 3.5    # Window to begin speaking after wake word chime
+  hesitation_damping: true        # Damps silence accumulation on trailing murmurs, breathing, and vocal hesitations
 
 stt:
   model_size: "small.en"          # "small.en" (high-accuracy English 244M model, ~67ms latency on CUDA), or "base.en" (74M)
