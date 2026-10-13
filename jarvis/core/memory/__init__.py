@@ -731,3 +731,20 @@ class MemoryManager:
             with self._context_summary_lock:
                 self._context_summary_cache = summary
         return summary
+
+
+from .obsidian_sync import (
+    ObsidianContextSyncEngine,
+    ObsidianChunk,
+    ObsidianNoteParser,
+    SyncStats,
+)
+
+__all__ = [
+    "MemoryManager",
+    "VectorMemoryEngine",
+    "ObsidianContextSyncEngine",
+    "ObsidianChunk",
+    "ObsidianNoteParser",
+    "SyncStats",
+]

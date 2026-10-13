@@ -10,7 +10,14 @@
 ## 🎯 1. Mission Objectives & Current Milestone Status
 
 ### Recently Completed & Verified Milestones:
-1. **Process Elevation, Async Tool Pool & Operational Guardrails (Commit `9e19f8e`):**
+1. **Obsidian Context Sync Engine & Differential Delta Tracking:**
+   - **Thread-Isolated Sync Architecture:** Implemented [`ObsidianContextSyncEngine`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/jarvis/core/memory/obsidian_sync.py) running on a dedicated scanner thread (`_scan_thread`) with micro-sleep CPU yields (1ms) to eliminate context-switch stalls against the sub-100ms CUDA voice pipeline.
+   - **Differential Delta Tracking:** Fast-path scanning utilizing Windows NTFS `os.scandir` cached `st_mtime` with in-memory `_stat_cache` and inline SHA-256 hash tracking in SQLite table `obsidian_sync_state`, skipping untouched notes with 0 file reads and 0 hashing cycles.
+   - **Frontmatter & Wiki-Link Chunking:** [`ObsidianNoteParser`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/jarvis/core/memory/obsidian_sync.py) extracts YAML frontmatter, resolves `[[Wiki-Link|Alias]]` targets, and decomposes markdown into hierarchical section chunks with breadcrumbs (`Note > Heading`) bounded to 1,200 characters.
+   - **SQLite WAL Write Protection:** Offloaded all chunk inserts and state updates to a dedicated DB queue worker thread (`_db_thread`) utilizing batched parameterized transactions under SQLite WAL mode (`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA synchronous=NORMAL;`), with direct flush fallback when threads are inactive.
+   - **Package Migration:** Transitioned `jarvis/core/memory.py` into package [`jarvis/core/memory/__init__.py`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/jarvis/core/memory/__init__.py) with 100% backwards compatibility for `MemoryManager` and `VectorMemoryEngine`.
+
+2. **Process Elevation, Async Tool Pool & Operational Guardrails (Commit `9e19f8e`):**
    - **Process Elevation & Performance Scheduling:** Elevated main process in [`run.py`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/run.py) to `ABOVE_NORMAL_PRIORITY_CLASS`, instructing Windows Thread Director to prioritize real-time audio threads on Intel Performance P-Cores.
    - **Real-Time WASAPI & Synthesis Thread Elevation:** Injected Win32 `SetThreadPriority(ctypes.c_void_p(-2), 2)` (`THREAD_PRIORITY_HIGHEST`) across Kokoro synthesis worker, playback worker, and sounddevice WASAPI callback in [`jarvis/audio/tts.py`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/jarvis/audio/tts.py).
    - **Async Thread-Pool Decoupling for Tools:** Refactored [`UnifiedRunner`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/jarvis/core/providers/base.py) with dedicated 8-worker `ThreadPoolExecutor` (`Jarvis-ToolWorker`) offloading tools from the cognitive thread, and enforced a mandatory per-tool execution timeout (default 5.0s) via `execute_tool_with_timeout()` and `execute_tool_async()` preventing orchestrator stalls.
@@ -51,6 +58,7 @@
 
 | Subsystem | File Location | Key Architectural Invariants | Test Status |
 | :--- | :--- | :--- | :--- |
+| **Obsidian Context Sync Engine** | [`jarvis/core/memory/obsidian_sync.py`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/jarvis/core/memory/obsidian_sync.py) | Non-blocking background worker thread, `st_mtime` + SHA-256 differential delta cache, WAL-protected SQLite queue worker, zero audio jitter. | `test_obsidian_sync.py` (PASS) |
 | **Async Tool Execution Pool** | [`jarvis/core/providers/base.py`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/jarvis/core/providers/base.py) | Non-blocking `Jarvis-ToolWorker` thread pool, mandatory 5.0s per-tool timeout guard, cycle detection, zero orchestrator lockup. | `test_unified_runner_and_sandbox.py` (PASS) |
 | **Operational Sandbox Guards** | [`jarvis/core/evolution/sandbox.py`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/jarvis/core/evolution/sandbox.py) | AST infinite loop detection, 50M element allocation ceiling, 2.0s canary smoke watchdog, 64MB memory limit, 2.5s socket timeout. | `test_self_evolution_sandbox.py`<br>`test_self_evolution.py` (PASS) |
 | **P-Core Priority Scheduling** | [`run.py`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/run.py)<br>[`jarvis/audio/tts.py`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/jarvis/audio/tts.py) | Process set to `ABOVE_NORMAL`, Kokoro synth + WASAPI threads set to `THREAD_PRIORITY_HIGHEST` for P-Core execution. | Full Suite (PASS) |
@@ -70,17 +78,17 @@ Run the complete test suite across the repository:
 ```
 **Latest Output:**
 ```text
-Ran 68 tests in 21.607s
+Ran 73 tests in 27.664s
 OK
 ```
 
-Targeted Core, Concurrency, and Sandbox Tests:
+Targeted Obsidian Sync & Memory Tests:
 ```powershell
-.\.venv\Scripts\python.exe -m unittest tests/test_unified_runner_and_sandbox.py tests/test_self_evolution_sandbox.py tests/test_audio_streaming_pipeline.py
+.\.venv\Scripts\python.exe -m unittest tests/test_obsidian_sync.py
 ```
 **Output:**
 ```text
-Ran 20 tests in 2.850s
+Ran 5 tests in 1.360s
 OK
 ```
 
