@@ -92,6 +92,14 @@ class UnifiedRunner:
             thread_name_prefix="Jarvis-ToolWorker"
         )
 
+    def shutdown(self, wait: bool = False):
+        """Halts the tool executor thread pool immediately."""
+        try:
+            self._tool_executor.shutdown(wait=wait, cancel_futures=True)
+            logger.info("UnifiedRunner tool executor pool shut down.")
+        except Exception as e:
+            logger.debug(f"Tool executor shutdown notice: {e}")
+
     def execute_tool_with_timeout(
         self,
         fn_name: str,

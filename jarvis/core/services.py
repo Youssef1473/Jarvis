@@ -119,3 +119,74 @@ class ManagedServiceManager:
                         psutil.wait_procs(still_running, timeout=2.0)
             except Exception:
                 logger.exception("Could not stop managed service %s (PID %s).", name, process.pid)
+
+        # Enforce total child process termination: sweep any descendant child of the current Jarvis process
+        try:
+            import os
+            import psutil
+            current_proc = psutil.Process(os.getpid())
+            remaining_children = current_proc.children(recursive=True)
+            if remaining_children:
+                logger.info("Sweeping %d remaining child processes belonging to Jarvis...", len(remaining_children))
+                for child in remaining_children:
+                    try:
+                        child.terminate()
+                    except Exception:
+                        pass
+                _, alive = psutil.wait_procs(remaining_children, timeout=timeout_seconds)
+                for child in alive:
+                    try:
+                        logger.warning("Force-killing lingering child process PID %s (%s)", child.pid, child.name())
+                        child.kill()
+                    except Exception:
+                        pass
+        except Exception as err:
+            logger.debug("Child process sweep notice: %s", err)
+
+
+def kill_orphaned_jarvis_processes(exclude_pids=None):
+    """Identifies and terminates any orphaned background processes belonging to Jarvis."""
+    import os
+    import psutil
+
+    exclude = set(exclude_pids or set())
+    exclude.add(os.getpid())
+    terminated = []
+
+    try:
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                pid = proc.info['pid']
+                if pid in exclude:
+                    continue
+
+                cmdline_parts = proc.info.get('cmdline') or []
+                cmdline_str = " ".join(cmdline_parts).lower()
+                name_str = (proc.info.get('name') or "").lower()
+
+                # Guard: Never kill IDE, language servers, terminal host, or external editor processes
+                if any(k in cmdline_str for k in ("antigravity", "language_server", "code.exe", "cursor.exe")):
+                    continue
+
+                is_jarvis_proc = False
+                # 1. Python process running jarvis entry point or modules
+                if "python" in name_str and any(k in cmdline_str for k in ("run.py", "jarvis/")):
+                    is_jarvis_proc = True
+                # 2. Process bound to Jarvis UI port (20129)
+                elif any(k in cmdline_str for k in ("20129", "jarvis-hud")):
+                    is_jarvis_proc = True
+
+                if is_jarvis_proc:
+                    logger.warning("Killing orphaned Jarvis process PID %s (%s: %s)", pid, name_str, cmdline_str[:80])
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=1.5)
+                    except psutil.TimeoutExpired:
+                        proc.kill()
+                    terminated.append({"pid": pid, "name": name_str, "cmdline": cmdline_str[:80]})
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+    except Exception as e:
+        logger.error("Error scanning for orphaned Jarvis processes: %s", e)
+
+    return terminated

@@ -2015,3 +2015,29 @@ Autonomous Self-Building & Dynamic Feature Creation:
         logger.info("Inference latency (antigravity - %s): %sms", target_model, elapsed_ms)
         return reply
 
+    def stop(self):
+        """Halts brain background components, provider runners, and unloads models from VRAM."""
+        if hasattr(self, "unified_runner") and self.unified_runner:
+            try:
+                self.unified_runner.shutdown()
+            except Exception:
+                pass
+
+        # Unload Ollama models from VRAM if local Ollama server is running
+        try:
+            ollama_url = self.config.get("llm", {}).get("ollama_base_url", "http://localhost:11434/v1")
+            base = ollama_url.split("/v1", 1)[0].rstrip("/")
+            import urllib.request
+            import json
+            req = urllib.request.Request(
+                f"{base}/api/generate",
+                data=json.dumps({"model": getattr(self, "ollama_model", "qwen3.5:2b-q4_K_M"), "keep_alive": 0}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=1.0):
+                pass
+            logger.info("Unloaded Ollama models from GPU VRAM.")
+        except Exception:
+            pass
+

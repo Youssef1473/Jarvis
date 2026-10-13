@@ -80,6 +80,21 @@ class SpeechToText:
             logger.error(f"Failed to load faster-whisper on CPU: {e}")
             self.model = None
 
+    def stop(self):
+        """Unloads the speech recognition model and releases CUDA GPU memory allocations."""
+        if self.model is not None:
+            self.model = None
+            logger.info("Unloaded faster-whisper model from memory.")
+        if "torch" in sys.modules:
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+        import gc
+        gc.collect()
+
     @staticmethod
     def _trim_audio_silence(audio: np.ndarray, sample_rate: int = 16000, threshold: float = 0.012, pad_ms: int = 150) -> np.ndarray:
         """Trims leading and trailing silence from audio array using RMS energy."""

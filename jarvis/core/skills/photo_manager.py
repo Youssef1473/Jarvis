@@ -95,6 +95,17 @@ _db_thread = threading.Thread(target=_db_worker_loop, daemon=True, name="PhotoDB
 _db_thread.start()
 
 
+def shutdown_photo_manager(timeout: float = 2.0):
+    """Signals the photo DB worker to shut down cleanly."""
+    global _db_thread
+    try:
+        _db_queue.put(None)
+        if _db_thread and _db_thread.is_alive():
+            _db_thread.join(timeout=timeout)
+    except Exception as e:
+        logger.debug("Photo manager shutdown notice: %s", e)
+
+
 # -----------------------------------------------------------------------------
 # Core Image Ingestion & Sanitization Engine
 # -----------------------------------------------------------------------------

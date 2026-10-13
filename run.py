@@ -2,7 +2,8 @@
 import os
 import sys
 import logging
-import warnings
+import atexit
+import signal
 from pathlib import Path
 
 # Suppress third-party deprecation warnings (e.g. NumPy 2.5 shape assignment in sounddevice)
@@ -21,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from jarvis.core.config_loader import load_config, get_gemini_api_key
 from jarvis.core.orchestrator import JarvisOrchestrator
+from jarvis.core.services import kill_orphaned_jarvis_processes
 from jarvis.ui.tray import SystemTrayApp
 
 
@@ -94,7 +96,24 @@ def main():
     elif config.get("llm", {}).get("provider", "ollama").lower() == "gemini":
         check_api_key()
 
+    # Clean up any orphaned Jarvis processes left from prior crashes or forced terminal kills
+    kill_orphaned_jarvis_processes()
+
     orchestrator = JarvisOrchestrator(config)
+
+    # Register automatic teardown so all tools and child processes terminate regardless of exit path
+    atexit.register(orchestrator.stop)
+
+    def _on_signal(signum, frame):
+        logging.getLogger("Jarvis").info("Termination signal %s caught. Shutting down all tools and child services...", signum)
+        orchestrator.stop()
+        sys.exit(0)
+
+    try:
+        signal.signal(signal.SIGINT, _on_signal)
+        signal.signal(signal.SIGTERM, _on_signal)
+    except Exception:
+        pass
 
     # Launch full-featured system tray app in background
     tray_app = SystemTrayApp(orchestrator=orchestrator, on_quit_callback=orchestrator.stop)

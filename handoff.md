@@ -10,7 +10,13 @@
 ## 🎯 1. Mission Objectives & Current Milestone Status
 
 ### Recently Completed & Verified Milestones:
-1. **Obsidian Context Sync Engine & Differential Delta Tracking:**
+1. **Hardware Thermal & Comprehensive Tool Teardown Protocol:**
+   - **Child Process Tree Sweep:** Upgraded [`ManagedServiceManager`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/jarvis/core/services.py) and added `kill_orphaned_jarvis_processes()` to recursively detect, terminate, and force-kill any child/descendant processes (`psutil.Process().children(recursive=True)`) or orphaned background workers.
+   - **Universal Tool & Sentinel Disengagement:** Refactored [`JarvisOrchestrator.stop()`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/jarvis/core/orchestrator.py) to sequentially disengage the hardware thermal watchdog (`stop_hardware_watchdog()`), all active timers (`cancel_timer("all")`), photo DB queue worker (`shutdown_photo_manager()`), `UnifiedRunner` tool worker pool (`shutdown()`), Web HUD Uvicorn server, and NVML telemetry session.
+   - **VRAM & CUDA Teardown:** Added model unloader to `SpeechToText.stop()` (unloads faster-whisper), joined Kokoro synthesis and playback workers in `TextToSpeech.stop()`, dispatched model-unload instructions to local Ollama from `JarvisBrain.stop()`, and flushed PyTorch CUDA allocations via `torch.cuda.empty_cache()` and `torch.cuda.ipc_collect()`.
+   - **Signal & Exit Safety Gates:** Hooked `atexit.register(orchestrator.stop)` and `signal.signal(signal.SIGINT/SIGTERM)` in [`run.py`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/run.py), and expanded `is_shutdown_command()` natural speech triggers (e.g. "shut down every tool", "kill jarvis", "turn off", "kill all tools").
+
+2. **Obsidian Context Sync Engine & Differential Delta Tracking (Commit `5219190`):**
    - **Thread-Isolated Sync Architecture:** Implemented [`ObsidianContextSyncEngine`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/jarvis/core/memory/obsidian_sync.py) running on a dedicated scanner thread (`_scan_thread`) with micro-sleep CPU yields (1ms) to eliminate context-switch stalls against the sub-100ms CUDA voice pipeline.
    - **Differential Delta Tracking:** Fast-path scanning utilizing Windows NTFS `os.scandir` cached `st_mtime` with in-memory `_stat_cache` and inline SHA-256 hash tracking in SQLite table `obsidian_sync_state`, skipping untouched notes with 0 file reads and 0 hashing cycles.
    - **Frontmatter & Wiki-Link Chunking:** [`ObsidianNoteParser`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/jarvis/core/memory/obsidian_sync.py) extracts YAML frontmatter, resolves `[[Wiki-Link|Alias]]` targets, and decomposes markdown into hierarchical section chunks with breadcrumbs (`Note > Heading`) bounded to 1,200 characters.
@@ -58,6 +64,7 @@
 
 | Subsystem | File Location | Key Architectural Invariants | Test Status |
 | :--- | :--- | :--- | :--- |
+| **Tool & Hardware Teardown** | [`jarvis/core/services.py`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/jarvis/core/services.py)<br>[`jarvis/core/orchestrator.py`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/jarvis/core/orchestrator.py) | Full child process tree sweep (`psutil`), universal sentinel/timer disengagement, STT/TTS CUDA VRAM flush, `atexit`/signal trap. | `test_shutdown_lifecycle.py` (PASS) |
 | **Obsidian Context Sync Engine** | [`jarvis/core/memory/obsidian_sync.py`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/jarvis/core/memory/obsidian_sync.py) | Non-blocking background worker thread, `st_mtime` + SHA-256 differential delta cache, WAL-protected SQLite queue worker, zero audio jitter. | `test_obsidian_sync.py` (PASS) |
 | **Async Tool Execution Pool** | [`jarvis/core/providers/base.py`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/jarvis/core/providers/base.py) | Non-blocking `Jarvis-ToolWorker` thread pool, mandatory 5.0s per-tool timeout guard, cycle detection, zero orchestrator lockup. | `test_unified_runner_and_sandbox.py` (PASS) |
 | **Operational Sandbox Guards** | [`jarvis/core/evolution/sandbox.py`](file:///C:/Users/Youssef/Projects/Jarvis_2.0/jarvis/core/evolution/sandbox.py) | AST infinite loop detection, 50M element allocation ceiling, 2.0s canary smoke watchdog, 64MB memory limit, 2.5s socket timeout. | `test_self_evolution_sandbox.py`<br>`test_self_evolution.py` (PASS) |
@@ -78,17 +85,17 @@ Run the complete test suite across the repository:
 ```
 **Latest Output:**
 ```text
-Ran 73 tests in 27.664s
+Ran 79 tests in 30.575s
 OK
 ```
 
-Targeted Obsidian Sync & Memory Tests:
+Targeted Shutdown & Teardown Lifecycle Tests:
 ```powershell
-.\.venv\Scripts\python.exe -m unittest tests/test_obsidian_sync.py
+.\.venv\Scripts\python.exe -m unittest tests/test_shutdown_lifecycle.py
 ```
 **Output:**
 ```text
-Ran 5 tests in 1.360s
+Ran 6 tests in 7.075s
 OK
 ```
 

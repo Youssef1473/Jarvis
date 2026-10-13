@@ -308,8 +308,12 @@ class JarvisOrchestrator:
         }:
             return True
 
+        # Questions or explanations asking 'how', 'why', 'what', 'who' must never trigger shutdown
+        if any(normalized.startswith(q) for q in ("how ", "why ", "what ", "who ", "where ", "when ", "can you explain", "explain ")):
+            return False
+
         # Programming instructions and technical directives must never trigger shutdown
-        code_markers = {"def", "class", "import", "python", "code", "script", "step", "execute", "directive", "permission", "server"}
+        code_markers = {"def", "class", "import", "python", "code", "script", "step", "execute", "directive", "permission", "server", "vim"}
         query_words = set(normalized.split())
         if query_words & code_markers:
             return False
@@ -326,7 +330,10 @@ class JarvisOrchestrator:
             r"\bpower down\b", r"\bdeactivate\b", r"\bgo to sleep\b", r"\bsleep now\b",
             r"\bpower off\b", r"\bgo offline\b", r"\bterminate\b", r"\bclose jarvis\b", r"\bstop jarvis\b",
             r"\bstop listening\b", r"\bstop working\b", r"\bstop all services\b", r"\bstop all the services\b",
-            r"\bstop every service\b", r"\bshut yourself down\b"
+            r"\bstop every service\b", r"\bshut yourself down\b",
+            r"\bshut down every tool\b", r"\bshut down all tools\b", r"\bkill jarvis\b",
+            r"\bkill every tool\b", r"\bkill all tools\b", r"\bkill everything\b",
+            r"\bturn off\b", r"\bclose down\b", r"\bstop all tools\b"
         ]
         return any(re.search(t, normalized) for t in triggers)
 
@@ -505,20 +512,42 @@ class JarvisOrchestrator:
             self.stop()
 
     def stop(self):
-        """Stops Jarvis's internal workers and every managed child service."""
+        """Stops Jarvis's internal workers, all tools, and every managed child service."""
         with self._stop_lock:
             if self._stopped:
                 return
             self._stopped = True
             self._running = False
 
+        # 1. Stop all global skill sentinels & background threads
+        try:
+            from jarvis.skills.system_watchdog import stop_hardware_watchdog
+            stop_hardware_watchdog()
+        except Exception:
+            pass
+
+        try:
+            from jarvis.skills.timers import cancel_timer
+            cancel_timer("all")
+        except Exception:
+            pass
+
+        try:
+            from jarvis.core.skills.photo_manager import shutdown_photo_manager
+            shutdown_photo_manager()
+        except Exception:
+            pass
+
+        # 2. Stop core subsystem components
         cleanup_steps = [
             ("Web HUD", getattr(self, "ui_service", None)),
             ("heartbeat", self.heartbeat),
             ("hotkey listener", self.hotkey_listener),
             ("wake detector", self.wake_detector),
             ("text-to-speech", self.tts),
+            ("speech-to-text", self.stt),
             ("desktop HUD", self.hud),
+            ("brain", getattr(self, "brain", None)),
         ]
         for name, component in cleanup_steps:
             if component is None:
@@ -528,4 +557,24 @@ class JarvisOrchestrator:
             except Exception:
                 logger.exception("Could not stop Jarvis %s cleanly.", name)
 
-        self.service_manager.stop_all()
+        # 3. Stop managed services and sweep all child processes
+        try:
+            self.service_manager.stop_all()
+        except Exception:
+            logger.exception("Could not stop service manager cleanly.")
+
+        # 4. Flush GPU VRAM and run garbage collection
+        try:
+            import gc
+            gc.collect()
+            if "torch" in sys.modules:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.ipc_collect()
+        except Exception:
+            pass
+
+        # 5. Trim working set to prevent memory pressure
+        trim_process_memory(aggressive=True)
+        logger.info("Jarvis shutdown complete: All tools, child processes, and hardware threads terminated.")

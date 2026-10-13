@@ -194,7 +194,33 @@ class TextToSpeech:
             except Exception:
                 pass
 
+        # Join any running synthesis and playback worker threads cleanly
+        synth = getattr(self, "_synth_thread", None)
+        if synth and synth.is_alive():
+            try:
+                synth.join(timeout=0.3)
+            except Exception:
+                pass
+
+        play = getattr(self, "_playback_thread", None)
+        if play and play.is_alive():
+            try:
+                play.join(timeout=0.3)
+            except Exception:
+                pass
+
         self._is_speaking = False
+
+        # Clear PyTorch / ONNX CUDA cache if present
+        if "torch" in sys.modules:
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+        import gc
+        gc.collect()
 
     def _clean_text_for_speech(self, text: str) -> str:
         """Normalizes times, numbers, dates, units, and formatting for natural spoken delivery."""
