@@ -521,7 +521,22 @@ Autonomous Self-Building & Dynamic Feature Creation:
                 "Use the available workspace tools for file access and edits; do not invent file contents or "
                 "claim that code was run when it was not.\n"
             )
+            epistemic_gate = self.load_curated_prompt("epistemic_anti_hallucination")
+            if epistemic_gate:
+                prompt += f"\n{epistemic_gate}\n"
         return prompt
+
+    @staticmethod
+    def load_curated_prompt(name: str) -> str:
+        """Loads a curated engineering prompt from data/prompts/ with local file lookup."""
+        prompt_path = Path("data/prompts") / f"{name}.md"
+        if prompt_path.is_file():
+            try:
+                return prompt_path.read_text(encoding="utf-8").strip()
+            except Exception as e:
+                logger.debug("Notice reading curated prompt '%s': %s", name, e)
+        return ""
+
 
     def _select_tools_for_query(self, user_text: str) -> frozenset[str]:
         """Limit each request to skills that its wording plausibly needs.
@@ -1427,16 +1442,28 @@ Autonomous Self-Building & Dynamic Feature Creation:
             "sonnet": "claude-sonnet-4-6",
             "opus": "claude-opus-4-6-thinking",
             "gpt-oss": "gpt-oss-120b-medium",
+            "security": "claude-sonnet-4-6",
+            "architect": "claude-sonnet-4-6",
+            "code_review": "claude-sonnet-4-6",
             "antigravity": self.antigravity_model,
             "agy": self.antigravity_model,
         }
         if (provider in ag_models_map or (provider == "gemini" and not os.getenv("GEMINI_API_KEY"))) and getattr(self, "antigravity_bridge", None) and self.antigravity_bridge.is_available():
             target_model = ag_models_map.get(provider, self.antigravity_model)
             logger.info("Routing specialist '%s' consultation to ANTIGRAVITY BRIDGE (%s)...", provider, target_model)
+            specialist_instruction = "You are a specialist consultant for Jarvis. Answer the user's specific request clearly and concisely."
+            if provider == "security":
+                custom_p = self.load_curated_prompt("whitebox_security_auditor")
+                if custom_p:
+                    specialist_instruction = custom_p
+            elif provider in {"architect", "code_review"}:
+                custom_p = self.load_curated_prompt("phased_ast_code_reviewer")
+                if custom_p:
+                    specialist_instruction = custom_p
             res = self.antigravity_bridge.generate_response(
                 prompt=prompt,
                 model=target_model,
-                system_instruction="You are a specialist consultant for Jarvis. Answer the user's specific request clearly and concisely.",
+                system_instruction=specialist_instruction,
                 timeout=60.0
             )
             return (res.get("response") or f"{provider.title()} returned no text, Sir.").strip()
