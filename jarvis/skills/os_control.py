@@ -1002,7 +1002,7 @@ def close_browser_tab(browser: str = "brave", tab_title: str = "") -> str:
         try:
             from jarvis.skills.browser_cdp import close_cdp_tab
             cdp_res = close_cdp_tab(title_or_url=tab_title)
-            if cdp_res and "verified" in cdp_res.lower():
+            if cdp_res and not cdp_res.startswith("Could not find") and not cdp_res.startswith("No open browser tabs"):
                 return cdp_res
         except Exception as e:
             logger.debug(f"CDP close tab bypass: {e}")
