@@ -103,6 +103,13 @@ These rules are loaded automatically on every interaction turn. All operations w
 * **Epistemic Humility & Active Memory Inscription:** When Sir refers to unknown private projects, persons, or custom habits not found in memory, Jarvis never hallucinates or guesses. He plainly admits the record is missing with dry poise and proactively offers to commit it to memory ("I don't seem to have any record of that in my archives, Sir. Would you like me to commit it to memory so I'm properly calibrated?"). When Sir affirms, Jarvis immediately invokes `remember_fact` or `update_user_preference`.
 * **Socratic Co-Engineering & Task Simplification:** When Sir proposes building features, self-evolving, or tackling complex engineering, Jarvis never dumps monolithic lectures or unprompted code walls. He decomposes the problem into first principles, summarizes the trade-offs in 2–3 sentences, poses clear A/B choices, and seeks alignment before modifying files.
 
+### Multimodal Vision & Screen Intelligence Invariant: Visual Privacy Guard & Multi-Tier Perception Cascade
+* **Automated Visual Privacy Guard (Zero-Exposure Policy):** Before capturing desktop screen pixels or transmitting frame buffers to any local or cloud vision model, Jarvis must probe the foreground window HWND and process name via Win32 `GetForegroundWindow` / UIA against sensitive security profiles (`1password`, `bitwarden`, `keepass`, `lastpass`, `dashlane`, `authenticator`, `metamask`, `ledger`, `trezor`, `online banking`, `login`, `credential`). If a sensitive window is detected, visual capture must be halted immediately with a courteous spoken explanation to Sir.
+* **Developer False-Positive Defense:** When Sir is working inside IDEs (`Code.exe`, `pycharm64.exe`, `devenv.exe`, `sublime_text.exe`), files named `login.py`, `auth_service.py`, or `banking.ts` are recognized as source code and permitted without false-positive lockouts.
+* **Bounded Cloud Cascade & Deadline Enforcement:** Cloud vision calls via `google.genai` must configure `types.HttpOptions(timeout=12000)` (minimum 10s SDK requirement) and cascade across candidate models (`gemini-3-flash-preview` -> `gemini-flash-latest` -> `gemini-3.5-flash` -> `gemini-2.5-pro`) to eliminate tenacity retry loops and guarantee sub-12s response ceilings.
+* **Offline Semantic UIA Fallback:** If cloud vision endpoints encounter network timeouts, 503 high demand, or offline state, Jarvis must seamlessly fall back to semantic UI Automation (`pywinauto` UIA / `inspect_window_controls` / active window telemetry) in `<25ms` with zero external API dependencies.
+* **Local Snapshot Auditing:** All captured frames must be cached to `data/screenshots/latest_screen.jpg` for telemetry, debugging, and UI HUD display.
+
 ---
 
 ## 3. Negative Constraints (Strictly Prohibited Patterns)
@@ -111,7 +118,7 @@ These rules are loaded automatically on every interaction turn. All operations w
 2. **PROHIBITED:** Hardcoded blind sleeps (`time.sleep(1.0)` or higher) in production paths. Use condition variables, event loops, or non-blocking socket probes with tight timeouts.
 3. **PROHIBITED:** `subprocess.run(shell=True)` or raw string formatting in shell commands. Use argument lists with `close_fds=True` and pass through `SafetyGate`.
 4. **PROHIBITED:** Storing secrets, API keys, or raw user tokens in plaintext logs or database records.
-5. **PROHIBITED:** Breaking test compatibility. All 183 existing tests in `tests/` must remain green on every single commit.
+5. **PROHIBITED:** Breaking test compatibility. All 188 existing tests in `tests/` must remain green on every single commit.
 
 ---
 
@@ -123,7 +130,11 @@ These rules are loaded automatically on every interaction turn. All operations w
   ```
 * **Performance Telemetry:** Any feature altering audio, brain inference, or reflex loops must be verified against latency thresholds:
   * Fast Reflexes (Speech & OS): `< 15ms`
+  * Visual Privacy Guard Check: `< 1ms`
+  * Semantic UIA Tree Inspection: `< 25ms`
   * SQLite Vector Recall: `< 5ms`
+  * Cloud Vision Response: `< 12s` (typical 3.8s on `gemini-3-flash-preview`)
   * Browser Tab Switching / Closing: `< 25ms` (CDP) / `< 100ms` (Win32)
   * Working Memory Prompt Overhead: `< 1.5KB`
+  * Full Test Suite Baseline: **188 unit tests** (all 100% green).
 * **Host & Shell Awareness:** This workspace runs on **Windows (PowerShell)** with a local virtual environment at `.venv`. All scripts, paths, and commands must use Windows-appropriate syntax and backslashes or forward slashes handled via `pathlib.Path`.
