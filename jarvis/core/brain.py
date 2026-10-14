@@ -1538,7 +1538,23 @@ Autonomous Self-Building & Dynamic Feature Creation:
             answer = "".join(block.get("text", "") for block in body.get("content", []) if block.get("type") == "text")
             return answer.strip() or "Claude returned no text, Sir."
         except Exception as exc:
+            err_msg = str(exc)
             logger.warning("Explicit Claude consultation failed: %s", exc)
+            if hasattr(self, "antigravity_bridge") and self.antigravity_bridge.is_available() and self.antigravity_bridge._is_token_exhaustion_error(err_msg):
+                self.antigravity_bridge.mark_claude_exhausted(reason=err_msg)
+                is_complex = self.antigravity_bridge.is_task_complex(prompt)
+                fallback_tier = "gemini-3.8-flash-high" if is_complex else "gemini-3.8-flash-medium"
+                logger.warning(
+                    "Claude consultation token limit reached. Seamlessly falling back to Antigravity %s (complexity: %s)...",
+                    fallback_tier, "high" if is_complex else "moderate"
+                )
+                res = self.antigravity_bridge.generate_response(
+                    prompt=prompt,
+                    model=fallback_tier,
+                    system_instruction="You are a specialist consultant for Jarvis. Answer clearly and concisely. Do not claim actions were performed.",
+                )
+                if res.get("status") == "SUCCESS":
+                    return res.get("response", "")
             return "Claude could not complete that consultation. Your local Ollama conversation is still available, Sir."
 
     @staticmethod
@@ -2385,6 +2401,7 @@ Autonomous Self-Building & Dynamic Feature Creation:
                 else:
                     target_model = "gemini-3.8-flash-low"
             elif base in ("claude", "sonnet"):
+                self.antigravity_bridge.reset_claude_exhaustion()
                 target_model = "claude-sonnet-4-6"
             elif base == "opus":
                 target_model = "claude-opus-4-6-thinking"
@@ -2405,6 +2422,16 @@ Autonomous Self-Building & Dynamic Feature Creation:
                 target_model = self.antigravity_model
             else:
                 target_model = self.antigravity_bridge.classify_prompt_tier(user_text, task_mode=self.active_task_mode)
+
+        # If target model is Claude Sonnet and Claude is currently token-exhausted, switch based on task complexity
+        if "claude" in target_model and self.antigravity_bridge.is_claude_exhausted():
+            is_complex = self.antigravity_bridge.is_task_complex(user_text, task_mode=self.active_task_mode)
+            fallback_model = "gemini-3.8-flash-high" if is_complex else "gemini-3.8-flash-medium"
+            logger.info(
+                "Claude Sonnet tokens exhausted. Automatically switching to %s (task complexity: %s), Sir.",
+                fallback_model, "high" if is_complex else "moderate"
+            )
+            target_model = fallback_model
 
         # Multi-turn tool execution loop
         max_tool_iterations = 12 if self.active_task_mode == "code" else 4

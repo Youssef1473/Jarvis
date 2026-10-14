@@ -357,6 +357,8 @@ class AntigravityBridge:
         self.use_daemon: bool = llm_cfg.get("antigravity_use_daemon", True)
 
         self.daemon: Optional[AntigravityDaemon] = None
+        self._claude_exhausted_until: float = 0.0
+        self._claude_exhaustion_reason: str = ""
         if self.agy_path and self.use_daemon:
             self.daemon = AntigravityDaemon(
                 agy_path=self.agy_path,
@@ -368,6 +370,85 @@ class AntigravityBridge:
             logger.info("Antigravity CLI bridge located at: %s (persistent daemon=%s)", self.agy_path, self.use_daemon)
         else:
             logger.warning("Antigravity CLI ('agy') executable not found in PATH or standard directories.")
+
+    def is_claude_exhausted(self) -> bool:
+        """Returns True if Claude Sonnet is currently in a token/quota exhaustion cooldown."""
+        return time.time() < self._claude_exhausted_until
+
+    def mark_claude_exhausted(self, duration_seconds: float = 900.0, reason: str = "") -> None:
+        """Marks Claude Sonnet as token/quota-exhausted for a cooldown period (default 15 minutes)."""
+        self._claude_exhausted_until = time.time() + duration_seconds
+        self._claude_exhaustion_reason = reason
+        logger.warning(
+            "Claude Sonnet marked token/quota exhausted for %.0fs. Reason: %s",
+            duration_seconds,
+            reason[:120] if reason else "Rate limit / quota exceeded"
+        )
+        # If daemon was actively bound to Claude, terminate it cleanly so it can restart on Gemini Flash
+        if self.daemon and self.daemon.current_model and "claude" in self.daemon.current_model:
+            self.daemon.stop()
+
+    def reset_claude_exhaustion(self) -> None:
+        """Clears the Claude Sonnet token exhaustion status immediately."""
+        self._claude_exhausted_until = 0.0
+        self._claude_exhaustion_reason = ""
+        logger.info("Claude Sonnet token exhaustion status manually cleared.")
+
+    @staticmethod
+    def _is_token_exhaustion_error(error_msg: str) -> bool:
+        """Checks if an error string indicates token exhaustion, rate limit, quota, or credit issues."""
+        err = (error_msg or "").lower()
+        keywords = (
+            "rate limit", "rate_limit", "429", "529", "resource_exhausted",
+            "quota", "token limit", "tokens", "out of tokens", "token budget",
+            "exceeded your current quota", "insufficient_quota", "credit balance",
+            "usage limit", "capacity", "overloaded", "exhausted",
+        )
+        return any(k in err for k in keywords)
+
+    def is_task_complex(self, prompt: str, task_mode: Optional[str] = None) -> bool:
+        """Evaluates whether an engineering, code, or analytical task requires high reasoning
+        (Gemini 3.8 Flash High) versus standard/moderate reasoning (Gemini 3.8 Flash Medium).
+
+        Complex Tasks -> True (Flash High):
+        - Architecture, system design, concurrency, threading, asyncio, deadlocks, race conditions.
+        - Multi-file refactors, deep codebase audits, self-evolution, sandbox security.
+        - Complex mathematical proofs, algorithms, data structures, formal verification.
+        - Long structured prompts (>25 words with code blocks or numbered steps).
+
+        Moderate/Standard Tasks -> False (Flash Medium):
+        - Routine single-file inspections, git status, git diff, list directory.
+        - Running test suites, checking test outputs, simple assertion fixes.
+        - Conversational follow-ups in an active code session ("yes", "proceed", "fix that").
+        - Direct code explanation questions ("what does this function do?").
+        """
+        p = (prompt or "").lower().strip()
+        if not p:
+            return False
+
+        # 1. Structural multi-file refactoring, architecture, and concurrency keywords
+        complex_patterns = [
+            r"\b(architecture|system\s+design|architectural|concurrency|multithread(ed|ing)?|thread\s+safety|race\s+condition|deadlock|event\s+loop|asyncio)\b",
+            r"\b(self-evolution|self-build|evolve|sandbox|security\s+audit|vulnerability|threat\s+model)\b",
+            r"\b(refactor\s+(the\s+entire|multiple|all|codebase)|overhaul|rewrite|redesign|restructure)\b",
+            r"\b(optimize\s+yourself|enhance\s+yourself|modify\s+yourself|edit\s+yourself|build\s+yourself)\b",
+            r"\b(algorithm|data\s+structure|proof|prove|benchmark|optimization\s+strategy|memory\s+leak|profil(er|ing)|tracemalloc|py-spy)\b",
+            r"\b(math|equation|calculate|derivation|derive|formal\s+verification)\b",
+            r"\b(multi-file|several\s+files|across\s+the\s+project|entire\s+repo|entire\s+repository)\b",
+        ]
+        if any(re.search(pat, p) for pat in complex_patterns):
+            return True
+
+        # 2. Numbered multi-step instructions or long detailed engineering directives
+        has_steps = bool(re.search(r"(\bstep\s*\d|\b\d+\.\s+[a-z]|\bfirst[,:]\s+|\bsecond[,:]\s+)", p))
+        word_count = len(p.split())
+        if has_steps and word_count >= 15:
+            return True
+
+        if word_count > 35 and ("```" in p or "def " in p or "class " in p or "error" in p or "traceback" in p):
+            return True
+
+        return False
 
     def stop(self):
         """Cleanly terminates the persistent warm daemon and any child processes."""
@@ -421,8 +502,11 @@ class AntigravityBridge:
                 models.append(v)
         return models
 
-    def get_candidate_cascade(self, model: str) -> List[str]:
-        """Builds a priority fallback cascade within the Google AI Pro fleet."""
+    def get_candidate_cascade(self, model: str, prompt: str = "") -> List[str]:
+        """Builds a priority fallback cascade within the Google AI Pro fleet.
+        If Claude Sonnet is selected and token-exhausted or in fallback, dynamically
+        prioritizes Gemini 3.8 Flash High vs Flash Medium based on task complexity.
+        """
         resolved = self.resolve_model(model)
         if "argon" in resolved:
             pool = ["gemini-4-argon-high", "gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"]
@@ -433,9 +517,18 @@ class AntigravityBridge:
         elif resolved == "gemini-3.8-flash-high":
             pool = ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"]
         elif "claude" in resolved:
-            pool = list(self.TIER_CLAUDE) + ["gemini-3.8-flash-high", "gemini-3.8-flash-medium"]
+            is_complex = self.is_task_complex(prompt) if prompt else True
+            flash_fallback = ["gemini-3.8-flash-high", "gemini-3.8-flash-medium"] if is_complex else ["gemini-3.8-flash-medium", "gemini-3.8-flash-high"]
+            if self.is_claude_exhausted():
+                pool = flash_fallback + [resolved, "claude-opus-4-6-thinking"]
+            else:
+                pool = list(self.TIER_CLAUDE) + flash_fallback
         else:
             pool = [resolved, "gemini-3.8-flash-medium", "gemini-3.8-flash-high", "gemini-3.8-flash-low"]
+
+        # If Claude is exhausted, return pool directly where Flash fallback is first
+        if "claude" in resolved and self.is_claude_exhausted():
+            return pool
 
         # Ensure requested model is first
         ordered = [resolved] + [m for m in pool if m != resolved]
@@ -482,6 +575,11 @@ class AntigravityBridge:
         if task_mode == "code":
             cancel_triggers = ("stop", "cancel", "never mind", "nevermind", "exit", "reset", "switch to general")
             if not any(trigger in p for trigger in cancel_triggers):
+                if self.is_claude_exhausted():
+                    is_complex = self.is_task_complex(prompt, task_mode)
+                    fallback = "gemini-3.8-flash-high" if is_complex else "gemini-3.8-flash-medium"
+                    logger.info("Claude Sonnet token-exhausted; routing to %s (complexity=%s)", fallback, "complex" if is_complex else "moderate")
+                    return fallback
                 return "claude-sonnet-4-6"
 
         # 3. Structural Code & Technical Engineering -> Claude Sonnet 4.6
@@ -500,6 +598,11 @@ class AntigravityBridge:
             r"\b(regex|regular\s+expression|ast\b|refactor\s+code|refactor\s+this|debug\s+this|debug\s+the|write\s+a\s+function|write\s+code|write\s+a\s+script|python\s+script|bash\s+script|shell\s+script|fix\s+the\s+bug|fix\s+this\s+bug|unit\s+tests?|edit\s+yourself|enhance\s+yourself|optimize\s+yourself|modify\s+yourself|self-build|self-evolution|jarvis_2\.0)\b",
         ]
         if any(re.search(pat, p) for pat in code_structural_patterns):
+            if self.is_claude_exhausted():
+                is_complex = self.is_task_complex(prompt, task_mode)
+                fallback = "gemini-3.8-flash-high" if is_complex else "gemini-3.8-flash-medium"
+                logger.info("Claude Sonnet token-exhausted; routing to %s (complexity=%s)", fallback, "complex" if is_complex else "moderate")
+                return fallback
             return "claude-sonnet-4-6"
 
         # 4. Hard Reasoning, Math, Logic, Planning, Dynamic Evolution -> Gemini 3.8 Flash High
@@ -546,7 +649,7 @@ class AntigravityBridge:
             full_prompt = f"[System Context & Directives]\n{system_instruction.strip()}\n\n[User Request]\n{full_prompt}"
 
         # Cascade through candidate models in priority order
-        cascade_models = candidates or self.get_candidate_cascade(target_model)
+        cascade_models = candidates or self.get_candidate_cascade(target_model, prompt=full_prompt)
         last_error_res = None
 
         # For voice streaming turns, prepend spoken voice guidance to suppress unprompted internal chain-of-thought
@@ -559,15 +662,16 @@ class AntigravityBridge:
             full_prompt = voice_hint + full_prompt
 
         # Fast-path: Execute via persistent warm daemon if available and no specific conversation_id override
-        if self.use_daemon and self.daemon and target_model in cascade_models and not conversation_id:
+        effective_daemon_model = cascade_models[0] if (cascade_models and "claude" in target_model and self.is_claude_exhausted()) else target_model
+        if self.use_daemon and self.daemon and effective_daemon_model in cascade_models and not conversation_id:
             daemon_effort = None
-            if "-high" in target_model:
+            if "-high" in effective_daemon_model:
                 daemon_effort = "high"
-            elif "-low" in target_model:
+            elif "-low" in effective_daemon_model:
                 daemon_effort = "low"
-            elif "-medium" in target_model:
+            elif "-medium" in effective_daemon_model:
                 daemon_effort = "medium"
-            elif "claude" in target_model:
+            elif "claude" in effective_daemon_model:
                 daemon_effort = None
             elif self.effort:
                 daemon_effort = self.effort
@@ -575,7 +679,7 @@ class AntigravityBridge:
             try:
                 daemon_res = self.daemon.execute_turn(
                     prompt=full_prompt,
-                    model=target_model,
+                    model=effective_daemon_model,
                     effort=daemon_effort,
                     sentence_callback=sentence_callback,
                     timeout=timeout,
@@ -589,7 +693,10 @@ class AntigravityBridge:
 
             logger.debug("Persistent daemon fast-path bypassed or failed; cascading to one-shot execution.")
 
-        for attempt_model in cascade_models:
+        attempt_idx = 0
+        while attempt_idx < len(cascade_models):
+            attempt_model = cascade_models[attempt_idx]
+            attempt_idx += 1
             if sentence_callback:
                 res = self._generate_streaming(
                     prompt=full_prompt,
@@ -610,6 +717,23 @@ class AntigravityBridge:
                 return res
 
             last_error_res = res
+            err_text = res.get("response", "")
+
+            # If Claude failed due to token or quota limits, mark Claude as exhausted and prioritize Flash High/Medium
+            if "claude" in attempt_model and self._is_token_exhaustion_error(err_text):
+                self.mark_claude_exhausted(reason=err_text)
+                is_complex = self.is_task_complex(full_prompt)
+                chosen_fallback = "gemini-3.8-flash-high" if is_complex else "gemini-3.8-flash-medium"
+                logger.warning(
+                    "Claude Sonnet token/quota limit reached. Task complexity evaluated as '%s' -> prioritizing %s in fallback cascade...",
+                    "COMPLEX" if is_complex else "MODERATE",
+                    chosen_fallback
+                )
+                if chosen_fallback in cascade_models:
+                    # Move chosen_fallback to immediately next position
+                    remaining = [m for m in cascade_models[attempt_idx:] if m != chosen_fallback]
+                    cascade_models = cascade_models[:attempt_idx] + [chosen_fallback] + remaining
+
             logger.warning(
                 "Antigravity model candidate '%s' failed (%s). Cascading to next candidate in pool...",
                 attempt_model,
