@@ -21,6 +21,8 @@ data/photos/
 data/intake/
 data/evolution_scratch/
 data/evolution_snapshots/
+data/agy_runtime_workspace/
+data/browser_debug_profile/
 *.png
 jarvis/skills/custom/*.py
 !jarvis/skills/custom/__init__.py

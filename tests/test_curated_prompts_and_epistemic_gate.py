@@ -33,6 +33,8 @@ class TestCuratedPromptsAndEpistemicGate(unittest.TestCase):
             "sqlite_vector_performance_architect",
         ]
         prompts_dir = Path("data/prompts")
+        if not prompts_dir.is_dir():
+            prompts_dir = Path(__file__).resolve().parent.parent / "data" / "prompts"
         self.assertTrue(prompts_dir.is_dir(), "data/prompts directory must exist")
         for name in expected_prompts:
             prompt_file = prompts_dir / f"{name}.md"

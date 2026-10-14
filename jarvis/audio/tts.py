@@ -463,32 +463,31 @@ class TextToSpeech:
                         except Exception as e:
                             logger.error(f"Kokoro synth error on '{chunk}': {e}")
 
-            # Audio callback reading from lock-free audio ring buffer
-            _cb_priority_elevated = False
-
+            # Audio callback reading from lock-free audio ring buffer.
+            # Real-Time Invariant: Zero logging, zero CRT file I/O locks, and zero unhandled exceptions
+            # inside the native PortAudio WASAPI callback thread.
             def _audio_callback(outdata, frames, time_info, status):
-                nonlocal _cb_priority_elevated
-                if not _cb_priority_elevated:
-                    _set_thread_realtime_priority("WASAPIPlaybackCallback")
-                    _cb_priority_elevated = True
-
-                if self._stop_event.is_set():
+                try:
+                    if self._stop_event.is_set():
+                        outdata.fill(0.0)
+                        return
+                    samples, n = self._ring_buffer.read(frames)
+                    if n > 0:
+                        if outdata.ndim == 2 and outdata.shape[1] >= 2:
+                            outdata[:n, 0] = samples[:n]
+                            outdata[:n, 1] = samples[:n]
+                        elif outdata.ndim == 2:
+                            outdata[:n, 0] = samples[:n]
+                        else:
+                            outdata[:n] = samples[:n]
+                    if n < frames:
+                        if outdata.ndim == 2:
+                            outdata[n:, :].fill(0.0)
+                        else:
+                            outdata[n:].fill(0.0)
+                except Exception:
+                    # In real-time audio callback, guarantee buffer zeroing; never let exceptions escape to PortAudio CFFI
                     outdata.fill(0.0)
-                    return
-                samples, n = self._ring_buffer.read(frames)
-                if n > 0:
-                    if outdata.ndim == 2 and outdata.shape[1] >= 2:
-                        outdata[:n, 0] = samples[:n]
-                        outdata[:n, 1] = samples[:n]
-                    elif outdata.ndim == 2:
-                        outdata[:n, 0] = samples[:n]
-                    else:
-                        outdata[:n] = samples[:n]
-                if n < frames:
-                    if outdata.ndim == 2:
-                        outdata[n:, :].fill(0.0)
-                    else:
-                        outdata[n:].fill(0.0)
 
             # Stage 2: Hardware WASAPI / sounddevice Output Stream
             use_stream_callback = True

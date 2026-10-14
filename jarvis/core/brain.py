@@ -529,12 +529,16 @@ Autonomous Self-Building & Dynamic Feature Creation:
     @staticmethod
     def load_curated_prompt(name: str) -> str:
         """Loads a curated engineering prompt from data/prompts/ with local file lookup."""
-        prompt_path = Path("data/prompts") / f"{name}.md"
-        if prompt_path.is_file():
-            try:
-                return prompt_path.read_text(encoding="utf-8").strip()
-            except Exception as e:
-                logger.debug("Notice reading curated prompt '%s': %s", name, e)
+        candidate_paths = [
+            Path("data/prompts") / f"{name}.md",
+            Path(__file__).resolve().parent.parent.parent / "data" / "prompts" / f"{name}.md",
+        ]
+        for prompt_path in candidate_paths:
+            if prompt_path.is_file():
+                try:
+                    return prompt_path.read_text(encoding="utf-8").strip()
+                except Exception as e:
+                    logger.debug("Notice reading curated prompt '%s': %s", name, e)
         return ""
 
 

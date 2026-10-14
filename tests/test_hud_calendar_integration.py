@@ -50,6 +50,8 @@ class TestHUDCalendarIntegration(unittest.TestCase):
     def test_hud_html_contains_calendar_elements(self):
         """Verifies hud.html contains the CALENDAR button, modal backdrop, week grid, and deletion elements."""
         hud_path = Path("jarvis/ui/templates/hud.html")
+        if not hud_path.exists():
+            hud_path = Path(__file__).resolve().parent.parent / "jarvis" / "ui" / "templates" / "hud.html"
         self.assertTrue(hud_path.exists())
         html = hud_path.read_text(encoding="utf-8")
 
