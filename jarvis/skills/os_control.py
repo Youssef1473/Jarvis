@@ -870,6 +870,24 @@ def open_browser_tab(url: str = "", browser: str = "brave", new_tab: bool = True
 
         win32gui.EnumWindows(_enum_win, None)
 
+        if not matched_hwnds and browser_clean in ("brave", "browser"):
+            for alt_browser in ("chrome", "msedge", "edge", "firefox"):
+                alt_hwnds = []
+                def _enum_alt_open(h, _):
+                    try:
+                        if win32gui.IsWindowVisible(h):
+                            wt = win32gui.GetWindowText(h).strip()
+                            if wt and alt_browser in wt.lower():
+                                alt_hwnds.append((h, wt))
+                    except Exception:
+                        pass
+                    return True
+                win32gui.EnumWindows(_enum_alt_open, None)
+                if alt_hwnds:
+                    matched_hwnds = alt_hwnds
+                    browser_clean = alt_browser
+                    break
+
         if matched_hwnds:
             hwnd, found_title = matched_hwnds[0]
             win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
@@ -1037,6 +1055,39 @@ def close_browser_tab(browser: str = "brave", tab_title: str = "") -> str:
 
             win32gui.EnumWindows(_enum_win, None)
 
+            if not matched_hwnds and browser_clean in ("brave", "browser"):
+                # Probe other candidate browsers if default Brave window is not running
+                for alt_browser in ("chrome", "msedge", "edge", "firefox"):
+                    alt_hwnds = []
+                    def _enum_alt_close(h, _):
+                        try:
+                            if win32gui.IsWindowVisible(h):
+                                wt = win32gui.GetWindowText(h).strip()
+                                if wt and alt_browser in wt.lower():
+                                    alt_hwnds.append((h, wt))
+                        except Exception:
+                            pass
+                        return True
+                    win32gui.EnumWindows(_enum_alt_close, None)
+                    if alt_hwnds:
+                        matched_hwnds = alt_hwnds
+                        browser_clean = alt_browser
+                        break
+
+            # If still not found, check if foreground window is already a browser
+            if not matched_hwnds:
+                try:
+                    active_hwnd = win32gui.GetForegroundWindow()
+                    if active_hwnd:
+                        active_title = (win32gui.GetWindowText(active_hwnd) or "").lower()
+                        for known_b in ("brave", "chrome", "edge", "firefox", "opera"):
+                            if known_b in active_title:
+                                matched_hwnds = [(active_hwnd, win32gui.GetWindowText(active_hwnd))]
+                                browser_clean = known_b
+                                break
+                except Exception:
+                    pass
+
             if matched_hwnds:
                 hwnd, found_title = matched_hwnds[0]
                 try:
@@ -1094,21 +1145,18 @@ def focus_window(title: str) -> str:
         win32gui.EnumWindows(_enum_win, None)
 
         if not matched_hwnds:
-            # Fallback Cascade: Check if application exists in Start Menu/Registry/Aliases and launch it
-            alias = COMMON_APP_ALIASES.get(target, target)
-            apps = _build_app_index()
-            if target in COMMON_APP_ALIASES or alias in apps or any(target in k for k in apps):
-                launch_res = launch_application(target)
-                if "launched" in launch_res.lower() or "opened" in launch_res.lower():
-                    time.sleep(0.06)
-                    try:
-                        from jarvis.skills.windows_uia import focus_window_uia
-                        verified_title = focus_window_uia(target)
-                        if verified_title:
-                            return f"Window '{title}' was not open; launched and focused '{verified_title}' for you, Sir."
-                    except Exception:
-                        pass
-                    return f"Window '{title}' was not open; launched it for you, Sir."
+            # Self-Healing Fallback Cascade: If application is closed, launch and bring to focus
+            launch_res = launch_application(target)
+            if "launched" in launch_res.lower() or "opened" in launch_res.lower():
+                time.sleep(0.06)
+                try:
+                    from jarvis.skills.windows_uia import focus_window_uia
+                    verified_title = focus_window_uia(target)
+                    if verified_title:
+                        return f"Window '{title}' was not open; launched and focused '{verified_title}' for you, Sir."
+                except Exception:
+                    pass
+                return f"Window '{title}' was not open; launched it for you, Sir."
             return f"No open window matching '{title}' was found, Sir."
 
         hwnd, found_title = matched_hwnds[0]

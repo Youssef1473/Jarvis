@@ -55,6 +55,10 @@ class AntigravityDaemon:
             cmd.extend(["--effort", effort])
 
         try:
+            creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+                creation_flags |= subprocess.CREATE_NEW_PROCESS_GROUP
+
             self.proc = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
@@ -63,7 +67,7 @@ class AntigravityDaemon:
                 text=True,
                 encoding="utf-8",
                 cwd=str(self.runtime_workspace),
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                creationflags=creation_flags,
             )
             self.current_model = model
             self.current_effort = effort
@@ -101,7 +105,7 @@ class AntigravityDaemon:
 
     def stop(self):
         """Cleanly terminates the daemon process with a strict 2.0s deadline."""
-        if self.proc:
+        if getattr(self, "proc", None):
             try:
                 for pipe in (self.proc.stdin, self.proc.stdout, self.proc.stderr):
                     if pipe and not getattr(pipe, "closed", True):
@@ -627,6 +631,10 @@ class AntigravityBridge:
 
         t_start = time.perf_counter()
         try:
+            creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+                creation_flags |= subprocess.CREATE_NEW_PROCESS_GROUP
+
             proc = subprocess.run(
                 cmd,
                 input=prompt,
@@ -634,7 +642,7 @@ class AntigravityBridge:
                 capture_output=True,
                 encoding="utf-8",
                 timeout=timeout,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                creationflags=creation_flags,
             )
             elapsed = time.perf_counter() - t_start
             self.last_latency_ms = elapsed * 1000.0
@@ -727,14 +735,18 @@ class AntigravityBridge:
         final_result_data: Dict[str, Any] = {}
 
         try:
+            creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+                creation_flags |= subprocess.CREATE_NEW_PROCESS_GROUP
+
             proc = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
                 text=True,
                 encoding="utf-8",
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                creationflags=creation_flags,
             )
 
             # Send prompt and close stdin to signal EOF

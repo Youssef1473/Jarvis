@@ -320,3 +320,7 @@ class BackgroundTaskManager:
                     pass
             t.status = "cancelled"
             t.end_time = time.time()
+
+    def stop(self):
+        """Alias for stop_all to satisfy orchestrator shutdown protocol."""
+        self.stop_all()

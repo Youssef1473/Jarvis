@@ -373,7 +373,12 @@ class JarvisOrchestrator:
             return
 
         print(f"\n[Sir]: {text}")
-        self.handle_command(text)
+        try:
+            self.handle_command(text)
+        except Exception as e:
+            logger.error(f"Error handling voice command '{text}': {e}", exc_info=True)
+            self.set_state("idle")
+            self.sfx.play_done()
 
     @staticmethod
     def is_shutdown_command(query: str) -> bool:
@@ -576,7 +581,15 @@ class JarvisOrchestrator:
                         if not user_input:
                             continue
                         self.handle_command(user_input)
-                    except (EOFError, KeyboardInterrupt):
+                    except EOFError:
+                        # Terminal stdin disconnected, piped, or interrupted by child process teardown.
+                        # Do NOT shut down! Jarvis is an ambient assistant with voice, PTT, HUD, and web endpoints.
+                        logger.info("Terminal stdin disconnected; continuing in ambient voice & HUD daemon mode.")
+                        while self._running:
+                            time.sleep(0.5)
+                        break
+                    except KeyboardInterrupt:
+                        # Deliberate user Ctrl+C termination
                         break
             else:
                 # Running in stealth / background mode without terminal stdin
@@ -633,7 +646,10 @@ class JarvisOrchestrator:
             if component is None:
                 continue
             try:
-                component.stop()
+                if hasattr(component, "stop"):
+                    component.stop()
+                elif hasattr(component, "stop_all"):
+                    component.stop_all()
             except Exception:
                 logger.exception("Could not stop Jarvis %s cleanly.", name)
 
