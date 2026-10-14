@@ -68,6 +68,7 @@ These rules are loaded automatically on every interaction turn. All operations w
 * **Adaptive Silence Scaling & Hesitation Damping:** Speech capture must scale pause tolerance dynamically ($\text{dynamic\_silence\_s} = \min(\text{thinking\_pause\_s}, \text{base\_silence\_s} + (\text{spoken\_duration\_s} \times 0.35))$) up to 3.2s, and decay silence counter by 2 on intermediate acoustic energy ($0.12 \le \text{VAD} < 0.30$ or RMS $\ge 0.0038$) to prevent premature speech cutoffs.
 * **Kokoro Latent Style Blending:** Custom personas (`jarvis_classic`, `jarvis_authoritative`, `jarvis_crisp`, `friday`) must utilize normalized linear combinations of $510 \times 1 \times 256$ float style tensors ($\mathbf{v}_{\text{blend}} = \sum w_i \mathbf{v}_i$) with instant caching for sub-1ms timbre switches.
 * **Acoustic Cadence & Hann Boundary Cross-Fading:** Synthesized neural audio chunks must apply a 5ms Hann window attenuation ($\sin^2(\theta)$) to head/tail boundaries and peak limiting (${\le}0.95$) to eliminate boundary DC step transients and muffled clipping. Streamed playback must insert natural acoustic silence pauses (240ms inter-sentence breath pause on `[.!?]`, 130ms inter-clause pause on `[,;:]`, and 40ms micro-pause) to prevent machine-gun breathless delivery. Kokoro speech speed must be calibrated to $0.98\times$ for authentic Paul Bettany British diction.
+* **Content-Aware Speech Drain & Liveness Tracking:** `finish_streaming_session()` must scale playback drain ceilings dynamically ($\text{ceiling} = \max(\text{stream\_timeout\_seconds}, (\text{word\_count} / 1.5) + 20.0, 60.0)$) and maintain a 120-second circular audio buffer (`AudioRingBuffer(capacity_samples=24000 * 120)`). Playback must employ 15.0s forward-progress liveness tracking on ring buffer consumption to eliminate premature speech truncation on multi-paragraph responses while preserving instant `<1us` barge-in interruptibility.
 
 ### Desktop & Browser Control Invariant: Closed-Loop Verification (See -> Act -> Check)
 * **Browser Automation:** All browser actions (tab opening, querying, navigation, termination) must target Chrome DevTools Protocol (`127.0.0.1:9222`) first via silent JSON-RPC frames (`open_browser_tab`, `close_browser_tab`, `close_cdp_tab`) without window thrashing. Win32 keystrokes (`Ctrl+L`, `Ctrl+T`, `Ctrl+W`) are fallback-only.
@@ -118,7 +119,7 @@ These rules are loaded automatically on every interaction turn. All operations w
 2. **PROHIBITED:** Hardcoded blind sleeps (`time.sleep(1.0)` or higher) in production paths. Use condition variables, event loops, or non-blocking socket probes with tight timeouts.
 3. **PROHIBITED:** `subprocess.run(shell=True)` or raw string formatting in shell commands. Use argument lists with `close_fds=True` and pass through `SafetyGate`.
 4. **PROHIBITED:** Storing secrets, API keys, or raw user tokens in plaintext logs or database records.
-5. **PROHIBITED:** Breaking test compatibility. All 188 existing tests in `tests/` must remain green on every single commit.
+5. **PROHIBITED:** Breaking test compatibility. All 203 existing tests in `tests/` must remain green on every single commit.
 
 ---
 
@@ -136,5 +137,5 @@ These rules are loaded automatically on every interaction turn. All operations w
   * Cloud Vision Response: `< 12s` (typical 3.8s on `gemini-3-flash-preview`)
   * Browser Tab Switching / Closing: `< 25ms` (CDP) / `< 100ms` (Win32)
   * Working Memory Prompt Overhead: `< 1.5KB`
-  * Full Test Suite Baseline: **188 unit tests** (all 100% green).
+  * Full Test Suite Baseline: **203 unit tests** (all 100% green).
 * **Host & Shell Awareness:** This workspace runs on **Windows (PowerShell)** with a local virtual environment at `.venv`. All scripts, paths, and commands must use Windows-appropriate syntax and backslashes or forward slashes handled via `pathlib.Path`.
