@@ -817,7 +817,10 @@ Autonomous Self-Building & Dynamic Feature Creation:
             "look at this", "look here", "look at my screen", "look at the screen",
             "what do you see", "error on my screen", "read my screen", "read the screen",
             "inspect my screen", "inspect the screen", "can you see my screen",
-            "describe my screen", "see on my screen", "visualize screen"
+            "describe my screen", "see on my screen", "visualize screen",
+            "what am i looking at", "what is on my screen", "what is this error",
+            "what error is this", "look at this error", "look at the error",
+            "look at that error", "inspect screen", "see screen"
         ]
         return any(t in q for t in vision_triggers)
 
@@ -1616,19 +1619,27 @@ Autonomous Self-Building & Dynamic Feature Creation:
         # Prepare user payload with vision if requested
         include_vision = self.should_capture_screen(user_text)
         if include_vision:
-            img_bytes = ScreenPerception.capture_screen_bytes(max_width=1024, quality=70)
-            if img_bytes:
-                b64 = base64.b64encode(img_bytes).decode("utf-8")
-                user_msg = {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": user_text},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
-                    ]
-                }
-            else:
-                user_msg = {"role": "user", "content": user_text}
+            from jarvis.skills.screen_vision import _get_active_window_details, check_visual_privacy
+            w_title, w_proc = _get_active_window_details()
+            privacy_alert = check_visual_privacy(w_title, w_proc)
+            if privacy_alert:
+                logger.warning("Visual Privacy Guard blocked capture during streaming: %s", privacy_alert)
+                user_msg = {"role": "user", "content": f"{user_text}\n[SYSTEM NOTE: Visual screen capture was blocked by Visual Privacy Guard because active window '{w_title}' contains sensitive credentials.]"}
                 include_vision = False
+            else:
+                img_bytes = ScreenPerception.capture_screen_bytes(max_width=1024, quality=70)
+                if img_bytes:
+                    b64 = base64.b64encode(img_bytes).decode("utf-8")
+                    user_msg = {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": user_text},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+                        ]
+                    }
+                else:
+                    user_msg = {"role": "user", "content": user_text}
+                    include_vision = False
         else:
             user_msg = {"role": "user", "content": user_text}
 
@@ -2092,9 +2103,16 @@ Autonomous Self-Building & Dynamic Feature Creation:
                 contents = [user_text]
 
                 if self.should_capture_screen(user_text):
-                    screenshot = ScreenPerception.capture_screen()
-                    if screenshot:
-                        contents.append(screenshot)
+                    from jarvis.skills.screen_vision import _get_active_window_details, check_visual_privacy
+                    w_title, w_proc = _get_active_window_details()
+                    privacy_alert = check_visual_privacy(w_title, w_proc)
+                    if privacy_alert:
+                        logger.warning("Visual Privacy Guard blocked capture during Gemini stream: %s", privacy_alert)
+                        contents.append(f"[SYSTEM NOTE: Visual screen capture was blocked by Visual Privacy Guard because active window '{w_title}' contains sensitive credentials.]")
+                    else:
+                        screenshot = ScreenPerception.capture_screen()
+                        if screenshot:
+                            contents.append(screenshot)
 
                 is_deep = (self.classify_query_tier(user_text) == "deep" or self.active_task_mode == "code")
                 call_config = None if is_deep else types.GenerateContentConfig(thinking_config=types.ThinkingConfig(thinking_budget=0))

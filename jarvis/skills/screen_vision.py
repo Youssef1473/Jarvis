@@ -1,13 +1,16 @@
 """Screen inspection and visual perception skill for Jarvis 2.0.
 
 Provides multimodal visual perception of Sir's workstation screen using
-ScreenPerception desktop capture and Google Gemini Multimodal Vision.
+ScreenPerception desktop capture, automated Visual Privacy Guard protection,
+and Google Gemini Multimodal Vision, with instant offline Semantic UIA fallback.
 """
 import io
 import logging
 import os
+import re
 import sys
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Tuple
 
 from jarvis.skills.base import SkillRegistry
 from jarvis.vision.screen_capture import ScreenPerception
@@ -16,15 +19,97 @@ logger = logging.getLogger("Jarvis.Skills.Vision")
 
 # Priority cascade for cloud vision inference
 VISION_CANDIDATE_MODELS = [
-    "gemini-3.8-flash",
-    "gemini-3.5-flash",
-    "gemini-flash-latest",
     "gemini-3-flash-preview",
+    "gemini-flash-latest",
+    "gemini-3.5-flash",
+    "gemini-2.5-pro",
+    "gemini-3.8-flash",
 ]
+
+SENSITIVE_PROCESS_NAMES = {
+    "1password.exe", "bitwarden.exe", "keepass.exe", "lastpass.exe",
+    "dashlane.exe", "authenticator.exe", "metamask.exe", "ledger live.exe",
+    "trezor suite.exe"
+}
+
+SENSITIVE_EXPLICIT_KEYWORDS = {
+    "1password", "bitwarden", "keepass", "lastpass", "dashlane", "kdbx",
+    "authenticator", "online banking", "netbanking", "bank of america",
+    "chase online", "wells fargo", "citibank", "hsbc", "barclays", "schwab",
+    "fidelity", "metamask", "phantom wallet", "trust wallet", "ledger live",
+    "trezor", "private key", "seed phrase", "master password", "credential manager"
+}
+
+DEV_PROCESS_NAMES = {
+    "code.exe", "devenv.exe", "pycharm64.exe", "idea64.exe",
+    "sublime_text.exe", "notepad++.exe"
+}
+
+LOGIN_PATTERN = re.compile(r"\b(log\s*in|sign\s*in|sign\s*on|enter\s*password)\b", re.IGNORECASE)
+
+
+def _get_active_window_details() -> Tuple[str, str]:
+    """Returns (window_title, process_name) for the currently focused foreground window."""
+    try:
+        import win32gui
+        import win32process
+        import psutil
+        hwnd = win32gui.GetForegroundWindow()
+        if not hwnd:
+            return ("", "")
+        title = win32gui.GetWindowText(hwnd).strip()
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        proc_name = ""
+        try:
+            proc_name = psutil.Process(pid).name()
+        except Exception:
+            pass
+        return (title, proc_name)
+    except Exception as e:
+        logger.debug("Failed to get active window details: %s", e)
+        return ("", "")
+
+
+def check_visual_privacy(window_title: str, process_name: str = "") -> Optional[str]:
+    """Inspects window title and process against sensitive privacy profiles.
+    Returns a security warning string if sensitive, or None if safe for capture.
+    """
+    title_lower = (window_title or "").lower()
+    proc_lower = (process_name or "").lower()
+
+    is_sensitive = False
+    if proc_lower in SENSITIVE_PROCESS_NAMES:
+        is_sensitive = True
+    elif any(kw in title_lower for kw in SENSITIVE_EXPLICIT_KEYWORDS):
+        is_sensitive = True
+    elif LOGIN_PATTERN.search(title_lower) and proc_lower not in DEV_PROCESS_NAMES:
+        is_sensitive = True
+
+    if is_sensitive:
+        target_name = window_title if window_title else process_name
+        return (
+            f"Visual capture paused for your security, Sir. The active window appears to contain "
+            f"sensitive credentials or financial information ('{target_name}'). "
+            f"I have refrained from capturing or processing the screen."
+        )
+    return None
+
+
+def _save_latest_screenshot(image_bytes: bytes) -> Optional[Path]:
+    """Caches the captured screen frame to data/screenshots/latest_screen.jpg."""
+    try:
+        save_dir = Path("data/screenshots")
+        save_dir.mkdir(parents=True, exist_ok=True)
+        target = save_dir / "latest_screen.jpg"
+        target.write_bytes(image_bytes)
+        return target
+    except Exception as e:
+        logger.debug("Could not cache latest screenshot: %s", e)
+        return None
 
 
 def _analyze_screen_with_gemini(image_bytes: bytes, query: str) -> Optional[str]:
-    """Sends screen image bytes to Gemini Multimodal Vision API."""
+    """Sends screen image bytes to Gemini Multimodal Vision API with deadline enforcement."""
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
         logger.warning("GEMINI_API_KEY is not configured for visual perception.")
@@ -34,7 +119,8 @@ def _analyze_screen_with_gemini(image_bytes: bytes, query: str) -> Optional[str]
         from google import genai
         from google.genai import types
 
-        client = genai.Client(api_key=api_key)
+        # Minimum deadline for google.genai is 10s (10000ms); set 12000ms for safety
+        client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=12000))
         prompt = (
             "You are JARVIS's visual cortex. Describe what is currently displayed on Sir's workstation screen "
             "with clarity, technical precision, and British composure. "
@@ -71,25 +157,50 @@ def inspect_screen(query: str = "Describe what is currently visible on the scree
     """Captures and inspects Sir's desktop display with multimodal vision."""
     logger.info("Screen inspection requested with query: %s", query)
 
-    # 1. Capture screen
+    # 1. Visual Privacy Guard: check active foreground window before capturing
+    active_title, active_proc = _get_active_window_details()
+    privacy_notice = check_visual_privacy(active_title, active_proc)
+    if privacy_notice:
+        logger.warning(
+            "Visual Privacy Guard triggered for window '%s' (%s). Refraining from capture.",
+            active_title, active_proc
+        )
+        return privacy_notice
+
+    # 2. Capture screen
     image_bytes = ScreenPerception.capture_screen_bytes(max_width=1280, quality=75)
     if not image_bytes:
         return "I was unable to capture your display, Sir. Please ensure desktop permissions and interactive session access are granted."
 
-    # 2. Analyze via Gemini Multimodal Vision
+    # Cache latest captured frame locally for reference and auditing
+    _save_latest_screenshot(image_bytes)
+
+    # 3. Analyze via Gemini Multimodal Vision (Tier 1 Cloud Vision)
     analysis = _analyze_screen_with_gemini(image_bytes, query)
     if analysis:
         return analysis
 
-    # 3. Graceful fallback using active OS window telemetry & running apps
+    # 4. Graceful fallback using active OS window telemetry & UI Automation controls (Tier 2 Semantic UIA)
     try:
         from jarvis.skills.os_control import get_active_window, list_running_applications
         active = get_active_window()
         apps = list_running_applications()
+
+        controls_summary = ""
+        try:
+            from jarvis.skills.windows_uia import inspect_window_controls
+            if active_title:
+                uia_tree = inspect_window_controls(active_title, max_depth=2)
+                if uia_tree and "No interactive child elements found" not in uia_tree:
+                    controls_summary = f"\n\n{uia_tree}"
+        except Exception as uia_err:
+            logger.debug("UIA controls inspection skipped during fallback: %s", uia_err)
+
         return (
             f"Visual cloud inference was momentarily unavailable, Sir. However, according to desktop telemetry:\n"
             f"{active}\n\n"
             f"{apps}"
+            f"{controls_summary}"
         )
     except Exception:
         return "I captured your screen display, Sir, but encountered a momentary delay in visual processing."
