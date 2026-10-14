@@ -169,20 +169,37 @@ class AntigravityDaemon:
                 return None
 
             timed_out = False
+            timeout_reason = ""
+            stop_watchdog = threading.Event()
+            last_activity_time = time.perf_counter()
+            inactivity_limit = min(timeout, 45.0)  # Detect stalled/hung processes if 0 bytes received for 45s
+            hard_ceiling = max(timeout, 240.0)     # Absolute safety ceiling for runaway agent turns
 
-            def _on_timeout():
-                nonlocal timed_out
-                timed_out = True
-                logger.warning("Antigravity daemon query timed out after %.1fs; killing worker.", timeout)
-                self.stop()
+            def _watchdog_loop():
+                nonlocal timed_out, timeout_reason
+                while not stop_watchdog.wait(timeout=1.0):
+                    now = time.perf_counter()
+                    if now - last_activity_time > inactivity_limit:
+                        timed_out = True
+                        timeout_reason = f"inactivity exceeding {inactivity_limit:.1f}s"
+                        logger.warning("Antigravity daemon query timed out due to %s; killing worker.", timeout_reason)
+                        self.stop()
+                        break
+                    if now - t_start > hard_ceiling:
+                        timed_out = True
+                        timeout_reason = f"hard turn ceiling exceeding {hard_ceiling:.1f}s"
+                        logger.warning("Antigravity daemon query timed out due to %s; killing worker.", timeout_reason)
+                        self.stop()
+                        break
 
-            timer = threading.Timer(timeout, _on_timeout)
-            timer.start()
+            watchdog_thread = threading.Thread(target=_watchdog_loop, daemon=True, name="AntigravityDaemonWatchdog")
+            watchdog_thread.start()
 
             try:
                 for line in iter(self.proc.stdout.readline, ""):
                     if timed_out:
                         break
+                    last_activity_time = time.perf_counter()
                     line_str = line.strip()
                     if not line_str:
                         continue
@@ -212,12 +229,18 @@ class AntigravityDaemon:
                     except Exception as parse_err:
                         logger.debug("Daemon parse notice on stream line: %s (%s)", line_str[:60], parse_err)
 
+            except (ValueError, OSError) as pipe_err:
+                if not timed_out:
+                    logger.warning("Antigravity daemon pipe error: %s", pipe_err)
+                self.stop()
+                return None
             except Exception as stream_err:
                 logger.warning("Antigravity daemon streaming read error: %s", stream_err)
                 self.stop()
                 return None
             finally:
-                timer.cancel()
+                stop_watchdog.set()
+                watchdog_thread.join(timeout=1.0)
 
             if timed_out:
                 return None
@@ -530,7 +553,8 @@ class AntigravityBridge:
         if sentence_callback and "[Spoken Voice Guidance:" not in full_prompt:
             voice_hint = (
                 "[Spoken Voice Guidance: Deliver a direct, concise spoken response in Paul Bettany's natural British cadence. "
-                "Omit markdown formatting, bulleted lists, and unprompted internal chain-of-thought monologue.]\n\n"
+                "Omit markdown formatting, bulleted lists, and unprompted internal chain-of-thought monologue. "
+                "When Sir asks for your opinion, appraisal, assessment, or thoughts on the project, synthesize and deliver your direct architectural evaluation immediately using your built-in architectural blueprint and repository self-knowledge without executing exploratory shell commands or file scans.]\n\n"
             )
             full_prompt = voice_hint + full_prompt
 
@@ -753,35 +777,89 @@ class AntigravityBridge:
             proc.stdin.write(prompt)
             proc.stdin.close()
 
-            # Read NDJSON lines in real time
-            for line in iter(proc.stdout.readline, ""):
-                line_str = line.strip()
-                if not line_str:
-                    continue
-                try:
-                    event_data = json.loads(line_str)
-                    event_type = event_data.get("event")
+            timed_out = False
+            timeout_reason = ""
+            stop_watchdog = threading.Event()
+            last_activity_time = time.perf_counter()
+            inactivity_limit = min(timeout, 45.0)  # Detect stalled/hung processes if 0 bytes received for 45s
+            hard_ceiling = max(timeout, 240.0)     # Absolute safety ceiling for runaway agent turns
 
-                    if event_type == "step_update":
-                        step_up = event_data.get("step_update", {})
-                        delta = step_up.get("text_delta", "")
-                        if delta:
-                            accumulated_text.append(delta)
-                            speech_buffer += delta
+            def _stream_watchdog_loop():
+                nonlocal timed_out, timeout_reason
+                while not stop_watchdog.wait(timeout=1.0):
+                    now = time.perf_counter()
+                    if now - last_activity_time > inactivity_limit:
+                        timed_out = True
+                        timeout_reason = f"inactivity exceeding {inactivity_limit:.1f}s"
+                        logger.warning("Antigravity one-shot stream timed out due to %s; terminating worker.", timeout_reason)
+                        try:
+                            proc.terminate()
+                            proc.wait(timeout=1.0)
+                        except Exception:
+                            proc.kill()
+                        break
+                    if now - t_start > hard_ceiling:
+                        timed_out = True
+                        timeout_reason = f"hard turn ceiling exceeding {hard_ceiling:.1f}s"
+                        logger.warning("Antigravity one-shot stream timed out due to %s; terminating worker.", timeout_reason)
+                        try:
+                            proc.terminate()
+                            proc.wait(timeout=1.0)
+                        except Exception:
+                            proc.kill()
+                        break
 
-                            # Check for clause/sentence boundary to stream to TTS
-                            chunk, remaining = self._extract_speech_chunk(speech_buffer)
-                            if chunk:
-                                speech_buffer = remaining
-                                sentence_callback(chunk)
+            watchdog_thread = threading.Thread(target=_stream_watchdog_loop, daemon=True, name="AntigravityOneShotWatchdog")
+            watchdog_thread.start()
 
-                    elif event_type == "result":
-                        final_result_data = event_data.get("result", {})
-                        if final_result_data.get("conversation_id"):
-                            self.last_conversation_id = final_result_data.get("conversation_id")
+            try:
+                # Read NDJSON lines in real time
+                for line in iter(proc.stdout.readline, ""):
+                    if timed_out:
+                        break
+                    last_activity_time = time.perf_counter()
+                    line_str = line.strip()
+                    if not line_str:
+                        continue
+                    try:
+                        event_data = json.loads(line_str)
+                        event_type = event_data.get("event")
 
-                except Exception as parse_err:
-                    logger.debug("Non-critical stream JSON parse error on line: %s (%s)", line_str[:60], parse_err)
+                        if event_type == "step_update":
+                            step_up = event_data.get("step_update", {})
+                            delta = step_up.get("text_delta", "")
+                            if delta:
+                                accumulated_text.append(delta)
+                                speech_buffer += delta
+
+                                # Check for clause/sentence boundary to stream to TTS
+                                chunk, remaining = self._extract_speech_chunk(speech_buffer)
+                                if chunk:
+                                    speech_buffer = remaining
+                                    sentence_callback(chunk)
+
+                        elif event_type == "result":
+                            final_result_data = event_data.get("result", {})
+                            if final_result_data.get("conversation_id"):
+                                self.last_conversation_id = final_result_data.get("conversation_id")
+
+                    except Exception as parse_err:
+                        logger.debug("Non-critical stream JSON parse error on line: %s (%s)", line_str[:60], parse_err)
+
+            except (ValueError, OSError) as pipe_err:
+                if not timed_out:
+                    logger.warning("Antigravity stream pipe error: %s", pipe_err)
+            finally:
+                stop_watchdog.set()
+                watchdog_thread.join(timeout=1.0)
+
+            if timed_out:
+                return {
+                    "status": "ERROR",
+                    "response": f"Antigravity stream timed out ({timeout_reason}).",
+                    "duration_seconds": time.perf_counter() - t_start,
+                    "usage": {},
+                }
 
             proc.stdout.close()
             stderr_out = ""

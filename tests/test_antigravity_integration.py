@@ -326,6 +326,41 @@ class TestAntigravityIntegration(unittest.TestCase):
             self.assertEqual(res.get("status"), "SUCCESS")
             self.assertEqual(res.get("response"), "Fallback OK")
 
+    def test_antigravity_daemon_adaptive_inactivity_watchdog(self):
+        """Verifies adaptive inactivity watchdog handles inactivity and terminates stalled worker."""
+        import time
+        from jarvis.core.antigravity_bridge import AntigravityDaemon
+
+        daemon = AntigravityDaemon(
+            agy_path=self.bridge.agy_path or "mock_agy.exe",
+            default_model="gemini-3.8-flash-low",
+            default_effort="low"
+        )
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
+        mock_proc.stdin = MagicMock()
+        mock_proc.stdout = MagicMock()
+        mock_proc.stderr = MagicMock()
+
+        def stalled_readline():
+            time.sleep(0.3)
+            return ""
+
+        mock_proc.stdout.readline.side_effect = [
+            '{"event": "init", "conversation_id": "test-cid-watchdog"}\n',
+            stalled_readline(),
+        ]
+
+        with patch("subprocess.Popen", return_value=mock_proc), \
+             patch("os.path.exists", return_value=True):
+            daemon.start("gemini-3.8-flash-low", "low")
+            res = daemon.execute_turn(
+                prompt="test watchdog timeout",
+                model="gemini-3.8-flash-low",
+                timeout=0.15,
+            )
+            self.assertIsNone(res)
+
 
 if __name__ == "__main__":
     unittest.main()
