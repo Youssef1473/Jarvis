@@ -60,7 +60,7 @@ stt:
 tts:
   engine: "kokoro"                # "kokoro" (movie-grade neural voice), "sapi5", or "edge"
   kokoro_voice: "bm_george"       # "bm_george", "bm_lewis", "bm_daniel" (British JARVIS)
-  kokoro_speed: 1.05              # Speech speed multiplier (0.8 - 1.5)
+  kokoro_speed: 0.98              # Speech speed multiplier (0.8 - 1.5)
   kokoro_lang: "en-gb"            # "en-gb" (British English)
   cpu_threads: 4                  # Limit Kokoro ONNX synthesis threads to prevent 100% CPU spikes
   sapi_voice: "David"             # SAPI5 fallback voice

@@ -451,22 +451,23 @@ class JarvisOrchestrator:
         # For non-reflex cognitive tasks, speak an immediate contextual intent update (<150ms) so Sir is never left in silence
         if not is_fast_reflex and not is_model_switch:
             lower = norm_query.lower()
-            if any(k in lower for k in ["teach yourself", "add a feature", "create a feature", "create a skill", "build a skill", "learn how", "learn to"]):
-                queued_ack = "On it, Sir. Conceptualizing the architecture and writing the capability now."
-            elif any(lower.startswith(k) for k in ["search", "find", "locate", "where is", "where are", "lookup", "look up", "scan"]):
-                queued_ack = "Scanning through the codebase now, Sir."
-            elif any(k in lower for k in ["fix this", "patch this", "write code", "implement", "refactor", "run tests"]):
-                queued_ack = "Analyzing the implementation and preparing the changes, Sir."
-            elif any(k in lower for k in ["read that", "process that pdf", "ingest", "parse that"]):
-                queued_ack = "Parsing the document details now, Sir."
-            elif any(lower.startswith(k) for k in ["why", "explain", "analyze", "compare", "break down"]):
-                queued_ack = "Analyzing that now, Sir. Here is my assessment."
-            elif len(norm_query.split()) >= 2:
-                queued_ack = random.choice([
-                    "Right away, Sir. Looking into that now.",
-                    "On it, Sir. Working on your request.",
-                    "Understood, Sir. Assessing the options now.",
-                ])
+            is_conversational = any(
+                lower.startswith(k) or k in lower for k in [
+                    "it's okay", "its okay", "forget about", "never mind", "hello", "hi", "hey",
+                    "how are you", "who are you", "thank you", "thanks", "good morning", "good evening"
+                ]
+            )
+            if not is_conversational:
+                if any(k in lower for k in ["teach yourself", "add a feature", "create a feature", "create a skill", "build a skill", "learn how", "learn to"]):
+                    queued_ack = "On it, Sir. Conceptualizing the architecture and writing the capability now."
+                elif any(lower.startswith(k) for k in ["search", "find", "locate", "where is", "where are", "lookup", "look up", "scan"]):
+                    queued_ack = "Scanning through the codebase now, Sir."
+                elif any(k in lower for k in ["fix this", "patch this", "write code", "implement", "refactor", "run tests"]):
+                    queued_ack = "Analyzing the implementation and preparing the changes, Sir."
+                elif any(k in lower for k in ["read that", "process that pdf", "ingest", "parse that"]):
+                    queued_ack = "Parsing the document details now, Sir."
+                elif any(lower.startswith(k) for k in ["why", "explain", "analyze", "compare", "break down"]):
+                    queued_ack = "Analyzing that now, Sir. Here is my assessment."
 
             if queued_ack:
                 self.tts.queue_sentence(queued_ack)
@@ -477,7 +478,7 @@ class JarvisOrchestrator:
             # Strip standard prefix repetitions if immediate ack was already delivered
             if queued_ack:
                 s_clean = re.sub(
-                    r"^(?:right away,?\s+sir\.?|on it,?\s+sir\.?|certainly,?\s+sir\.?|understood,?\s+sir\.?)\s*",
+                    r"^(?:right away|on it|certainly|understood|very well)(?:,?\s+[a-z\s]+)?[.,]?\s*",
                     "",
                     s_clean,
                     flags=re.I

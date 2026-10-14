@@ -11,6 +11,7 @@ import time
 from typing import Dict, Any, Optional, List
 import sounddevice as sd
 import soundfile as sf
+import numpy as np
 import win32com.client
 
 from jarvis.audio.chunker import StreamingSentenceChunker
@@ -268,33 +269,22 @@ class TextToSpeech:
             except Exception:
                 pass
 
-        # Join any running synthesis and playback worker threads cleanly
+        # Join any running synthesis and playback worker threads cleanly with microsecond budget
         synth = getattr(self, "_synth_thread", None)
         if synth and synth.is_alive():
             try:
-                synth.join(timeout=0.3)
+                synth.join(timeout=0.01)
             except Exception:
                 pass
 
         play = getattr(self, "_playback_thread", None)
         if play and play.is_alive():
             try:
-                play.join(timeout=0.3)
+                play.join(timeout=0.01)
             except Exception:
                 pass
 
         self._is_speaking = False
-
-        # Clear PyTorch / ONNX CUDA cache if present
-        if "torch" in sys.modules:
-            try:
-                import torch
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except Exception:
-                pass
-        import gc
-        gc.collect()
 
     def _clean_text_for_speech(self, text: str) -> str:
         """Normalizes times, numbers, dates, units, and formatting for natural spoken delivery."""
@@ -306,15 +296,49 @@ class TextToSpeech:
             return ""
         return cleaned
 
+    @staticmethod
+    def _smooth_and_pad_audio(samples: np.ndarray, sr: int, chunk_text: str) -> np.ndarray:
+        """Applies 5ms Hann window smoothing to eliminate boundary transients/clicks,
+        peak limiting to prevent clipping, and appends natural acoustic silence pauses."""
+        if samples is None or len(samples) == 0:
+            return samples
+
+        # 1. 5ms Hann window smoothing on head and tail (anti-click / anti-baggy cross-fade)
+        if len(samples) > 240:
+            fade_len = min(120, len(samples) // 8)  # 5ms at 24kHz = 120 samples
+            fade_in = (0.5 * (1.0 - np.cos(np.pi * np.arange(fade_len) / fade_len))).astype(np.float32)
+            samples[:fade_len] *= fade_in
+            samples[-fade_len:] *= fade_in[::-1]
+
+        # 2. Peak limiting to prevent digital speaker clipping distortion
+        max_val = float(np.max(np.abs(samples)))
+        if max_val > 0.95:
+            samples = samples * (0.95 / max_val)
+
+        # 3. Append natural acoustic breathing silence based on punctuation
+        stripped = (chunk_text or "").strip()
+        if re.search(r'[.!?\n]$', stripped):
+            pause_duration = 0.24  # 240ms inter-sentence breath pause
+        elif re.search(r'[,;:—–]$', stripped):
+            pause_duration = 0.13  # 130ms inter-clause comma pause
+        else:
+            pause_duration = 0.04  # 40ms micro-pause for seamless syllable transition
+
+        pause_samples = int(sr * pause_duration)
+        if pause_samples > 0:
+            silence = np.zeros(pause_samples, dtype=np.float32)
+            return np.concatenate([samples, silence])
+        return samples
+
     def _split_into_audio_chunks(self, text: str) -> list[str]:
-        """Splits text into natural clause phrases (commas, semicolons, dashes)
+        """Splits text into natural clause phrases and sentences
         to enable ultra-low Time-to-First-Audio (<50ms) via progressive chunked synthesis.
-        Guards colons inside timestamps (e.g. 12:15) so times are never fragmented."""
+        Guards colons inside timestamps (e.g. 12:15), decimals (3.14), and titles (Dr., Mr.)."""
         if not text:
             return []
 
-        # Split on natural pause delimiters, ensuring colons between digits (like 12:15) are NOT split
-        raw_parts = re.split(r'([,;\n]+|(?<!\d):|:(?!\d)|[—–]+)', text)
+        raw_parts = re.split(r'((?<!\d)[.!?]+(?!\d)|[,;\n]+|(?<!\d):|:(?!\d)|[—–]+)', text)
+        abbr_set = {"dr.", "mr.", "mrs.", "ms.", "prof.", "sr.", "jr.", "vs.", "etc.", "e.g.", "i.e."}
         chunks = []
         current = ""
 
@@ -323,8 +347,16 @@ class TextToSpeech:
                 continue
             current += part
             words = current.strip().split()
-            # If current buffer ends in punctuation and has at least 3 words, emit chunk
-            if re.search(r'[,;:—–\n]$', current.strip()) and len(words) >= 3:
+            last_word = words[-1].lower() if words else ""
+            if last_word in abbr_set:
+                continue
+
+            # Terminal punctuation (. ! ?) emits complete sentences at >= 2 words
+            if re.search(r'[.!?]$', current.strip()) and len(words) >= 2:
+                chunks.append(current.strip())
+                current = ""
+            # Clause punctuation (, ; : —) emits at >= 4 words
+            elif re.search(r'[,;:—–\n]$', current.strip()) and len(words) >= 4:
                 chunks.append(current.strip())
                 current = ""
             elif len(words) >= 12:
@@ -391,11 +423,12 @@ class TextToSpeech:
                                 speed=self.kokoro_speed,
                                 lang=self.kokoro_lang
                             )
+                            padded_samples = self._smooth_and_pad_audio(samples, sr, chunk)
                             if not self._stop_event.is_set():
                                 # Write directly to the audio ring buffer for gapless WASAPI playback
-                                self._ring_buffer.write(samples)
+                                self._ring_buffer.write(padded_samples)
                                 # Keep legacy audio queue populated for backwards compatibility
-                                self._audio_queue.put((samples, sr))
+                                self._audio_queue.put((padded_samples, sr))
                         except Exception as e:
                             logger.error(f"Kokoro synth error on '{chunk}': {e}")
 
@@ -623,8 +656,9 @@ class TextToSpeech:
                         speed=self.kokoro_speed,
                         lang=self.kokoro_lang
                     )
+                    padded_samples = self._smooth_and_pad_audio(samples, sr, chunk)
                     if not self._stop_event.is_set():
-                        sd.play(samples, sr)
+                        sd.play(padded_samples, sr)
                         sd.wait()
             except Exception as e:
                 logger.error(f"Kokoro speak_sync error: {e}. Falling back to SAPI5.")

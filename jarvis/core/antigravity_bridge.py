@@ -299,13 +299,26 @@ class AntigravityBridge:
         timeout: float = 90.0,
         conversation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Executes a single-turn query via --output-format json."""
+        effort = None
+        if "-high" in model:
+            effort = "high"
+        elif "-low" in model:
+            effort = "low"
+        elif "-medium" in model:
+            effort = "medium"
+        elif "claude" in model:
+            effort = None
+        elif self.effort:
+            effort = self.effort
+
         cmd = [
             self.agy_path,
             "--model", model,
             "--disable-slash-commands",
             "--output-format", "json",
         ]
+        if effort:
+            cmd.extend(["--effort", effort])
         if conversation_id:
             cmd.extend(["--conversation", conversation_id])
 
@@ -382,12 +395,26 @@ class AntigravityBridge:
         """Executes query with --output-format stream-json, extracting text deltas
         and firing sentence_callback upon clause/sentence completions.
         """
+        effort = None
+        if "-high" in model:
+            effort = "high"
+        elif "-low" in model:
+            effort = "low"
+        elif "-medium" in model:
+            effort = "medium"
+        elif "claude" in model:
+            effort = None
+        elif self.effort:
+            effort = self.effort
+
         cmd = [
             self.agy_path,
             "--model", model,
             "--disable-slash-commands",
             "--output-format", "stream-json",
         ]
+        if effort:
+            cmd.extend(["--effort", effort])
         if conversation_id:
             cmd.extend(["--conversation", conversation_id])
 
