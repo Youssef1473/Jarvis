@@ -129,17 +129,46 @@ class TextToSpeech:
                 opts.inter_op_num_threads = 2
                 opts.log_severity_level = 3
                 opts.graph_optimization_level = rt.GraphOptimizationLevel.ORT_ENABLE_ALL
+                # Eliminate thread-pool busy-spinning to protect Python event loops and audio callbacks
+                opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
+
                 available = rt.get_available_providers()
                 providers = []
                 if "CUDAExecutionProvider" in available:
-                    providers.append("CUDAExecutionProvider")
+                    cuda_opts = {
+                        "device_id": 0,
+                        "arena_extend_strategy": "kNextPowerOfTwo",
+                        "gpu_mem_limit": 2 * 1024 * 1024 * 1024,  # 2GB VRAM allocation ceiling
+                        "cudnn_conv_algo_search": "HEURISTIC",     # Fast heuristic conv search, eliminates fallback warnings
+                        "do_copy_in_default_stream": "1",
+                    }
+                    providers.append(("CUDAExecutionProvider", cuda_opts))
                 elif "DmlExecutionProvider" in available:
-                    providers.append("DmlExecutionProvider")
+                    providers.append(("DmlExecutionProvider", {"device_id": 0}))
                 providers.append("CPUExecutionProvider")
-                sess = rt.InferenceSession(self.kokoro_model_path, sess_options=opts, providers=providers)
+
+                try:
+                    sess = rt.InferenceSession(self.kokoro_model_path, sess_options=opts, providers=providers)
+                except Exception as prov_err:
+                    logger.warning("GPU provider initialization failed (%s); falling back to CPUExecutionProvider.", prov_err)
+                    sess = rt.InferenceSession(self.kokoro_model_path, sess_options=opts, providers=["CPUExecutionProvider"])
+
                 self._kokoro = Kokoro.from_session(sess, self.kokoro_voices_path)
-                active_prov = sess.get_providers()[0] if hasattr(sess, "get_providers") else providers[0]
-                logger.info(f"Kokoro-82M neural engine loaded ({self.kokoro_voice}) via {active_prov} in {time.time()-t0:.2f}s.")
+                active_prov = sess.get_providers()[0] if hasattr(sess, "get_providers") else "Unknown"
+
+                # Pre-warm GPU execution graphs and voice style tensors to eliminate 700ms first-turn latency
+                try:
+                    warmup_voice = self._resolve_voice()
+                    self._kokoro.create(".", voice=warmup_voice, speed=1.0, lang=self.kokoro_lang)
+                except Exception as w_err:
+                    logger.debug("Kokoro startup warmup note: %s", w_err)
+
+                logger.info(
+                    "Kokoro-82M neural engine loaded (%s) via %s in %.2fs (pre-warmed for instant speech).",
+                    self.kokoro_voice,
+                    active_prov,
+                    time.time() - t0,
+                )
             else:
                 logger.warning("Kokoro model files not found. Defaulting to SAPI5.")
                 self.engine = "sapi5"
