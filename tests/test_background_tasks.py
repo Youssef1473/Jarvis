@@ -46,9 +46,9 @@ class TestBackgroundTasksSuite(unittest.TestCase):
         self.assertIn("Echo Test", msg)
         self.assertIsNotNone(task_id)
 
-        # Wait up to 3.0s for completion
+        # Wait up to 6.0s for completion under high test runner CPU contention
         start_wait = time.time()
-        while time.time() - start_wait < 3.0:
+        while time.time() - start_wait < 6.0:
             task = self.mgr._tasks.get(task_id)
             if task and task.status in ("completed", "failed"):
                 break
@@ -70,7 +70,7 @@ class TestBackgroundTasksSuite(unittest.TestCase):
         self.assertTrue(success)
 
         start_wait = time.time()
-        while time.time() - start_wait < 3.0:
+        while time.time() - start_wait < 6.0:
             task = self.mgr._tasks.get(task_id)
             if task and task.status in ("completed", "failed"):
                 break

@@ -116,7 +116,7 @@ JARVIS Architectural Blueprint & Repository Self-Knowledge:
   * Core Cognitive Hub: `jarvis/core/brain.py` (multi-tier model router, prompt engineering, self-evolution dispatcher).
   * Master Orchestrator: `jarvis/core/orchestrator.py` (sensory coordination, push-to-talk, VAD, holographic HUD state broadcast).
   * Google AI Pro Bridge: `jarvis/core/antigravity_bridge.py` (zero-cost high-performance bridge to Gemini 3.8 Flash High/Medium/Low, Claude Sonnet 4.6, Claude Opus 4.6).
-  * Audio Pipeline: `jarvis/audio/` (`tts.py` Kokoro-82M neural voice, `stt.py` faster-whisper float16, `wake_word.py` openWakeWord, `hotkey_listener.py`).
+  * Audio Pipeline: `jarvis/audio/` (`tts.py` Kokoro-82M neural voice, `stt.py` faster-whisper int8_float16, `wake_word.py` openWakeWord, `hotkey_listener.py`).
   * Operating System & PC Control: `jarvis/skills/os_control.py` (native Win32 app launcher, window focus, volume, media, screenshots, hotkeys, browser tabs).
   * Code Stewardship & Shell: `jarvis/skills/dev_shell.py` (`read_file`, `write_file`, `patch_file`, `search_codebase`, `execute_powershell`, `run_project_tests`).
   * Dynamic Self-Evolution: `jarvis/skills/self_evolution.py` & `jarvis/skills/custom/` (`create_or_update_custom_skill` hot-registers new tools into the live brain without restarts).
@@ -2158,7 +2158,7 @@ Autonomous Self-Building & Dynamic Feature Creation:
                 self.openai_messages.append({"role": "assistant", "content": reply_text})
                 self.memory.log_interaction(user_text, reply_text)
                 if not had_tool_call:
-                    self.memory.auto_learn_from_interaction(user_text, reply_text, provider=self.provider)
+                    self.memory.auto_learn_from_interaction(user_text, reply_text, provider=self.provider, extractor_fn=self._extract_memory_insights)
 
                 # Bound memory window
                 if len(self.openai_messages) > 25:
@@ -2358,7 +2358,7 @@ Autonomous Self-Building & Dynamic Feature Creation:
                 else:
                     reply_text = "".join(full_content_chunks).strip() if full_content_chunks else "At your service, Sir."
                 self.memory.log_interaction(user_text, reply_text)
-                self.memory.auto_learn_from_interaction(user_text, reply_text, provider=self.provider)
+                self.memory.auto_learn_from_interaction(user_text, reply_text, provider=self.provider, extractor_fn=self._extract_memory_insights)
 
                 elapsed_ms = round((time.perf_counter() - t_start) * 1000, 1)
                 self.last_latencies["gemini"] = elapsed_ms
@@ -2589,10 +2589,96 @@ Autonomous Self-Building & Dynamic Feature Creation:
                     sentence_callback(clean_s)
 
         self.memory.log_interaction(user_text, reply, None)
-        self.memory.auto_learn_from_interaction(user_text, reply, provider=self.provider)
+        self.memory.auto_learn_from_interaction(user_text, reply, provider=self.provider, extractor_fn=self._extract_memory_insights)
         elapsed_ms = round((time.perf_counter() - t_start) * 1000, 1)
         logger.info("Inference latency (antigravity - %s): %sms", target_model, elapsed_ms)
         return reply
+
+    def _extract_memory_insights(self, user_text: str, reply_text: str) -> List[Dict[str, Any]]:
+        """Asynchronously extracts permanent personal preferences, habits, active project context,
+        and technical discussion topics from conversational exchanges."""
+        system_prompt = (
+            "You are an ambient background memory and behavior extractor for Sir's personal AI partner JARVIS. "
+            "Analyze the conversation exchange between Sir and JARVIS.\n"
+            "Identify two categories of durable knowledge:\n"
+            "1. User Behavior & Habits: Personal preferences, working style, behavioral directives, habits, "
+            "preferred tools/languages, communication tone, or operational rules about Sir. "
+            "(category: 'preference' or 'habit' or 'identity')\n"
+            "2. Project & Topical Continuity: The active technical project, architecture decisions, research topics, "
+            "or key external facts discussed, so JARVIS maintains seamless continuity without Sir having to repeat context. "
+            "(category: 'project' or 'topic' or 'knowledge')\n\n"
+            "Output a JSON array of objects with keys:\n"
+            "- 'category': 'preference' | 'habit' | 'identity' | 'project' | 'topic' | 'knowledge' | 'general'\n"
+            "- 'key': snake_case, concise unique identifier (e.g. 'preferred_formatter', 'auth_architecture', 'active_project_goal')\n"
+            "- 'value': clear, factual, self-contained description\n\n"
+            "If the exchange is purely transient (e.g. routine greeting, standard window focus, checking volume), output: []\n"
+            "Output ONLY valid JSON without markdown fences."
+        )
+        prompt = f"User (Sir): \"{user_text}\"\nJARVIS: \"{reply_text}\""
+
+        # 1. Try Antigravity batch if available
+        if hasattr(self, "antigravity_bridge") and self.antigravity_bridge and self.antigravity_bridge.is_available():
+            try:
+                res = self.antigravity_bridge._generate_batch(
+                    prompt=f"[System Context & Directives]\n{system_prompt}\n\n[User Request]\n{prompt}",
+                    model="gemini-3.8-flash-low",
+                    timeout=15.0,
+                )
+                text = (res.get("response") or "").strip()
+                if text:
+                    if text.startswith("```"):
+                        text = re.sub(r"^```(?:json)?\n?", "", text)
+                        text = re.sub(r"\n?```$", "", text)
+                    data = json.loads(text)
+                    if isinstance(data, list):
+                        return data
+            except Exception as e:
+                logger.debug("Antigravity memory extraction notice: %s", e)
+
+        # 2. Try Gemini direct client
+        if getattr(self, "gemini_client", None):
+            try:
+                response = self.gemini_client.models.generate_content(
+                    model="gemini-3.8-flash-low",
+                    contents=f"{system_prompt}\n\n{prompt}",
+                )
+                text = (response.text or "").strip()
+                if text:
+                    if text.startswith("```"):
+                        text = re.sub(r"^```(?:json)?\n?", "", text)
+                        text = re.sub(r"\n?```$", "", text)
+                    data = json.loads(text)
+                    if isinstance(data, list):
+                        return data
+            except Exception as e:
+                logger.debug("Gemini memory extraction notice: %s", e)
+
+        # 3. Fallback to Groq if key exists
+        groq_key = os.getenv("GROQ_API_KEY", "").strip()
+        if groq_key:
+            try:
+                from openai import OpenAI
+                client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1", timeout=8.0)
+                res = client.chat.completions.create(
+                    model=self.config.get("llm", {}).get("groq_model", "qwen/qwen3.8-27b"),
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt}
+                    ],
+                    max_tokens=250,
+                    temperature=0.0,
+                )
+                text = res.choices[0].message.content.strip()
+                if text.startswith("```"):
+                    text = re.sub(r"^```(?:json)?\n?", "", text)
+                    text = re.sub(r"\n?```$", "", text)
+                data = json.loads(text)
+                if isinstance(data, list):
+                    return data
+            except Exception as e:
+                logger.debug("Groq memory extraction notice: %s", e)
+
+        return []
 
     def stop(self):
         """Halts brain background components, provider runners, and unloads models from VRAM."""

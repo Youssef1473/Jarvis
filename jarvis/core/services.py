@@ -144,10 +144,15 @@ class ManagedServiceManager:
             logger.debug("Child process sweep notice: %s", err)
 
 
-def kill_orphaned_jarvis_processes(exclude_pids=None):
+def kill_orphaned_jarvis_processes(exclude_pids=None, dry_run: bool = False):
     """Identifies and terminates any orphaned background processes belonging to Jarvis."""
     import os
+    import sys
     import psutil
+
+    # Safety: Under unit testing, default to dry-run mode to never terminate live user sessions
+    if "unittest" in sys.modules and not os.environ.get("JARVIS_FORCE_ORPHAN_KILL"):
+        dry_run = True
 
     current_pid = os.getpid()
     exclude = set(exclude_pids or set())
@@ -196,13 +201,17 @@ def kill_orphaned_jarvis_processes(exclude_pids=None):
                     is_jarvis_proc = True
 
                 if is_jarvis_proc:
-                    logger.warning("Killing orphaned Jarvis process PID %s (%s: %s)", pid, name_str, cmdline_str[:80])
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=1.5)
-                    except psutil.TimeoutExpired:
-                        proc.kill()
-                    terminated.append({"pid": pid, "name": name_str, "cmdline": cmdline_str[:80]})
+                    if dry_run:
+                        logger.info("Dry-run orphan check: detected Jarvis process PID %s (%s)", pid, name_str)
+                        terminated.append({"pid": pid, "name": name_str, "cmdline": cmdline_str[:80], "dry_run": True})
+                    else:
+                        logger.warning("Killing orphaned Jarvis process PID %s (%s: %s)", pid, name_str, cmdline_str[:80])
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=1.5)
+                        except psutil.TimeoutExpired:
+                            proc.kill()
+                        terminated.append({"pid": pid, "name": name_str, "cmdline": cmdline_str[:80]})
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
     except Exception as e:

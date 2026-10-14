@@ -66,62 +66,65 @@ class WakeWordDetector:
 
     def _audio_callback(self, indata, frames, time_info, status):
         """Processes audio chunks from the sounddevice InputStream with energy-gated zero-idle CPU."""
-        if not self._affinity_set:
-            try:
-                from jarvis.audio.affinity import pin_and_elevate_current_thread
-                pin_and_elevate_current_thread(tag="WakeWordStream")
-            except Exception:
-                pass
-            self._affinity_set = True
-
-        if not self._is_running or self.model is None:
-            return
-
-        # Acoustic Echo Suppression: Do not detect wake word while Jarvis is speaking
-        if self.is_speaking_callback and self.is_speaking_callback():
-            self._preroll_buffer.clear()
-            self._active_chunks_remaining = 0
-            return
-
-        # indata is float32 [-1.0, 1.0], chunk has 1280 samples (80ms at 16kHz)
-        raw_float = indata[:, 0]
-        # Zero-allocation mean squared energy via BLAS dot product: eliminates np.sqrt and array allocation
-        mean_square_energy = float(np.dot(raw_float, raw_float) / len(raw_float))
-
-        # Sub-microsecond energy gate: if room is silent, skip heavy ONNX neural inferences
-        if mean_square_energy >= self.energy_threshold_sq:
-            # Voice / sound detected: activate predictor and sustain active processing for ~2.0s (25 chunks)
-            self._active_chunks_remaining = 25
-        elif self._active_chunks_remaining > 0:
-            self._active_chunks_remaining -= 1
-
-        # If completely idle (silent ambient room), store in pre-roll deque and return immediately (0.002ms)
-        if self._active_chunks_remaining == 0:
-            self._preroll_buffer.append(raw_float.copy())
-            return
-
-        # Active speech processing: replay pre-roll lead-in chunks if waking up from idle
-        chunks_to_feed = []
-        if self._preroll_buffer:
-            while self._preroll_buffer:
-                chunks_to_feed.append((self._preroll_buffer.popleft() * 32767).astype(np.int16))
-
-        chunks_to_feed.append((raw_float * 32767).astype(np.int16))
-
         try:
-            for chunk_pcm in chunks_to_feed:
-                prediction = self.model.predict(chunk_pcm)
-                for model_name, score in prediction.items():
-                    if score >= self.threshold:
-                        logger.info(f"Wake word detected! Score: {score:.3f}")
-                        self.model.reset()
-                        self._preroll_buffer.clear()
-                        self._active_chunks_remaining = 0
-                        if self.on_wake_callback:
-                            self.on_wake_callback()
-                        return
+            if not self._affinity_set:
+                try:
+                    from jarvis.audio.affinity import pin_and_elevate_current_thread
+                    pin_and_elevate_current_thread(tag="WakeWordStream")
+                except Exception:
+                    pass
+                self._affinity_set = True
+
+            if not self._is_running or self.model is None:
+                return
+
+            # Acoustic Echo Suppression: Do not detect wake word while Jarvis is speaking
+            if self.is_speaking_callback and self.is_speaking_callback():
+                self._preroll_buffer.clear()
+                self._active_chunks_remaining = 0
+                return
+
+            # indata is float32 [-1.0, 1.0], chunk has 1280 samples (80ms at 16kHz)
+            raw_float = indata[:, 0]
+            # Zero-allocation mean squared energy via BLAS dot product: eliminates np.sqrt and array allocation
+            mean_square_energy = float(np.dot(raw_float, raw_float) / len(raw_float))
+
+            # Sub-microsecond energy gate: if room is silent, skip heavy ONNX neural inferences
+            if mean_square_energy >= self.energy_threshold_sq:
+                # Voice / sound detected: activate predictor and sustain active processing for ~2.0s (25 chunks)
+                self._active_chunks_remaining = 25
+            elif self._active_chunks_remaining > 0:
+                self._active_chunks_remaining -= 1
+
+            # If completely idle (silent ambient room), store in pre-roll deque and return immediately (0.002ms)
+            if self._active_chunks_remaining == 0:
+                self._preroll_buffer.append(raw_float.copy())
+                return
+
+            # Active speech processing: replay pre-roll lead-in chunks if waking up from idle
+            chunks_to_feed = []
+            if self._preroll_buffer:
+                while self._preroll_buffer:
+                    chunks_to_feed.append((self._preroll_buffer.popleft() * 32767).astype(np.int16))
+
+            chunks_to_feed.append((raw_float * 32767).astype(np.int16))
+
+            try:
+                for chunk_pcm in chunks_to_feed:
+                    prediction = self.model.predict(chunk_pcm)
+                    for model_name, score in prediction.items():
+                        if score >= self.threshold:
+                            logger.info(f"Wake word detected! Score: {score:.3f}")
+                            self.model.reset()
+                            self._preroll_buffer.clear()
+                            self._active_chunks_remaining = 0
+                            if self.on_wake_callback:
+                                self.on_wake_callback()
+                            return
+            except Exception as e:
+                logger.error(f"Error predicting wake word: {e}")
         except Exception as e:
-            logger.error(f"Error predicting wake word: {e}")
+            logger.error(f"Error in wake word audio callback: {e}")
 
     def start(self):
         """Starts wake word listening in the background."""

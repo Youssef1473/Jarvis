@@ -161,9 +161,12 @@ class JarvisOrchestrator:
 
     def _audio_record_callback(self, indata, frames, time_info, status):
         """Accumulates microphone audio during push-to-talk."""
-        if self._is_recording:
-            with self._lock:
-                self._recorded_frames.append(indata.copy())
+        try:
+            if self._is_recording:
+                with self._lock:
+                    self._recorded_frames.append(indata.copy())
+        except Exception:
+            pass
 
     def _on_ptt_press(self):
         """Called immediately when user presses PTT trigger (MB2 or configured key)."""

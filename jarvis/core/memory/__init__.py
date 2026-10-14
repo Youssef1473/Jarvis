@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 import sqlite3
 import threading
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Callable
 
 logger = logging.getLogger("Jarvis.Memory")
 
@@ -569,7 +569,7 @@ class MemoryManager:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT key, value FROM facts
-                WHERE category IN ('user_preference', 'preference', 'core_preference')
+                WHERE category IN ('user_preference', 'preference', 'core_preference', 'habit')
                 ORDER BY updated_at DESC
             """)
             return {row["key"]: row["value"] for row in cursor.fetchall()}
@@ -1239,85 +1239,114 @@ class MemoryManager:
         reply_text: str,
         groq_api_key: Optional[str] = None,
         provider: str = "groq",
+        extractor_fn: Optional[Callable[[str, str], List[Dict[str, Any]]]] = None,
     ):
-        """Asynchronously analyzes user utterances to extract and persist persistent preferences, facts, and habits."""
+        """Asynchronously analyzes user utterances and interactions to extract and persist
+        user preferences, habits, active technical topics, and facts across sessions."""
         cleaned = user_text.strip().lower()
         if not self.background_learning_enabled:
             return
-        # Fast filter for greetings, one-word queries, and short commands
+        # Fast filter for trivial greetings, one-word queries, and short commands
         trivial = {"hey jarvis", "exit", "quit", "goodbye", "help", "who are you", "yes", "no", "ok", "okay", "cancel", "thanks", "thank you"}
         if len(cleaned) < 8 or cleaned in trivial:
             return
 
-        # A second local generation competes directly with the live reply on a
-        # small GPU. When enabled, serialize learning so turns never pile up.
         with self._learning_lock:
             if self._learning_in_flight:
                 return
             self._learning_in_flight = True
 
         def _extract():
-            system_prompt = (
-                "You are an ambient background memory extractor for Sir's personal assistant JARVIS. "
-                "Analyze the user's utterance and determine if Sir revealed any permanent personal facts, "
-                "preferences, habits, routine details, projects, or behavioral rules about himself. "
-                "If so, output a JSON array of objects with keys: 'category' (identity|preference|habit|project|general), "
-                "'key' (snake_case, concise), 'value' (clear description). "
-                "If no persistent personal facts about Sir were shared (e.g. routine queries, system commands, transient questions), "
-                "output ONLY an empty array: []\n"
-                "Output valid JSON without markdown fences."
-            )
-
-            if provider == "ollama":
-                api_key = "ollama"
-                base_url = self.llm_config.get("ollama_base_url", "http://127.0.0.1:11434/v1")
-                model = self.llm_config.get("ollama_model", "qwen3.5:2b-q4_K_M")
-            elif provider == "groq":
-                api_key = groq_api_key or os.getenv("GROQ_API_KEY", "").strip()
-                base_url = "https://api.groq.com/openai/v1"
-                model = self.llm_config.get("groq_model", "qwen/qwen3.8-27b")
-            else:
-                # Memory extraction must never turn local mode into a cloud call.
-                return
-            if not api_key:
-                return
-
             try:
-                import time
-                if provider == "groq":
-                    time.sleep(1.0)  # Stagger slightly to avoid burst contention with speech
-                from openai import OpenAI
-                client = OpenAI(
-                    api_key=api_key,
-                    base_url=base_url,
-                    max_retries=0,
-                    timeout=90.0 if provider == "ollama" else 8.0,
-                )
-                res = client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"User statement: '{user_text}'"}
-                    ],
-                    max_tokens=200,
-                    temperature=0.0,
-                    **({"reasoning_effort": "none"} if provider == "ollama" else {}),
+                items: List[Dict[str, Any]] = []
+                if extractor_fn is not None:
+                    try:
+                        extracted = extractor_fn(user_text, reply_text)
+                        if isinstance(extracted, list):
+                            items = extracted
+                    except Exception as e:
+                        logger.debug("Custom extractor notice: %s", e)
+
+                if not items:
+                    # Built-in provider fallback (ollama / groq)
+                    system_prompt = (
+                        "You are an ambient background memory extractor for Sir's personal assistant JARVIS. "
+                        "Analyze the user's utterance and determine if Sir revealed any permanent personal facts, "
+                        "preferences, habits, routine details, projects, or behavioral rules about himself. "
+                        "If so, output a JSON array of objects with keys: 'category' (identity|preference|habit|project|topic|general), "
+                        "'key' (snake_case, concise), 'value' (clear description). "
+                        "If no persistent personal facts about Sir were shared, output ONLY an empty array: []\n"
+                        "Output valid JSON without markdown fences."
+                    )
+                    if provider == "ollama":
+                        api_key = "ollama"
+                        base_url = self.llm_config.get("ollama_base_url", "http://127.0.0.1:11434/v1")
+                        model = self.llm_config.get("ollama_model", "qwen3.5:2b-q4_K_M")
+                    elif provider == "groq" or (groq_api_key or os.getenv("GROQ_API_KEY")):
+                        api_key = groq_api_key or os.getenv("GROQ_API_KEY", "").strip()
+                        base_url = "https://api.groq.com/openai/v1"
+                        model = self.llm_config.get("groq_model", "qwen/qwen3.8-27b")
+                    else:
+                        api_key = None
+
+                    if api_key:
+                        import time
+                        if provider == "groq":
+                            time.sleep(1.0)
+                        from openai import OpenAI
+                        client = OpenAI(
+                            api_key=api_key,
+                            base_url=base_url,
+                            max_retries=0,
+                            timeout=90.0 if provider == "ollama" else 8.0,
+                        )
+                        res = client.chat.completions.create(
+                            model=model,
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": f"User statement: '{user_text}'"}
+                            ],
+                            max_tokens=250,
+                            temperature=0.0,
+                            **({"reasoning_effort": "none"} if provider == "ollama" else {}),
+                        )
+                        content = res.choices[0].message.content.strip()
+                        if content.startswith("```"):
+                            content = re.sub(r"^```(?:json)?\n?", "", content)
+                            content = re.sub(r"\n?```$", "", content)
+                        parsed = json.loads(content)
+                        if isinstance(parsed, list):
+                            items = parsed
+
+                # Sensitive data patterns to prevent storing secrets/credentials
+                sensitive_pattern = re.compile(
+                    r"(?:api[_-]?key|secret|token|password|bearer|auth|credit[_-]?card)[\s:=]+[\"']?([A-Za-z0-9_\-\.]{12,})[\"']?",
+                    re.IGNORECASE
                 )
 
-                content = res.choices[0].message.content.strip()
-                if content.startswith("```"):
-                    content = re.sub(r"^```(?:json)?\n?", "", content)
-                    content = re.sub(r"\n?```$", "", content)
-
-                items = json.loads(content)
                 if isinstance(items, list):
                     for item in items:
-                        key = item.get("key", "").strip()
-                        val = item.get("value", "").strip()
-                        cat = item.get("category", "general").strip()
-                        if key and val:
-                            self.remember_fact(key, val, cat)
-                            logger.info(f"Learned new fact about Sir: [{cat}] {key} -> {val}")
+                        key = str(item.get("key", "")).strip().lower().replace(" ", "_")
+                        val = str(item.get("value", "")).strip()
+                        cat = str(item.get("category", "general")).strip().lower()
+
+                        if not key or not val:
+                            continue
+
+                        # Security check: redact or skip sensitive credentials
+                        if sensitive_pattern.search(val) or sensitive_pattern.search(key):
+                            logger.warning("Redacting sensitive credential token from background memory inscription: %s", key)
+                            continue
+
+                        # Dual-crystallization:
+                        # 1. User preferences & habits go to Tier 1 core user preferences (loaded every turn)
+                        if cat in ("preference", "habit", "identity") or "preference" in key or "habit" in key:
+                            self.update_user_preference(key, val)
+
+                        # 2. All items are permanently recorded into Tier 2 vector memory with sqlite-vec & FTS5
+                        self.remember_fact(key, val, cat)
+                        logger.info("Learned context about Sir: [%s] %s -> %s", cat, key, val)
+
             except Exception as e:
                 logger.debug("%s background memory extraction notice: %s", provider, e)
             finally:

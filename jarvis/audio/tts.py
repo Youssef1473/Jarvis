@@ -8,6 +8,7 @@ import re
 import sys
 import threading
 import time
+from collections import deque
 from typing import Dict, Any, Optional, List
 import sounddevice as sd
 import soundfile as sf
@@ -82,6 +83,7 @@ class TextToSpeech:
         self._output_stream: Optional[sd.OutputStream] = None
         self._stream_active = False
         self._session_word_count = 0
+        self._retained_streams: deque = deque(maxlen=8)
 
         # Speculative token chunker & high-throughput lock-free audio ring buffer (120s capacity)
         self._chunker = StreamingSentenceChunker()
@@ -284,6 +286,8 @@ class TextToSpeech:
                 stream.close()
             except Exception:
                 pass
+            if hasattr(self, "_retained_streams"):
+                self._retained_streams.append(stream)
             self._output_stream = None
         else:
             # Fallback halt for default sounddevice stream
@@ -401,6 +405,37 @@ class TextToSpeech:
 
         return [c for c in chunks if c]
 
+    def _stream_audio_callback(self, outdata, frames, time_info, status):
+        """Hardware WASAPI / PortAudio streaming callback reading from the lock-free audio ring buffer.
+
+        Real-Time Invariant: Zero logging, zero CRT file I/O locks, and zero unhandled exceptions
+        inside the native PortAudio WASAPI callback thread. Must remain a stable instance method
+        to prevent ephemeral closure deallocation during CFFI lifecycle teardown.
+        """
+        try:
+            if self._stop_event.is_set() or not self._stream_active:
+                outdata.fill(0.0)
+                return
+
+            samples, n = self._ring_buffer.read(frames)
+            if n > 0:
+                if outdata.ndim == 2 and outdata.shape[1] >= 2:
+                    outdata[:n, 0] = samples[:n]
+                    outdata[:n, 1] = samples[:n]
+                elif outdata.ndim == 2:
+                    outdata[:n, 0] = samples[:n]
+                else:
+                    outdata[:n] = samples[:n]
+
+            if n < frames:
+                if outdata.ndim == 2:
+                    outdata[n:, :].fill(0.0)
+                else:
+                    outdata[n:].fill(0.0)
+        except Exception:
+            # Guarantee zero-fill in all failure paths; never let exceptions escape across PortAudio CFFI boundary
+            outdata.fill(0.0)
+
     def start_streaming_session(self):
         """Initializes a double-buffered streaming session with concurrent pre-synthesis."""
         self._stop_event.clear()
@@ -463,32 +498,6 @@ class TextToSpeech:
                         except Exception as e:
                             logger.error(f"Kokoro synth error on '{chunk}': {e}")
 
-            # Audio callback reading from lock-free audio ring buffer.
-            # Real-Time Invariant: Zero logging, zero CRT file I/O locks, and zero unhandled exceptions
-            # inside the native PortAudio WASAPI callback thread.
-            def _audio_callback(outdata, frames, time_info, status):
-                try:
-                    if self._stop_event.is_set():
-                        outdata.fill(0.0)
-                        return
-                    samples, n = self._ring_buffer.read(frames)
-                    if n > 0:
-                        if outdata.ndim == 2 and outdata.shape[1] >= 2:
-                            outdata[:n, 0] = samples[:n]
-                            outdata[:n, 1] = samples[:n]
-                        elif outdata.ndim == 2:
-                            outdata[:n, 0] = samples[:n]
-                        else:
-                            outdata[:n] = samples[:n]
-                    if n < frames:
-                        if outdata.ndim == 2:
-                            outdata[n:, :].fill(0.0)
-                        else:
-                            outdata[n:].fill(0.0)
-                except Exception:
-                    # In real-time audio callback, guarantee buffer zeroing; never let exceptions escape to PortAudio CFFI
-                    outdata.fill(0.0)
-
             # Stage 2: Hardware WASAPI / sounddevice Output Stream
             use_stream_callback = True
             try:
@@ -496,7 +505,7 @@ class TextToSpeech:
                     samplerate=24000,
                     channels=2,
                     dtype='float32',
-                    callback=_audio_callback
+                    callback=self._stream_audio_callback
                 )
                 self._output_stream.start()
             except Exception as e:
@@ -659,6 +668,8 @@ class TextToSpeech:
                     self._output_stream.close()
                 except Exception:
                     pass
+                if hasattr(self, "_retained_streams"):
+                    self._retained_streams.append(self._output_stream)
                 self._output_stream = None
 
             if self._playback_thread and self._playback_thread.is_alive():
