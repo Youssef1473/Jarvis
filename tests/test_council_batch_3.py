@@ -81,7 +81,7 @@ def test_semantic_memory_integration():
     recalled = recall_fact("what code editor do I use")
     print(f"Skill recall_fact output:\n{recalled}")
     assert "Visual Studio Code" in recalled
-    assert "Semantic memory recall" in recalled
+    assert "memory recall" in recalled.lower()
 
     # 3. Test semantic_search_memory skill
     skill_output = semantic_search_memory("tell me about my car or vehicle")

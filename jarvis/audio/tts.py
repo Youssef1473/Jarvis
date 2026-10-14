@@ -69,7 +69,7 @@ class TextToSpeech:
         self.rate = tts_cfg.get("rate", "+10%")
         self.volume = tts_cfg.get("volume", "+0%")
         self.pitch = tts_cfg.get("pitch", "+0Hz")
-        self.stream_timeout_seconds = max(5.0, float(tts_cfg.get("stream_timeout_seconds", 15.0)))
+        self.stream_timeout_seconds = max(5.0, float(tts_cfg.get("stream_timeout_seconds", 30.0)))
         
         self._is_speaking = False
         self._stop_event = threading.Event()
@@ -81,10 +81,11 @@ class TextToSpeech:
         self._playback_thread: Optional[threading.Thread] = None
         self._output_stream: Optional[sd.OutputStream] = None
         self._stream_active = False
+        self._session_word_count = 0
 
-        # Speculative token chunker & high-throughput lock-free audio ring buffer
+        # Speculative token chunker & high-throughput lock-free audio ring buffer (120s capacity)
         self._chunker = StreamingSentenceChunker()
-        self._ring_buffer = AudioRingBuffer(capacity_samples=24000 * 30)
+        self._ring_buffer = AudioRingBuffer(capacity_samples=24000 * 120)
 
         # Kokoro engine instance
         self._kokoro = None
@@ -376,6 +377,7 @@ class TextToSpeech:
         self._stop_event.clear()
         self._is_speaking = True
         self._stream_active = True
+        self._session_word_count = 0
 
         if hasattr(self, "_chunker"):
             self._chunker.reset()
@@ -543,6 +545,8 @@ class TextToSpeech:
         if not text or self._stop_event.is_set():
             return
 
+        self._session_word_count = getattr(self, "_session_word_count", 0) + len(text.split())
+
         if self.engine == "kokoro" and self._kokoro:
             self._sentence_queue.put(text)
         elif self._sapi:
@@ -554,35 +558,66 @@ class TextToSpeech:
                     logger.error(f"SAPI queue error: {e}")
 
     def finish_streaming_session(self) -> bool:
-        """Waits for all queued speech to finish; returns False only on a drain timeout."""
+        """Waits for all queued speech to finish; returns False only on a true hardware stall timeout."""
         if self.engine == "kokoro" and self._kokoro:
             # Flush any un-emitted text in the speculative chunker
             self.flush_tokens()
 
             self._sentence_queue.put(None)  # Signal synth worker
 
-            # Do not declare the HUD idle while queued synthesis or audio is
-            # still running. Polling also lets the normal barge-in stop event
-            # release this wait immediately.
-            deadline = time.monotonic() + self.stream_timeout_seconds
+            # Dynamic timeout scaling based on total queued word count:
+            # Bettany cadence (~130 wpm / 2.2 words/sec) + breath pauses.
+            # Scale deadline dynamically to prevent premature truncation of longer answers.
+            word_count = getattr(self, "_session_word_count", 0)
+            est_speech_seconds = (word_count / 1.5) + 20.0
+            max_session_ceiling = max(self.stream_timeout_seconds, est_speech_seconds, 60.0)
+            deadline = time.monotonic() + max_session_ceiling
             workers = [self._synth_thread, self._playback_thread]
             timed_out = False
+            stall_timeout = 15.0
 
-            # Wait for synthesis thread to finish
+            # Wait for synthesis thread to finish with forward progress tracking
+            last_synth_progress = time.monotonic()
             if self._synth_thread:
+                last_q_size = self._sentence_queue.qsize()
                 while self._synth_thread.is_alive():
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
+                    now = time.monotonic()
+                    if now >= deadline:
                         timed_out = True
                         break
-                    self._synth_thread.join(timeout=min(0.05, remaining))
 
-            # Wait for audio ring buffer / hardware output stream to drain
+                    current_q_size = self._sentence_queue.qsize()
+                    if current_q_size != last_q_size or not self._ring_buffer.is_empty:
+                        last_synth_progress = now
+                        last_q_size = current_q_size
+                    elif now - last_synth_progress > stall_timeout:
+                        logger.warning("TTS synthesis stalled for %.1fs without forward progress.", stall_timeout)
+                        timed_out = True
+                        break
+
+                    self._synth_thread.join(timeout=0.05)
+
+            # Wait for audio ring buffer / hardware output stream to drain with forward progress tracking
+            last_playback_progress = time.monotonic()
+            last_available_samples = self._ring_buffer.available_samples
+
             while (not self._ring_buffer.is_empty) and not self._stop_event.is_set() and not timed_out:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
+                now = time.monotonic()
+                if now >= deadline:
                     timed_out = True
                     break
+
+                current_samples = self._ring_buffer.available_samples
+                if current_samples != last_available_samples:
+                    # Forward progress: samples are actively being read and played by WASAPI
+                    last_playback_progress = now
+                    last_available_samples = current_samples
+                elif now - last_playback_progress > stall_timeout:
+                    # Stalled: Ring buffer hasn't moved for 15 seconds
+                    logger.warning("WASAPI audio output stalled for %.1fs without consuming samples.", stall_timeout)
+                    timed_out = True
+                    break
+
                 time.sleep(0.01)
 
             # Brief cushion for DMA hardware buffer flush
@@ -603,8 +638,9 @@ class TextToSpeech:
 
             if timed_out:
                 logger.error(
-                    "Speech stream did not drain within %.1f seconds; stopping playback.",
-                    self.stream_timeout_seconds,
+                    "Speech stream did not drain (ceiling: %.1fs, words: %d); stopping playback.",
+                    max_session_ceiling,
+                    word_count,
                 )
                 self.stop()
                 for worker in workers:
