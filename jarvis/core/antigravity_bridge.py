@@ -254,15 +254,18 @@ class AntigravityDaemon:
                     sentence_callback(clean_tail)
 
             elapsed = time.perf_counter() - t_start
+            err_msg = final_result_data.get("error") or ""
             full_response = final_result_data.get("response") or "".join(accumulated_text).strip()
+            status = final_result_data.get("status", "SUCCESS" if (full_response and not err_msg) else "ERROR")
 
             if not full_response and not final_result_data:
                 logger.warning("Antigravity daemon returned empty response.")
                 return None
 
             return {
-                "status": final_result_data.get("status", "SUCCESS"),
-                "response": full_response,
+                "status": status,
+                "response": full_response if full_response else err_msg,
+                "error": err_msg,
                 "duration_seconds": elapsed,
                 "usage": final_result_data.get("usage", {}),
                 "conversation_id": self.conversation_id,
@@ -398,13 +401,14 @@ class AntigravityBridge:
 
     @staticmethod
     def _is_token_exhaustion_error(error_msg: str) -> bool:
-        """Checks if an error string indicates token exhaustion, rate limit, quota, or credit issues."""
+        """Checks if an error string indicates token exhaustion, rate limit, quota, credit issues, or CLI code 3."""
         err = (error_msg or "").lower()
         keywords = (
             "rate limit", "rate_limit", "429", "529", "resource_exhausted",
             "quota", "token limit", "tokens", "out of tokens", "token budget",
             "exceeded your current quota", "insufficient_quota", "credit balance",
             "usage limit", "capacity", "overloaded", "exhausted",
+            "cli exited with code 3", "code 3", "exit status 3",
         )
         return any(k in err for k in keywords)
 
@@ -690,6 +694,21 @@ class AntigravityBridge:
                     self.last_latency_ms = float(daemon_res.get("duration_seconds", 0.0)) * 1000.0
                     self.last_conversation_id = daemon_res.get("conversation_id")
                     return daemon_res
+                elif daemon_res and daemon_res.get("status") == "ERROR":
+                    daemon_err = daemon_res.get("response") or daemon_res.get("error") or ""
+                    if "claude" in effective_daemon_model and self._is_token_exhaustion_error(daemon_err):
+                        self.mark_claude_exhausted(duration_seconds=900.0, reason=daemon_err)
+                        is_complex = self.is_task_complex(full_prompt)
+                        chosen_fallback = "gemini-3.8-flash-high" if is_complex else "gemini-3.8-flash-medium"
+                        logger.warning(
+                            "Claude Sonnet daemon quota limit reached: '%s'. Task complexity evaluated as '%s' -> prioritizing %s in fallback cascade...",
+                            daemon_err[:80],
+                            "COMPLEX" if is_complex else "MODERATE",
+                            chosen_fallback
+                        )
+                        if chosen_fallback in cascade_models:
+                            cascade_models = [m for m in cascade_models if m != chosen_fallback]
+                            cascade_models.insert(0, chosen_fallback)
             except Exception as d_err:
                 logger.debug("Persistent daemon turn encountered error: %s", d_err)
 
