@@ -337,6 +337,12 @@ Autonomous Self-Building & Dynamic Feature Creation:
 
     def shutdown(self, timeout_seconds: float = 2.0):
         """Cleanly terminates managed service subprocesses and background workers."""
+        if hasattr(self, "antigravity_bridge") and self.antigravity_bridge:
+            try:
+                self.antigravity_bridge.stop()
+            except Exception as e:
+                logger.debug("Antigravity bridge shutdown notice: %s", e)
+
         if hasattr(self, "service_manager") and self.service_manager:
             try:
                 self.service_manager.stop_all(timeout_seconds=timeout_seconds)
@@ -2442,6 +2448,12 @@ Autonomous Self-Building & Dynamic Feature Creation:
 
     def stop(self):
         """Halts brain background components, provider runners, and unloads models from VRAM."""
+        if hasattr(self, "antigravity_bridge") and self.antigravity_bridge:
+            try:
+                self.antigravity_bridge.stop()
+            except Exception:
+                pass
+
         if hasattr(self, "unified_runner") and self.unified_runner:
             try:
                 self.unified_runner.shutdown()

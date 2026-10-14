@@ -203,6 +203,72 @@ class TestAntigravityIntegration(unittest.TestCase):
         tier_code = brain.classify_query_tier("write a python function to parse json and handle exceptions")
         self.assertEqual(tier_code, "deep")
 
+    def test_antigravity_daemon_lifecycle_mocked(self):
+        """Verifies AntigravityDaemon spawns with stream-json flags and terminates cleanly."""
+        from unittest.mock import patch, MagicMock
+        from jarvis.core.antigravity_bridge import AntigravityDaemon
+
+        daemon = AntigravityDaemon(
+            agy_path=self.bridge.agy_path or "mock_agy.exe",
+            default_model="gemini-3.8-flash-low",
+            default_effort="low"
+        )
+        self.assertFalse(daemon.is_alive())
+
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
+        mock_proc.stdin = MagicMock()
+        mock_proc.stdout = MagicMock()
+        mock_proc.stderr = MagicMock()
+        # Mock init event line
+        mock_proc.stdout.readline.side_effect = [
+            '{"event": "init", "conversation_id": "test-cid-123"}\n',
+            '{"event": "step_update", "step_update": {"text_delta": "Hello"}}\n',
+            '{"event": "step_update", "step_update": {"text_delta": " Sir"}}\n',
+            '{"event": "result", "result": {"response": "Hello Sir", "status": "SUCCESS"}}\n',
+            ""
+        ]
+
+        with patch("subprocess.Popen", return_value=mock_proc), \
+             patch("os.path.exists", return_value=True):
+            
+            ok = daemon.start("gemini-3.8-flash-low", "low")
+            self.assertTrue(ok)
+            self.assertTrue(daemon.is_alive())
+            self.assertEqual(daemon.conversation_id, "test-cid-123")
+
+            # Test execute_turn
+            chunks = []
+            res = daemon.execute_turn(
+                prompt="say hello",
+                model="gemini-3.8-flash-low",
+                effort="low",
+                sentence_callback=lambda c: chunks.append(c),
+            )
+            self.assertIsNotNone(res)
+            self.assertEqual(res.get("status"), "SUCCESS")
+            self.assertEqual(res.get("response"), "Hello Sir")
+            self.assertTrue(res.get("warm_daemon"))
+
+            # Test stop
+            daemon.stop()
+            self.assertFalse(daemon.is_alive())
+
+    def test_antigravity_bridge_fallback_when_daemon_fails(self):
+        """Verifies AntigravityBridge gracefully cascades to one-shot execution if daemon fails."""
+        from unittest.mock import patch
+
+        with patch.object(self.bridge.daemon, "execute_turn", return_value=None), \
+             patch.object(self.bridge, "_generate_batch", return_value={"status": "SUCCESS", "response": "Fallback OK", "duration_seconds": 1.0}):
+            
+            res = self.bridge.generate_response(
+                prompt="Test fallback",
+                model="gemini-3.8-flash-low",
+            )
+            self.assertEqual(res.get("status"), "SUCCESS")
+            self.assertEqual(res.get("response"), "Fallback OK")
+
 
 if __name__ == "__main__":
     unittest.main()
+
