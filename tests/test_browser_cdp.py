@@ -123,7 +123,134 @@ class TestBrowserCDPSuite(unittest.TestCase):
             res = SkillRegistry.execute("close_browser_tab", browser="brave")
             self.assertIsInstance(res, str)
 
+    def test_activate_cdp_tab(self):
+        """Verifies activate_cdp_tab sends PUT request to /json/activate."""
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = b"Target activated"
+        mock_resp.__enter__.return_value = mock_resp
+
+        with patch.object(b_cdp, "is_cdp_available", return_value=True), \
+             patch("urllib.request.urlopen", return_value=mock_resp) as mock_url:
+            ok = b_cdp.activate_cdp_tab("tab_target_42")
+            self.assertTrue(ok)
+            mock_url.assert_called_once()
+            req = mock_url.call_args[0][0]
+            self.assertEqual(req.get_method(), "PUT")
+            self.assertIn("/json/activate/tab_target_42", req.full_url)
+
+    def test_read_webpage_content_cdp_and_skill(self):
+        """Verifies read_webpage_content_cdp evaluates DOM and returns structured payload."""
+        fake_tabs = [
+            {"id": "doc_tab", "title": "Architecture Guide", "url": "https://example.org/arch", "ws_url": "ws://127.0.0.1:9222/devtools/page/doc_tab"}
+        ]
+        eval_payload = {
+            "title": "Architecture Guide",
+            "url": "https://example.org/arch",
+            "text": "Core architecture overview: P-Cores, WASAPI, SQLite WAL, and CDP WebSocket."
+        }
+        ws_mock = MagicMock()
+        ws_mock.recv.return_value = json.dumps({
+            "id": 201,
+            "result": {"result": {"value": eval_payload}}
+        })
+        ws_ctx = MagicMock()
+        ws_ctx.__enter__.return_value = ws_mock
+
+        with patch.object(b_cdp, "is_cdp_available", return_value=True), \
+             patch.object(b_cdp, "list_cdp_tabs", return_value=fake_tabs), \
+             patch("websockets.sync.client.connect", return_value=ws_ctx):
+            
+            data = b_cdp.read_webpage_content_cdp("Architecture")
+            self.assertIsNotNone(data)
+            self.assertEqual(data["title"], "Architecture Guide")
+            self.assertIn("Core architecture overview", data["text"])
+
+            # Verify SkillRegistry invocation
+            skill_res = SkillRegistry.execute("read_webpage_content", tab_name_or_url="Architecture")
+            self.assertIn("Webpage Intel for 'Architecture Guide'", skill_res)
+            self.assertIn("https://example.org/arch", skill_res)
+            self.assertIn("P-Cores", skill_res)
+
+    def test_execute_cdp_javascript_and_skill(self):
+        """Verifies execute_cdp_javascript evaluates arbitrary script in target tab."""
+        fake_tabs = [
+            {"id": "math_tab", "title": "Calculator", "url": "https://calc.org", "ws_url": "ws://127.0.0.1:9222/devtools/page/math_tab"}
+        ]
+        ws_mock = MagicMock()
+        ws_mock.recv.return_value = json.dumps({
+            "id": 202,
+            "result": {"result": {"value": 42}}
+        })
+        ws_ctx = MagicMock()
+        ws_ctx.__enter__.return_value = ws_mock
+
+        with patch.object(b_cdp, "is_cdp_available", return_value=True), \
+             patch.object(b_cdp, "list_cdp_tabs", return_value=fake_tabs), \
+             patch("websockets.sync.client.connect", return_value=ws_ctx):
+            
+            val = b_cdp.execute_cdp_javascript("6 * 7", target_id_or_title="Calculator")
+            self.assertEqual(val, 42)
+
+            skill_res = SkillRegistry.execute("execute_browser_javascript", script="6 * 7", tab_name="Calculator")
+            self.assertIn("JavaScript Evaluation Result", skill_res)
+            self.assertIn("42", skill_res)
+
+    def test_switch_to_browser_tab_skill(self):
+        """Verifies switch_to_browser_tab matches title and activates target tab."""
+        fake_tabs = [
+            {"id": "tab_gh", "title": "Jarvis 2.0 Repository", "url": "https://github.com/repo"}
+        ]
+        with patch.object(b_cdp, "is_cdp_available", return_value=True), \
+             patch.object(b_cdp, "list_cdp_tabs", return_value=fake_tabs), \
+             patch.object(b_cdp, "activate_cdp_tab", return_value=True) as mock_act, \
+             patch("jarvis.skills.windows_uia.focus_window_uia", return_value=True):
+            
+            res = SkillRegistry.execute("switch_to_browser_tab", tab_name_or_url="Repository")
+            self.assertIn("Switched to browser tab 'Jarvis 2.0 Repository'", res)
+            mock_act.assert_called_once_with("tab_gh")
+
+    def test_scrape_and_archive_webpage_skill(self):
+        """Verifies scrape_and_archive_webpage archives DOM content into MemoryManager document vault."""
+        fake_content = {
+            "title": "Quantum Computing Documentation",
+            "url": "https://quantum.org/docs",
+            "text": "Detailed quantum supremacy benchmarks and QPU circuit depth specifications."
+        }
+        mock_mem = MagicMock()
+        mock_mem.archive_document.return_value = 101
+
+        with patch.object(b_cdp, "read_webpage_content_cdp", return_value=fake_content), \
+             patch("jarvis.skills.calendar_manager._get_memory", return_value=mock_mem):
+            
+            res = SkillRegistry.execute("scrape_and_archive_webpage", tab_name_or_url="Quantum", category="quantum_intel")
+            self.assertIn("Archived webpage 'Quantum Computing Documentation'", res)
+            self.assertIn("ID: #101", res)
+            self.assertIn("quantum_intel", res)
+            mock_mem.archive_document.assert_called_once()
+            call_kw = mock_mem.archive_document.call_args[1]
+            self.assertEqual(call_kw["title"], "Quantum Computing Documentation")
+            self.assertEqual(call_kw["category"], "quantum_intel")
+            self.assertIn("https://quantum.org/docs", call_kw["content"])
+            self.assertIn("Detailed quantum supremacy benchmarks", call_kw["content"])
+
+    def test_bootstrap_cdp_browser(self):
+        """Verifies bootstrap_cdp_browser spawns detached browser process with dedicated profile."""
+        with patch.object(b_cdp, "is_cdp_available", side_effect=[False, True]), \
+             patch("jarvis.skills.os_control._build_app_index", return_value={"brave": r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"}), \
+             patch("subprocess.Popen") as mock_popen, \
+             patch("time.sleep"):
+            
+            success, msg = b_cdp.bootstrap_cdp_browser(browser_name="brave", port=9222, dedicated_profile=True)
+            self.assertTrue(success)
+            self.assertIn("Attached browser 'Brave' with remote debugging port 9222 enabled", msg)
+            mock_popen.assert_called_once()
+            args = mock_popen.call_args[0][0]
+            self.assertIn("--remote-debugging-port=9222", args)
+            self.assertTrue(any("--user-data-dir=" in a for a in args))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

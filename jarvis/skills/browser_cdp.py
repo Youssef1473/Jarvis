@@ -1,10 +1,14 @@
 """Chrome DevTools Protocol (CDP) client for sub-5ms silent browser control.
 Supports Brave, Chrome, and Edge running with --remote-debugging-port=9222.
-Enables instant tab listing, navigation, and opening without synthetic keystrokes or focus stealing.
+Enables instant tab listing, navigation, opening, DOM text extraction, and tab switching
+without synthetic keystrokes or focus stealing.
 """
 import json
 import logging
+import os
+from pathlib import Path
 import socket
+import subprocess
 import time
 import urllib.parse
 import urllib.request
@@ -147,26 +151,202 @@ def open_or_navigate_tab_cdp(
         return None
 
 
-@SkillRegistry.register(
-    name="list_open_browser_tabs",
-    description="Lists all open tabs in Sir's browser via silent Chrome DevTools Protocol (CDP), including tab titles and URLs without stealing focus."
-)
-def list_open_browser_tabs() -> str:
-    """Tool to inspect active browser tabs without foreground window disruption."""
-    if not is_cdp_available():
-        return "Browser DevTools Protocol is not currently attached (port 9222 is closed), Sir. Open tabs cannot be inspected silently without attaching debugging flags."
+def activate_cdp_tab(target_id: str, host: str = "127.0.0.1", port: int = 9222) -> bool:
+    """Activates/focuses a specific browser tab via CDP HTTP PUT /json/activate/{target_id}."""
+    if not is_cdp_available(host, port) or not target_id:
+        return False
+    try:
+        activate_url = f"http://{host}:{port}/json/activate/{target_id}"
+        req = urllib.request.Request(activate_url, method="PUT")
+        with urllib.request.urlopen(req, timeout=0.25) as resp:
+            return resp.status == 200 or resp.read() == b"Target activated"
+    except Exception as e:
+        logger.debug(f"Failed to activate CDP tab {target_id}: {e}")
+        return False
 
-    tabs = list_cdp_tabs()
-    if not tabs:
-        return "No open browser tabs detected via DevTools channel, Sir."
 
-    lines = ["Active Browser Tabs, Sir:"]
-    for i, t in enumerate(tabs, 1):
-        title = t.get("title", "Untitled")
-        url = t.get("url", "")
-        lines.append(f"{i}. {title} ({url})")
+def read_webpage_content_cdp(
+    target_id_or_title: Optional[str] = None,
+    max_chars: int = 15000,
+    host: str = "127.0.0.1",
+    port: int = 9222
+) -> Optional[Dict[str, Any]]:
+    """Extracts title, URL, and readable body/article text from an open tab in <5ms using Runtime.evaluate."""
+    if not is_cdp_available(host, port):
+        return None
 
-    return "\n".join(lines)
+    try:
+        tabs = list_cdp_tabs(host, port)
+        if not tabs:
+            return None
+
+        target_tab = None
+        if target_id_or_title and target_id_or_title.strip():
+            query_lower = target_id_or_title.lower().strip()
+            for t in tabs:
+                if t.get("id") == target_id_or_title or query_lower in t.get("title", "").lower() or query_lower in t.get("url", "").lower():
+                    target_tab = t
+                    break
+        else:
+            target_tab = tabs[0]
+
+        if not target_tab:
+            return None
+
+        ws_url = target_tab.get("ws_url")
+        if not ws_url:
+            return None
+
+        from websockets.sync.client import connect
+        with connect(ws_url, open_timeout=0.3, close_timeout=0.2) as ws:
+            js_expr = (
+                "(() => {"
+                "  const title = document.title || '';"
+                "  const url = window.location.href || '';"
+                "  let text = '';"
+                "  const mainEl = document.querySelector('article, main, #content, .content, [role=\"main\"]');"
+                "  if (mainEl) { text = mainEl.innerText || mainEl.textContent || ''; }"
+                "  if (!text || text.length < 200) { text = document.body ? (document.body.innerText || document.body.textContent || '') : ''; }"
+                "  text = text.replace(/[ \\t]+/g, ' ').replace(/\\n{3,}/g, '\\n\\n').trim();"
+                f"  return {{ title, url, text: text.slice(0, {max_chars}) }};"
+                "})()"
+            )
+            cmd = {
+                "id": 201,
+                "method": "Runtime.evaluate",
+                "params": {
+                    "expression": js_expr,
+                    "returnByValue": True,
+                    "awaitPromise": True,
+                }
+            }
+            ws.send(json.dumps(cmd))
+            resp_raw = ws.recv(timeout=0.8)
+            resp = json.loads(resp_raw)
+
+            val = resp.get("result", {}).get("result", {}).get("value")
+            if isinstance(val, dict):
+                return val
+            return None
+
+    except Exception as e:
+        logger.warning(f"Error reading webpage content via CDP: {e}")
+        return None
+
+
+def execute_cdp_javascript(
+    expression: str,
+    target_id_or_title: Optional[str] = None,
+    host: str = "127.0.0.1",
+    port: int = 9222
+) -> Optional[Any]:
+    """Evaluates JavaScript expression on the target tab via CDP Runtime.evaluate."""
+    if not is_cdp_available(host, port) or not expression:
+        return None
+
+    try:
+        tabs = list_cdp_tabs(host, port)
+        if not tabs:
+            return None
+
+        target_tab = None
+        if target_id_or_title and target_id_or_title.strip():
+            query_lower = target_id_or_title.lower().strip()
+            for t in tabs:
+                if t.get("id") == target_id_or_title or query_lower in t.get("title", "").lower() or query_lower in t.get("url", "").lower():
+                    target_tab = t
+                    break
+        else:
+            target_tab = tabs[0]
+
+        if not target_tab:
+            return None
+
+        ws_url = target_tab.get("ws_url")
+        if not ws_url:
+            return None
+
+        from websockets.sync.client import connect
+        with connect(ws_url, open_timeout=0.3, close_timeout=0.2) as ws:
+            cmd = {
+                "id": 202,
+                "method": "Runtime.evaluate",
+                "params": {
+                    "expression": expression,
+                    "returnByValue": True,
+                    "awaitPromise": True,
+                }
+            }
+            ws.send(json.dumps(cmd))
+            resp_raw = ws.recv(timeout=1.0)
+            resp = json.loads(resp_raw)
+            return resp.get("result", {}).get("result", {}).get("value")
+
+    except Exception as e:
+        logger.warning(f"Error executing JavaScript via CDP: {e}")
+        return None
+
+
+def bootstrap_cdp_browser(
+    browser_name: str = "brave",
+    port: int = 9222,
+    dedicated_profile: bool = True
+) -> Tuple[bool, str]:
+    """Ensures a browser instance is running with remote debugging port enabled."""
+    if is_cdp_available("127.0.0.1", port):
+        return True, f"Browser DevTools Protocol is active and connected on port {port}, Sir."
+
+    browser_path = None
+    try:
+        from jarvis.skills.os_control import _build_app_index
+        apps = _build_app_index()
+        b_clean = browser_name.lower().strip()
+        for name, path in apps.items():
+            if b_clean in name and path.lower().endswith(".exe"):
+                browser_path = path
+                break
+    except Exception:
+        pass
+
+    if not browser_path:
+        known_direct = [
+            os.path.expandvars(r"%LOCALAPPDATA%\BraveSoftware\Brave-Browser\Application\brave.exe"),
+            os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+            os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+        ]
+        for p in known_direct:
+            if os.path.exists(p):
+                browser_path = p
+                break
+
+    if not browser_path:
+        return False, f"Could not locate an executable for browser '{browser_name}', Sir."
+
+    import psutil
+    exe_name = Path(browser_path).name.lower()
+    is_running = any(p.name().lower() == exe_name for p in psutil.process_iter(['name']))
+
+    cmd = [browser_path, f"--remote-debugging-port={port}"]
+    if is_running or dedicated_profile:
+        profile_dir = Path("data/browser_debug_profile").resolve()
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        cmd.append(f"--user-data-dir={str(profile_dir)}")
+
+    try:
+        subprocess.Popen(
+            cmd,
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+            close_fds=True,
+        )
+
+        for _ in range(25):
+            time.sleep(0.1)
+            if is_cdp_available("127.0.0.1", port):
+                return True, f"Attached browser '{browser_name.title()}' with remote debugging port {port} enabled, Sir."
+
+        return False, f"Browser launched, but port {port} did not respond within timeout, Sir."
+    except Exception as e:
+        return False, f"Failed to launch browser with debugging flags: {e}"
 
 
 def close_cdp_tab(
@@ -215,3 +395,142 @@ def close_cdp_tab(
         logger.warning(f"CDP close tab encountered error: {e}")
         return None
 
+
+@SkillRegistry.register(
+    name="list_open_browser_tabs",
+    description="Lists all open tabs in Sir's browser via silent Chrome DevTools Protocol (CDP), including tab titles and URLs without stealing focus."
+)
+def list_open_browser_tabs() -> str:
+    """Tool to inspect active browser tabs without foreground window disruption."""
+    if not is_cdp_available():
+        return "Browser DevTools Protocol is not currently attached (port 9222 is closed), Sir. Open tabs cannot be inspected silently without attaching debugging flags."
+
+    tabs = list_cdp_tabs()
+    if not tabs:
+        return "No open browser tabs detected via DevTools channel, Sir."
+
+    lines = ["Active Browser Tabs, Sir:"]
+    for i, t in enumerate(tabs, 1):
+        title = t.get("title", "Untitled")
+        url = t.get("url", "")
+        lines.append(f"{i}. {title} ({url})")
+
+    return "\n".join(lines)
+
+
+@SkillRegistry.register(
+    name="switch_to_browser_tab",
+    description="Switches focus and activates an open browser tab by title or URL keyword via Chrome DevTools Protocol (CDP)."
+)
+def switch_to_browser_tab(tab_name_or_url: str) -> str:
+    """Activates a browser tab and brings the browser window to the foreground."""
+    if not is_cdp_available():
+        return "Browser DevTools Protocol is not currently attached (port 9222 is closed), Sir."
+
+    tabs = list_cdp_tabs()
+    if not tabs:
+        return "No open browser tabs found to switch to, Sir."
+
+    query = (tab_name_or_url or "").lower().strip()
+    target_tab = None
+    for t in tabs:
+        if query in t.get("title", "").lower() or query in t.get("url", "").lower():
+            target_tab = t
+            break
+
+    if not target_tab:
+        return f"Could not find an open tab matching '{tab_name_or_url}', Sir."
+
+    tab_id = target_tab.get("id")
+    tab_title = target_tab.get("title") or "Browser Tab"
+    if not activate_cdp_tab(tab_id):
+        return f"Failed to activate tab '{tab_title}' via DevTools channel, Sir."
+
+    try:
+        from jarvis.skills.windows_uia import focus_window_uia
+        focus_window_uia("Brave") or focus_window_uia("Chrome") or focus_window_uia("Edge")
+    except Exception:
+        pass
+
+    return f"Switched to browser tab '{tab_title}', Sir."
+
+
+@SkillRegistry.register(
+    name="read_webpage_content",
+    description="Extracts clean readable text, articles, or documentation directly from the active or specified browser tab via silent Chrome DevTools Protocol without stealing focus or copying to clipboard."
+)
+def read_webpage_content(tab_name_or_url: str = "") -> str:
+    """Reads readable text from active or specified browser tab via CDP."""
+    if not is_cdp_available():
+        return (
+            "Browser DevTools Protocol is not currently attached (port 9222 is closed), Sir. "
+            "Please launch the browser with debugging enabled or use 'launch_debug_browser'."
+        )
+
+    data = read_webpage_content_cdp(target_id_or_title=tab_name_or_url)
+    if not data or not data.get("text"):
+        return f"Unable to extract readable content from browser tab '{tab_name_or_url or 'Active'}', Sir."
+
+    title = data.get("title") or "Untitled Document"
+    url = data.get("url") or ""
+    text = data.get("text", "").strip()
+
+    preview = text[:2500]
+    suffix = f"\n\n... [{len(text) - 2500} additional characters available; call scrape_and_archive_webpage to store permanently]" if len(text) > 2500 else ""
+    return f"Webpage Intel for '{title}' ({url}), Sir:\n\n{preview}{suffix}"
+
+
+@SkillRegistry.register(
+    name="execute_browser_javascript",
+    description="Executes a JavaScript expression in the active or target browser tab via DevTools Protocol and returns the evaluated result."
+)
+def execute_browser_javascript(script: str, tab_name: str = "") -> str:
+    """Executes JavaScript in the browser tab via CDP."""
+    if not is_cdp_available():
+        return "Browser DevTools Protocol is not currently attached (port 9222 is closed), Sir."
+
+    res = execute_cdp_javascript(expression=script, target_id_or_title=tab_name)
+    if res is None:
+        return "JavaScript execution returned no result or encountered an error, Sir."
+    return f"JavaScript Evaluation Result, Sir:\n{res}"
+
+
+@SkillRegistry.register(
+    name="launch_debug_browser",
+    description="Launches or connects a browser session with Chrome DevTools Protocol (CDP port 9222) enabled for ultra-fast silent automation."
+)
+def launch_debug_browser(browser: str = "brave", dedicated_profile: bool = True) -> str:
+    """Starts browser with remote debugging port 9222."""
+    success, msg = bootstrap_cdp_browser(browser_name=browser, dedicated_profile=dedicated_profile)
+    return msg
+
+
+@SkillRegistry.register(
+    name="scrape_and_archive_webpage",
+    description="Extracts the readable text and documentation from an open browser tab and archives it directly into Jarvis's local JIT document memory vault for future semantic retrieval."
+)
+def scrape_and_archive_webpage(tab_name_or_url: str = "", category: str = "web_intel") -> str:
+    """Extracts webpage content via CDP and permanently stores it in Tier 3 Document Memory."""
+    content_data = read_webpage_content_cdp(target_id_or_title=tab_name_or_url)
+    if not content_data or not content_data.get("text"):
+        return "Could not extract webpage content to archive. Please ensure the target tab is loaded, Sir."
+
+    title = content_data.get("title") or "Webpage Document"
+    url = content_data.get("url") or ""
+    text = content_data.get("text", "")
+
+    try:
+        from jarvis.skills.calendar_manager import _get_memory
+        mem = _get_memory()
+        if not mem:
+            return "Memory subsystem is unavailable to archive the document, Sir."
+
+        doc_header = f"[Source URL: {url} | Extracted via Browser CDP]\n\n"
+        full_doc = doc_header + text
+        doc_id = mem.archive_document(title=title, content=full_doc, category=category)
+        return (
+            f"Archived webpage '{title}' ({len(text)} characters) into your local document vault "
+            f"(ID: #{doc_id}, Category: {category}), Sir. It is now indexed for semantic and keyword retrieval."
+        )
+    except Exception as e:
+        return f"Failed to archive webpage content into memory: {e}"
