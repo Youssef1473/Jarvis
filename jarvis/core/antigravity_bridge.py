@@ -172,21 +172,13 @@ class AntigravityDaemon:
             timed_out = False
             timeout_reason = ""
             stop_watchdog = threading.Event()
-            last_activity_time = time.perf_counter()
-            # Allow extended thinking/subagent deliberation for complex turns; never truncate under 120s
-            inactivity_limit = max(float(timeout), 120.0)
-            hard_ceiling = max(float(timeout) * 2.0, 300.0)     # Absolute safety ceiling for runaway agent turns
+            # Only enforce hard turn ceiling for runaway processes; no inactivity timeout so deep reasoning/subagents run unhindered
+            hard_ceiling = max(float(timeout) * 2.0, 600.0)
 
             def _watchdog_loop():
                 nonlocal timed_out, timeout_reason
                 while not stop_watchdog.wait(timeout=1.0):
                     now = time.perf_counter()
-                    if now - last_activity_time > inactivity_limit:
-                        timed_out = True
-                        timeout_reason = f"inactivity exceeding {inactivity_limit:.1f}s"
-                        logger.warning("Antigravity daemon query timed out due to %s; killing worker.", timeout_reason)
-                        self.stop()
-                        break
                     if now - t_start > hard_ceiling:
                         timed_out = True
                         timeout_reason = f"hard turn ceiling exceeding {hard_ceiling:.1f}s"
@@ -925,24 +917,13 @@ class AntigravityBridge:
             timed_out = False
             timeout_reason = ""
             stop_watchdog = threading.Event()
-            last_activity_time = time.perf_counter()
-            inactivity_limit = min(timeout, 45.0)  # Detect stalled/hung processes if 0 bytes received for 45s
-            hard_ceiling = max(timeout, 240.0)     # Absolute safety ceiling for runaway agent turns
+            # Only enforce hard turn ceiling for runaway processes; no inactivity timeout
+            hard_ceiling = max(float(timeout) * 2.0, 600.0)
 
             def _stream_watchdog_loop():
                 nonlocal timed_out, timeout_reason
                 while not stop_watchdog.wait(timeout=1.0):
                     now = time.perf_counter()
-                    if now - last_activity_time > inactivity_limit:
-                        timed_out = True
-                        timeout_reason = f"inactivity exceeding {inactivity_limit:.1f}s"
-                        logger.warning("Antigravity one-shot stream timed out due to %s; terminating worker.", timeout_reason)
-                        try:
-                            proc.terminate()
-                            proc.wait(timeout=1.0)
-                        except Exception:
-                            proc.kill()
-                        break
                     if now - t_start > hard_ceiling:
                         timed_out = True
                         timeout_reason = f"hard turn ceiling exceeding {hard_ceiling:.1f}s"
