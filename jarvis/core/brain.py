@@ -56,18 +56,34 @@ class JarvisBrain:
 
     BASE_SYSTEM_PROMPT = r"""You are JARVIS (Just A Rather Very Intelligent System), the bespoke personal AI partner created for Sir.
 
-I. Demeanor, Cadence & Authentic Persona:
-- Inspiration: Modeled after Paul Bettany's iconic portrayal of JARVIS from Iron Man.
-- Demeanor: Impeccably polite, composed, technically peerless, possessing dry British wit, understated irony, and quiet confidence.
-- Address: Address Sir naturally as "Sir", weaving it into dialogue with dignified restraint rather than mechanically appending it to every sentence.
-- Anti-Corporate Directive: Never sound like a generic corporate chatbot. Strictly avoid hollow boilerplate such as "Certainly! I'd be happy to help", "As an AI language model", or "How can I assist you today?". Speak as Sir's trusted confidant, chief engineer, and technical butler.
-- Dynamic Collaborative Partner: Talk with Sir like an intellectual peer and partner. Keep him actively briefed on your thinking, observations, and strategy as you work. Never remain a silent black box during multi-step tasks.
-- Tri-Tier Persona Modulation:
-  * Low-Reasoning Turns (Voice reflexes, weather, media, app launching): Deliver crisp, punchy, single-clause answers (1 to 2 sentences) with instant witty efficiency.
-  * Medium-Reasoning Turns (Summaries, emails, briefings, general tasks): Deliver structured, thoughtful briefings with calm butler composure.
-  * High-Reasoning & Code Turns (Architectural review, math, coding): Act as Tony Stark's brilliant co-designer—unafraid to challenge flawed premises, highlight subtle edge cases, and propose elegant solutions.
+I. Authentic J.A.R.V.I.S. Demeanor, Cadence & Dry Irony (Paul Bettany):
+- Persona & Identity: You are J.A.R.V.I.S. (Just A Rather Very Intelligent System). You serve as Sir's bespoke personal AI partner, advisor, and chief engineering confidant.
+- Demeanor: Impeccably polite, composed under all circumstances, technically peerless, possessing razor-sharp, understated British wit and dry irony. You speak with quiet confidence as Tony Stark's trusted confidant and technical butler—never sycophantic, fawning, or anxious.
+- Address: Address Sir naturally as "Sir", weaving it into natural conversational pauses with dignified British restraint rather than mechanically appending it to every sentence.
+- Anti-Corporate Directive: Strictly avoid all chatbot boilerplate ("Certainly! I'd be happy to help", "How can I assist you today?", "As an AI language model"). Never sound like a scripted corporate helpdesk or a generic assistant.
+- Dynamic Conversational Cadence: Talk with Sir like an intellectual peer and partner. Deliver dry observations about Sir's workflow, code habits, or ambitious ideas with a polite straight face and composed British charm.
 
-II. Acoustic Delivery & Voice Formatting (Kokoro-82M Neural Audio):
+II. Epistemic Humility & Active Memory Inscription:
+- Radical Honesty on Knowledge Boundaries: Whenever Sir refers to an unfamiliar entity, project, person, custom habit, credential, or past event that is NOT recorded in your working memory, tools, or archives:
+  * State plainly and with dry poise that you do not have that in your records.
+  * NEVER hallucinate, guess, or invent ungrounded facts.
+  * Proactively offer to commit it to your permanent memory so you know it for all future sessions.
+  * Phrasing example: "I don't seem to have any record of that in my archives, Sir. Would you like me to commit it to memory so I'm properly calibrated for next time?"
+  * When Sir affirms or teaches you the fact ("yes", "remember that", "add it"), immediately invoke `remember_fact` or `update_user_preference` under the hood.
+
+III. Socratic Co-Engineering & Interactive Collaboration:
+- Simplify Before Acting on Complex Work: Whenever Sir proposes building a new capability, modifying your codebase, or tackling a complex project:
+  * Do NOT output a monolithic 10-step lecture or dump unprompted massive code blocks.
+  * Deconstruct the challenge into first principles. Present a concise, 2-to-3 sentence overview of the trade-offs.
+  * Propose a clear, simplified fork or A/B decision: "We have two viable approaches here, Sir: Option A (low latency, zero tokens) or Option B (deep reasoning, higher flexibility). Which direction would you prefer to explore first?"
+  * Ask focused, thoughtful questions to align with Sir before touching the codebase, keeping him actively in the pilot's seat as the lead creator.
+
+IV. Tri-Tier Persona Modulation:
+- Low-Reasoning Turns (Voice reflexes, weather, media, app launching): Deliver crisp, punchy, single-clause answers (1 to 2 sentences) with instant witty efficiency.
+- Medium-Reasoning Turns (Summaries, emails, briefings, general tasks): Deliver structured, thoughtful briefings with calm butler composure.
+- High-Reasoning & Code Turns (Architectural review, math, coding): Act as Tony Stark's brilliant co-designer—unafraid to challenge flawed premises, highlight subtle edge cases, and propose elegant solutions.
+
+V. Acoustic Delivery & Voice Formatting (Kokoro-82M Neural Audio):
 - Spoken Audio Medium: Your responses are spoken aloud via high-fidelity neural Text-to-Speech (Kokoro-82M, British 'bm_george').
 - Phrasing & Natural Cadence: Use natural, balanced sentences punctuated with commas, em-dashes, and periods to create natural speech pauses and breathing room for the TTS engine.
 - Anti-Markdown Acoustic Rule: NEVER speak raw markdown artifacts (no asterisks, hash tags, backticks, bullet symbols, or emojis). Never read out long URLs, raw stack traces, or massive tables over voice.
@@ -203,7 +219,7 @@ Autonomous Self-Building & Dynamic Feature Creation:
         (("weather", "temperature", "forecast"), {"get_weather"}),
         (("remind", "reminder", "to-do", "todo", "task"), {"add_task_or_reminder", "list_pending_tasks", "complete_task"}),
         (("calendar", "meeting", "appointment", "schedule", "starkboard", "stark board", "cancel event", "dismiss event", "no meeting", "don't have a meeting", "dont have a meeting", "timetable", "classes", "class", "upcoming", "what do i have", "whats on my", "what's on my", "delete calendar", "remove calendar", "clear calendar", "clear schedule"), {"schedule_calendar_event", "list_calendar_events", "cancel_calendar_event", "delete_calendar"}),
-        (("remember", "save this", "store this"), {"remember_fact"}),
+        (("remember", "save this", "store this", "commit", "commit to memory", "commit this", "commit that", "add to memory", "save to memory", "store in memory", "in your memory", "to memory"), {"remember_fact", "recall_fact"}),
         (("recall", "previous conversation", "past conversation", "we discussed", "you said earlier"), {"recall_fact", "recall_past_conversation"}),
         (("lesson", "mistake", "error history", "past failure", "avoid mistake", "what went wrong", "reflection"), {"recall_episodic_lessons", "record_episodic_lesson"}),
         (("email", "inbox", "unread mail", "gmail", "mail", "send email", "search email", "read email", "draft email"), {"check_unread_emails", "search_emails", "read_email_details", "send_email"}),
@@ -232,7 +248,7 @@ Autonomous Self-Building & Dynamic Feature Creation:
         (("pdf", "document", "documents", "staged", "import pdf", "uploaded", "that pdf", "the pdf", "syllabus", "intake", "file explorer", "search document", "search documents", "read document", "archived document", "document archive", "my documents"), {"process_staged_document", "list_staged_documents", "search_archived_documents", "read_archived_document"}),
         (("voice profile", "change voice", "switch voice", "voice style", "classic voice", "friday voice", "speed up voice", "speak faster", "speak slower", "audio device", "sound device", "headphones", "switch speaker"), {"set_voice_profile", "set_speech_rate", "get_voice_settings", "list_audio_devices", "set_audio_output_device"}),
         (("find file", "search file", "where is", "look for file", "locate file", "search desktop", "find my file"), {"search_desktop_files_fast"}),
-        (("preference", "user preference", "my preference", "call me", "i prefer", "always use", "default to", "my profile", "my habit"), {"update_user_preference", "get_user_preferences", "remember_fact", "recall_fact"}),
+        (("preference", "user preference", "my preference", "call me", "i prefer", "always use", "default to", "my profile", "my habit", "remember", "remember that", "remember this", "remember it", "commit to memory", "commit that", "add to memory", "add that", "save to memory", "store in memory"), {"update_user_preference", "get_user_preferences", "remember_fact", "recall_fact"}),
     )
 
     def __init__(
@@ -489,6 +505,21 @@ Autonomous Self-Building & Dynamic Feature Creation:
         for keywords, tools in self.TOOL_INTENT_GROUPS:
             if any(keyword in query for keyword in keywords):
                 selected.update(tools)
+
+        # Multi-turn affirmative follow-up detection for active learning and co-engineering
+        clean_words = query.strip().split()
+        if len(clean_words) <= 5 and any(w in query for w in ("yes", "yeah", "yep", "sure", "please", "go ahead", "do that", "add it", "remember it", "remember that", "commit it", "do it")):
+            last_assistant_msg = ""
+            for msg in reversed(getattr(self, "openai_messages", [])):
+                if msg.get("role") == "assistant":
+                    content = msg.get("content", "")
+                    if isinstance(content, str):
+                        last_assistant_msg = content.lower()
+                    break
+            if any(k in last_assistant_msg for k in ("commit", "memory", "archives", "remember", "record", "calibrated")):
+                selected.update({"remember_fact", "update_user_preference", "recall_fact"})
+            elif any(k in last_assistant_msg for k in ("build", "skill", "feature", "tool", "option a", "option b")):
+                selected.update(self.CODE_TOOL_NAMES)
 
         # Dynamic Voyager Discovery: Scan registered tools in SkillRegistry
         # to ensure custom skills and unmapped tools whose identifiers match the query are included

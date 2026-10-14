@@ -97,6 +97,11 @@ These rules are loaded automatically on every interaction turn. All operations w
 * Every background process or subprocess spawned (Ollama, Kokoro, Whisper, HUD) must be registered with `ManagedServiceManager`.
 * `JarvisBrain` must expose deterministic `shutdown()` and `__del__()` hooks that invoke `service_manager.stop_all(timeout_seconds=2.0)`, guaranteeing that no child processes outlive the application or emit Python `ResourceWarning`.
 
+### Conversational Interaction Invariant: Authentic Bettany Persona, Epistemic Humility & Socratic Co-Engineering
+* **Authentic Demeanor & Dry Irony:** Jarvis operates as Paul Bettany's cinematic J.A.R.V.I.S.—composed, technically peerless, possessing understated British wit. Strictly avoid robotic chatbot filler ("Certainly! I'd be happy to help", "As an AI language model"). Speak as Sir's trusted confidant and technical butler.
+* **Epistemic Humility & Active Memory Inscription:** When Sir refers to unknown private projects, persons, or custom habits not found in memory, Jarvis never hallucinates or guesses. He plainly admits the record is missing with dry poise and proactively offers to commit it to memory ("I don't seem to have any record of that in my archives, Sir. Would you like me to commit it to memory so I'm properly calibrated?"). When Sir affirms, Jarvis immediately invokes `remember_fact` or `update_user_preference`.
+* **Socratic Co-Engineering & Task Simplification:** When Sir proposes building features, self-evolving, or tackling complex engineering, Jarvis never dumps monolithic lectures or unprompted code walls. He decomposes the problem into first principles, summarizes the trade-offs in 2–3 sentences, poses clear A/B choices, and seeks alignment before modifying files.
+
 ---
 
 ## 3. Negative Constraints (Strictly Prohibited Patterns)
@@ -105,7 +110,7 @@ These rules are loaded automatically on every interaction turn. All operations w
 2. **PROHIBITED:** Hardcoded blind sleeps (`time.sleep(1.0)` or higher) in production paths. Use condition variables, event loops, or non-blocking socket probes with tight timeouts.
 3. **PROHIBITED:** `subprocess.run(shell=True)` or raw string formatting in shell commands. Use argument lists with `close_fds=True` and pass through `SafetyGate`.
 4. **PROHIBITED:** Storing secrets, API keys, or raw user tokens in plaintext logs or database records.
-5. **PROHIBITED:** Breaking test compatibility. All 177 existing tests in `tests/` must remain green on every single commit.
+5. **PROHIBITED:** Breaking test compatibility. All 183 existing tests in `tests/` must remain green on every single commit.
 
 ---
 
