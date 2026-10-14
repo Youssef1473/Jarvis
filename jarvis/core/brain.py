@@ -229,7 +229,7 @@ Autonomous Self-Building & Dynamic Feature Creation:
         (("note", "notes", "take note", "take a note", "note down", "write down", "jot down", "save note", "record note", "my notes", "read notes", "search notes"), {"take_quick_note", "read_recent_notes", "search_notes"}),
         (("hardware watchdog", "thermal monitor", "watchdog", "system health check", "hardware health", "check hardware"), {"check_hardware_health", "start_hardware_watchdog", "stop_hardware_watchdog"}),
         (("deep research", "research topic", "investigate", "in-depth research", "compile report"), {"deep_research", "web_search"}),
-        (("pdf", "document", "staged", "import pdf", "uploaded", "that pdf", "the pdf", "syllabus", "intake", "file explorer"), {"process_staged_document", "list_staged_documents"}),
+        (("pdf", "document", "documents", "staged", "import pdf", "uploaded", "that pdf", "the pdf", "syllabus", "intake", "file explorer", "search document", "search documents", "read document", "archived document", "document archive", "my documents"), {"process_staged_document", "list_staged_documents", "search_archived_documents", "read_archived_document"}),
         (("voice profile", "change voice", "switch voice", "voice style", "classic voice", "friday voice", "speed up voice", "speak faster", "speak slower", "audio device", "sound device", "headphones", "switch speaker"), {"set_voice_profile", "set_speech_rate", "get_voice_settings", "list_audio_devices", "set_audio_output_device"}),
         (("find file", "search file", "where is", "look for file", "locate file", "search desktop", "find my file"), {"search_desktop_files_fast"}),
         (("preference", "user preference", "my preference", "call me", "i prefer", "always use", "default to", "my profile", "my habit"), {"update_user_preference", "get_user_preferences", "remember_fact", "recall_fact"}),
@@ -1096,8 +1096,10 @@ Autonomous Self-Building & Dynamic Feature Creation:
             return "Adding the event to your schedule, Sir."
         elif name == "cancel_calendar_event":
             return "Updating your schedule and cancelling the event, Sir."
-        elif name == "process_staged_document":
+        elif name in ("process_staged_document", "list_staged_documents"):
             return "Parsing and extracting details from your document, Sir."
+        elif name in ("search_archived_documents", "read_archived_document"):
+            return "Consulting your archived document vaults, Sir."
         elif name == "recall_past_conversation":
             return "Consulting our past conversation records, Sir."
 

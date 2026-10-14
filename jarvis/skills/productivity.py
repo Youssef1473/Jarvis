@@ -156,10 +156,10 @@ def recall_past_conversation(query: str, limit: int = 5) -> str:
 
 @SkillRegistry.register(
     name="semantic_search_memory",
-    description="Searches long-term factual memory and conversation archives using semantic vector similarity."
+    description="Searches long-term factual memory, conversation archives, and ingested documents using semantic vector similarity."
 )
 def semantic_search_memory(query: str, search_type: str = "all") -> str:
-    """Performs semantic vector search across facts and past conversations."""
+    """Performs semantic vector search across facts, document vaults, and past conversations."""
     mem = _get_memory()
     outputs = []
 
@@ -168,6 +168,12 @@ def semantic_search_memory(query: str, search_type: str = "all") -> str:
         if facts:
             f_lines = [f"• [{f['category']}] {f['key']}: {f['value']} (Score: {f['relevance_score']:.0%})" for f in facts]
             outputs.append("Matching Facts & Knowledge:\n" + "\n".join(f_lines))
+
+    if search_type in ("all", "documents", "docs", "papers", "pdf"):
+        docs = mem.hybrid_search_documents(query, limit=3)
+        if docs:
+            doc_block = mem.format_document_reference_block(docs)
+            outputs.append("Matching Document Knowledge:\n" + doc_block)
 
     if search_type in ("all", "conversations", "dialogue"):
         dialogues = mem.semantic_search_interactions(query, top_k=3)
@@ -178,6 +184,6 @@ def semantic_search_memory(query: str, search_type: str = "all") -> str:
             outputs.append("Matching Conversation Logs:\n" + "\n---\n".join(d_lines))
 
     if not outputs:
-        return f"No semantic memories or dialogues found matching '{query}', Sir."
+        return f"No semantic memories, documents, or dialogues found matching '{query}', Sir."
     return "\n\n".join(outputs)
 

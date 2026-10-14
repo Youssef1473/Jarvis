@@ -1042,6 +1042,54 @@ class MemoryManager:
             results.append(item)
         return results
 
+    def get_document_by_id(self, doc_id: int) -> Optional[Dict[str, Any]]:
+        """Retrieves a single archived document by its primary key ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, title, category, summary, raw_content, file_path, created_at
+                FROM documents WHERE id = ?
+            """, (doc_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_recent_documents(self, limit: int = 5) -> List[Dict[str, Any]]:
+        """Retrieves recently archived documents."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, title, category, summary, raw_content, file_path, created_at
+                FROM documents ORDER BY id DESC LIMIT ?
+            """, (limit,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def format_document_reference_block(self, docs: List[Dict[str, Any]]) -> str:
+        """Formats retrieved document chunks using Chunk Sandwiching and metadata headers under inert XML tags.
+        Bypasses 'Lost in the Middle' attention degradation by placing highest-relevance chunks at the boundaries."""
+        if not docs:
+            return ""
+
+        # Sort by relevance / rrf score descending if present (Chunk Sandwiching)
+        sorted_docs = sorted(
+            docs,
+            key=lambda x: x.get("rrf_score", x.get("relevance_score", 0.0)),
+            reverse=True
+        )
+
+        chunks = []
+        for d in sorted_docs:
+            title = d.get("title", "Untitled Document")
+            cat = d.get("category", "general")
+            date = d.get("created_at", "Unknown Date")
+            summary = d.get("summary", "").strip()
+            raw = (d.get("raw_content") or "").strip()
+            content = summary if summary else (raw[:600] if raw else "No content summary recorded.")
+            header = f"[Document #{d.get('id', '?')}: {title} | Category: {cat} | Archived: {date}]"
+            chunks.append(f"{header}\n{content}")
+
+        inner = "\n\n---\n\n".join(chunks)
+        return f"<reference_data>\n{inner}\n</reference_data>"
+
     def get_saved_calendars(self) -> List[Dict[str, Any]]:
         """Retrieves all calendar and schedule documents archived in memory."""
         with self._get_connection() as conn:
@@ -1308,7 +1356,10 @@ class MemoryManager:
 
         sections = []
         for cat, items in sorted(by_cat.items()):
-            sections.append(f"[{cat}]\n" + "\n".join(f"• {item}" for item in items))
+            # Bound items per category to prevent prompt bloat & Stanford/Berkeley 'Lost in the Middle' attention drops
+            max_items = 4 if query else 8
+            bounded_items = items[:max_items]
+            sections.append(f"[{cat}]\n" + "\n".join(f"• {item}" for item in bounded_items))
         summary = semantic_section + "\n\n".join(sections)
         if not query:
             with self._context_summary_lock:

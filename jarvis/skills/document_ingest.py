@@ -245,7 +245,9 @@ def process_staged_document(identifier: str = "", user_context: str = "") -> str
         f"If a day has classes (such as Friday), extract them with their exact date (e.g. 2026-10-16). "
         f"Do NOT stop after Monday-Wednesday; inspect the full week including Thursday, Friday, Saturday.\n"
         f"If a day has no classes scheduled, do NOT generate events for that day.\n"
-        f"- If Sir wants tasks/action items recorded: extract tasks with 'description' and 'due_date'.\n"
+        f"- CRITICAL FOR KNOWLEDGE DISTILLATION (TIER 2 ATOMIC FACTS): "
+        f"Extract key entity assertions, parameters, deadlines, contact persons, server/port configurations, "
+        f"and core definitions into 'atomic_facts'. Each atomic fact MUST be a single, high-density key/value pair with a category.\n"
         f"- Always create a knowledge summary of the document for permanent archiving: 'title', 'category' (schedule|syllabus|invoice|contract|paper|manual|note|general), 'summary'.\n\n"
         f"OUTPUT FORMAT:\n"
         f"Output ONLY valid JSON with this exact schema (no markdown fences, no explanation):\n"
@@ -255,6 +257,9 @@ def process_staged_document(identifier: str = "", user_context: str = "") -> str
         f'  ],\n'
         f'  "tasks": [\n'
         f'    {{"description": "...", "due_date": "YYYY-MM-DD"}}\n'
+        f'  ],\n'
+        f'  "atomic_facts": [\n'
+        f'    {{"category": "project|credentials|spec|contacts|policy|finance|general", "key": "...", "value": "..."}}\n'
         f'  ],\n'
         f'  "knowledge_doc": {{\n'
         f'    "title": "...",\n'
@@ -343,6 +348,13 @@ def process_staged_document(identifier: str = "", user_context: str = "") -> str
         extracted_data = {
             "calendar_events": [],
             "tasks": [],
+            "atomic_facts": [
+                {
+                    "category": "document",
+                    "key": f"{filename.lower().replace('.', '_')}_summary",
+                    "value": f"Archived {filename} with context: {user_context or 'None'}"
+                }
+            ],
             "knowledge_doc": {
                 "title": filename.replace(".pdf", "").replace("_", " ").title(),
                 "category": "general",
@@ -353,6 +365,7 @@ def process_staged_document(identifier: str = "", user_context: str = "") -> str
     # 4. Commit Extracted Data to SQLite
     calendar_events = extracted_data.get("calendar_events", [])
     tasks = extracted_data.get("tasks", [])
+    atomic_facts = extracted_data.get("atomic_facts", [])
     knowledge_doc = extracted_data.get("knowledge_doc", {})
 
     scheduled_count = 0
@@ -381,6 +394,15 @@ def process_staged_document(identifier: str = "", user_context: str = "") -> str
             mem.add_task(desc, due or None)
             tasks_count += 1
 
+    facts_count = 0
+    for fact in atomic_facts:
+        k = str(fact.get("key", "")).strip()
+        v = str(fact.get("value", "")).strip()
+        cat = str(fact.get("category", "document")).strip() or "document"
+        if k and v:
+            mem.remember_fact(k, v, category=cat)
+            facts_count += 1
+
     doc_title = knowledge_doc.get("title", filename)
     doc_cat = knowledge_doc.get("category", "general")
     doc_summary = knowledge_doc.get("summary", "")
@@ -401,6 +423,8 @@ def process_staged_document(identifier: str = "", user_context: str = "") -> str
         actions.append(f"{scheduled_count} calendar event{'s' if scheduled_count > 1 else ''}")
     if tasks_count > 0:
         actions.append(f"{tasks_count} action item{'s' if tasks_count > 1 else ''}")
+    if facts_count > 0:
+        actions.append(f"{facts_count} atomic fact{'s' if facts_count > 1 else ''}")
     actions.append(f"archived '{doc_title}' under {doc_cat}")
 
     action_summary = ", ".join(actions)
@@ -408,3 +432,50 @@ def process_staged_document(identifier: str = "", user_context: str = "") -> str
         f"Processed '{filename}' according to your instructions, Sir: "
         f"successfully registered {action_summary} in your database."
     )
+
+
+@SkillRegistry.register(
+    name="search_archived_documents",
+    description="Searches archived documents, PDFs, manuals, and papers using hybrid BM25 and vector search with chunk sandwiching."
+)
+def search_archived_documents(query: str, limit: int = 3) -> str:
+    """Searches archived document library with chunk sandwiching to eliminate lost-in-the-middle degradation."""
+    mem = _get_memory()
+    clean_q = str(query or "").strip()
+    if not clean_q:
+        return "Please specify a search query or topic to locate archived documents, Sir."
+
+    results = mem.hybrid_search_documents(clean_q, limit=limit)
+    if not results:
+        # Fallback to standard text search
+        results = mem.search_documents(clean_q, limit=limit)
+
+    if not results:
+        return f"No archived documents found matching '{clean_q}', Sir."
+
+    return mem.format_document_reference_block(results)
+
+
+@SkillRegistry.register(
+    name="read_archived_document",
+    description="Reads the detailed content or summary of a specific archived document by numeric ID or title match."
+)
+def read_archived_document(identifier: str) -> str:
+    """Retrieves an archived document by numeric ID or title search."""
+    mem = _get_memory()
+    clean_id = str(identifier or "").strip()
+    if not clean_id:
+        return "Please provide a document ID or title to read, Sir."
+
+    doc = None
+    if clean_id.isdigit():
+        doc = mem.get_document_by_id(int(clean_id))
+    else:
+        results = mem.search_documents(clean_id, limit=1)
+        if results:
+            doc = mem.get_document_by_id(results[0]["id"])
+
+    if not doc:
+        return f"Could not locate archived document '{clean_id}', Sir."
+
+    return mem.format_document_reference_block([doc])
