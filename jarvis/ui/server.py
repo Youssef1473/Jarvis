@@ -7,7 +7,7 @@ import threading
 import time
 from typing import Any, Dict, Optional, Set
 from starlette.applications import Starlette
-from starlette.responses import HTMLResponse, JSONResponse, StreamingResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, StreamingResponse, Response, FileResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 import anyio
@@ -383,6 +383,8 @@ class JarvisUIService:
             Route("/api/calendar/clear", endpoint=self._handle_calendar_clear, methods=["POST"]),
             Route("/api/photos", endpoint=self._handle_photos_list, methods=["GET"]),
             Route("/api/photos/{photo_id}", endpoint=self._handle_photo_stream, methods=["GET"]),
+            Route("/api/screenshot/latest", endpoint=self._handle_latest_screenshot, methods=["GET"]),
+            Route("/api/tasks", endpoint=self._handle_tasks_list, methods=["GET"]),
             WebSocketRoute("/ws", endpoint=self._handle_websocket),
             WebSocketRoute("/api/telemetry", endpoint=self._handle_websocket),
         ]
@@ -457,6 +459,24 @@ class JarvisUIService:
             "Content-Length": str(stat.st_size),
         }
         return StreamingResponse(_chunk_reader(target_path), media_type="image/jpeg", headers=headers)
+
+    async def _handle_latest_screenshot(self, request):
+        """Serves the latest audited workstation screenshot."""
+        screenshot_path = Path("data/screenshots/latest_screen.jpg").resolve()
+        exists = await anyio.to_thread.run_sync(screenshot_path.is_file)
+        if not exists:
+            return JSONResponse({"error": "No screenshot available, Sir."}, status_code=404)
+        return FileResponse(str(screenshot_path), media_type="image/jpeg")
+
+    async def _handle_tasks_list(self, request):
+        """Lists active and recent background terminal tasks."""
+        try:
+            from jarvis.core.task_manager import BackgroundTaskManager
+            mgr = BackgroundTaskManager.get_instance(self.orchestrator)
+            tasks = mgr.list_tasks()
+            return JSONResponse({"tasks": tasks, "count": len(tasks)})
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     async def _handle_index(self, request):
         if not self.template_path.exists():

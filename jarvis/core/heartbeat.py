@@ -74,6 +74,7 @@ class JarvisHeartbeat:
 
         # Session metrics
         self._session_start_time = time.time()
+        self._continuous_active_seconds = 0.0
         # Startup grace period (wait 15s after startup before proactive alerts)
         self._startup_grace_period = time.time() + 15.0
 
@@ -141,10 +142,13 @@ class JarvisHeartbeat:
         """Main periodic evaluation loop."""
         # Initial boot delay
         time.sleep(5.0)
+        last_tick = time.time()
 
         while self._running:
             try:
                 now = time.time()
+                elapsed = max(0.0, now - last_tick)
+                last_tick = now
                 if now >= self._startup_grace_period:
                     if self.desktop_presence:
                         self._check_desktop_presence()
@@ -155,7 +159,7 @@ class JarvisHeartbeat:
                     if self.battery_alerts:
                         self._check_battery_status()
                     if self.ergonomic_alerts:
-                        self._check_ergonomics()
+                        self._check_ergonomics(elapsed)
                     if self.email_alerts:
                         self._check_new_emails()
             except Exception as e:
@@ -395,6 +399,18 @@ class JarvisHeartbeat:
                     self._mark_event_alerted(eid)
                     continue
 
+                # Broadcast countdown to HUD if within 30 minutes
+                if 0 <= delta_minutes <= 30:
+                    if hasattr(self.orchestrator, "broadcast_ambient_telemetry"):
+                        self.orchestrator.broadcast_ambient_telemetry({
+                            "event": "calendar_countdown",
+                            "event_id": eid,
+                            "title": event["title"],
+                            "start_time": event["start_time"],
+                            "minutes_remaining": delta_minutes,
+                            "location": event.get("location", ""),
+                        })
+
                 # Alert if event is 0 to 15 minutes away
                 if 0 <= delta_minutes <= 15:
                     title = event["title"]
@@ -426,14 +442,31 @@ class JarvisHeartbeat:
         except Exception as e:
             logger.debug(f"Power check notice: {e}")
 
-    def _check_ergonomics(self):
-        """Provides an ambient posture and refreshment reminder after 2 hours of continuous work."""
+    def _check_ergonomics(self, elapsed_seconds: float = 30.0):
+        """Monitors uninterrupted physical keyboard/mouse activity and provides ergonomic pacing."""
+        idle_sec = self.get_idle_seconds()
+        if idle_sec < 15.0:
+            self._continuous_active_seconds += elapsed_seconds
+        elif idle_sec >= 300.0:
+            # 5-minute break resets the continuous work clock
+            self._continuous_active_seconds = 0.0
+
         now = time.time()
-        session_duration = now - self._session_start_time
-        if session_duration >= 7200 and (now - self._last_break_reminder >= 7200):
+        is_extended_work = self._continuous_active_seconds >= 5400 or (now - self._session_start_time >= 7200)
+        if is_extended_work and (now - self._last_break_reminder >= 3600):
             drink = self.orchestrator.memory.get_fact("late_night_drink") or "espresso"
             drink_clean = "an espresso" if "espresso" in drink.lower() else "a refreshment"
-            msg = f"Sir, you have been engaged at the workstation for over two hours. May I suggest a brief stretch or taking a moment to enjoy {drink_clean}?"
+            active_mins = max(60, int(self._continuous_active_seconds // 60)) if self._continuous_active_seconds else 120
+            msg = f"Sir, you have been actively engaged at the workstation for over {active_mins} minutes. May I suggest a brief stretch or taking a moment to enjoy {drink_clean}?"
+            
+            # Broadcast ambient HUD notification card
+            if hasattr(self.orchestrator, "broadcast_ambient_telemetry"):
+                self.orchestrator.broadcast_ambient_telemetry({
+                    "event": "ergonomic_break",
+                    "continuous_active_minutes": active_mins,
+                    "message": msg,
+                })
+
             if self.speak_proactive(msg):
                 self._last_break_reminder = now
 

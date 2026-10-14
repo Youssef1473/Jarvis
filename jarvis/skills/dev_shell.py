@@ -350,3 +350,67 @@ def git_status() -> str:
         return f"Branch: {branch}\n\nWorking Tree Status:\n{changes}"
     except Exception as e:
         return f"Git error: {e}"
+
+
+@SkillRegistry.register(
+    name="run_background_task",
+    description="Executes a long-running terminal command asynchronously in the background (builds, tests, compiles, downloads) and proactively notifies Sir when it completes."
+)
+def run_background_task(command: str, task_name: str = "", notify_voice: bool = True) -> str:
+    """Spawns an asynchronous background task with HUD and completion notifications."""
+    from jarvis.core.task_manager import BackgroundTaskManager
+    mgr = BackgroundTaskManager.get_instance()
+    success, msg, task_id = mgr.run_task(command=command, task_name=task_name, notify_voice=notify_voice)
+    return msg
+
+
+@SkillRegistry.register(
+    name="list_background_tasks",
+    description="Lists all currently running and recently completed background terminal tasks."
+)
+def list_background_tasks() -> str:
+    """Lists active and recent background tasks with status and duration."""
+    from jarvis.core.task_manager import BackgroundTaskManager
+    mgr = BackgroundTaskManager.get_instance()
+    tasks = mgr.list_tasks()
+    if not tasks:
+        return "No background tasks currently active or recorded, Sir."
+
+    lines = ["Background Terminal Tasks, Sir:"]
+    for t in tasks[-8:]:
+        st = t["status"].upper()
+        dur = f"{t['duration_seconds']}s"
+        name = t["name"]
+        t_id = t["id"]
+        code = f" (exit: {t['exit_code']})" if t['exit_code'] is not None else ""
+        lines.append(f"• [{st}] {name} (ID: {t_id}, Elapsed: {dur}){code}")
+    return "\n".join(lines)
+
+
+@SkillRegistry.register(
+    name="get_background_task_output",
+    description="Inspects the live or recent stdout/stderr output lines from a background task by ID."
+)
+def get_background_task_output(task_id: str, max_lines: int = 40) -> str:
+    """Retrieves stdout/stderr tail for a specific background task."""
+    from jarvis.core.task_manager import BackgroundTaskManager
+    mgr = BackgroundTaskManager.get_instance()
+    out = mgr.get_task_output(task_id=task_id, max_lines=max_lines)
+    if out is None:
+        return f"No background task with ID '{task_id}' was found, Sir."
+    return out
+
+
+@SkillRegistry.register(
+    name="cancel_background_task",
+    description="Terminates an actively running background task by task ID."
+)
+def cancel_background_task(task_id: str) -> str:
+    """Cancels a running background task."""
+    from jarvis.core.task_manager import BackgroundTaskManager
+    mgr = BackgroundTaskManager.get_instance()
+    cancelled = mgr.cancel_task(task_id=task_id)
+    if cancelled:
+        return f"Background task '{task_id}' has been terminated, Sir."
+    return f"Unable to cancel task '{task_id}'. It may not exist or has already completed, Sir."
+

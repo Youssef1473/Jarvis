@@ -2172,6 +2172,10 @@
       } else if (data.type === "document_staged") {
         updateStagedBadge(data.filename);
         appendChatMessage("jarvis", data.message || `Received '${data.filename}', Sir. Standing by for your briefing.`);
+      } else if (data.type === "screen_snapshot") {
+        appendScreenSnapshotBubble(data.url, data.timestamp);
+      } else if (data.type === "ambient_telemetry") {
+        handleAmbientTelemetry(data.data, data.timestamp);
       }
     }
 
@@ -3076,6 +3080,117 @@
 
       messageCount++;
       document.getElementById('msgCount').textContent = `[${String(messageCount).padStart(2, '0')} MSGS]`;
+    }
+
+    function appendScreenSnapshotBubble(url, timestamp) {
+      const container = document.getElementById('chatContainer');
+      if (!container) return;
+      const bubble = document.createElement('div');
+      bubble.className = 'chat-bubble chat-jarvis';
+      const now = timestamp || new Date().toLocaleTimeString('en-GB');
+
+      bubble.innerHTML = `
+        <div class="bubble-author jarvis">
+          <span>JARVIS // VISUAL CORTEX</span>
+          <span>${now}</span>
+        </div>
+        <div class="bubble-text" style="padding-top: 6px;">
+          <div style="font-size: 0.72rem; color: var(--holo-cyan); letter-spacing: 0.05em; margin-bottom: 6px; font-weight: 600;">
+            WORKSTATION SCREEN SNAPSHOT CAPTURED
+          </div>
+          <div style="position: relative; border: 1px solid rgba(0, 240, 255, 0.4); border-radius: 6px; overflow: hidden; max-width: 420px; box-shadow: 0 0 15px rgba(0, 240, 255, 0.2); cursor: pointer;" onclick="window.open('${url}', '_blank')">
+            <img src="${url}" alt="Workstation Screen Snapshot" style="width: 100%; height: auto; display: block;" loading="lazy">
+            <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(7, 11, 18, 0.85); padding: 4px 8px; font-size: 0.68rem; color: var(--text-dim); display: flex; justify-content: space-between; border-top: 1px solid rgba(0, 240, 255, 0.2);">
+              <span>CLICK TO EXPAND IN FULL RESOLUTION</span>
+              <span style="color: var(--holo-emerald);">AUDITED</span>
+            </div>
+          </div>
+        </div>
+      `;
+
+      container.appendChild(bubble);
+      container.scrollTop = container.scrollHeight;
+      messageCount++;
+      const counter = document.getElementById('msgCount');
+      if (counter) counter.textContent = `[${String(messageCount).padStart(2, '0')} MSGS]`;
+    }
+
+    function handleAmbientTelemetry(data, timestamp) {
+      if (!data) return;
+      const now = timestamp || new Date().toLocaleTimeString('en-GB');
+      if (data.event === "task_completed") {
+        const container = document.getElementById('chatContainer');
+        if (!container) return;
+        const bubble = document.createElement('div');
+        bubble.className = 'chat-bubble chat-jarvis';
+        const isSuccess = data.status === "completed";
+        const statusColor = isSuccess ? "var(--holo-emerald)" : "var(--holo-crimson)";
+        const badgeText = isSuccess ? "COMPLETED" : `FAILED (Exit: ${data.exit_code})`;
+
+        bubble.innerHTML = `
+          <div class="bubble-author jarvis">
+            <span>BACKGROUND TASK // ${escapeHtml(data.name || data.task_id)}</span>
+            <span>${now}</span>
+          </div>
+          <div class="bubble-text">
+            <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 6px;">
+              <span style="border: 1px solid ${statusColor}; color: ${statusColor}; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; letter-spacing: 0.05em;">${badgeText}</span>
+              <span style="font-size: 0.75rem; color: var(--text-dim);">Duration: ${data.duration_s}s</span>
+            </div>
+            ${data.summary ? `<pre style="background: rgba(0,0,0,0.4); border-left: 2px solid ${statusColor}; padding: 6px 8px; font-size: 0.72rem; color: #a0aec0; border-radius: 2px; overflow-x: auto; max-height: 120px; font-family: 'JetBrains Mono', monospace;">${escapeHtml(data.summary)}</pre>` : ''}
+          </div>
+        `;
+        container.appendChild(bubble);
+        container.scrollTop = container.scrollHeight;
+        messageCount++;
+        const counter = document.getElementById('msgCount');
+        if (counter) counter.textContent = `[${String(messageCount).padStart(2, '0')} MSGS]`;
+      } else if (data.event === "calendar_countdown") {
+        updateCalendarCountdownPill(data);
+      } else if (data.event === "ergonomic_break") {
+        showErgonomicPill(data);
+      }
+    }
+
+    function updateCalendarCountdownPill(data) {
+      let pill = document.getElementById('calendarCountdownPill');
+      if (!pill) {
+        const sub = document.getElementById('subStatus');
+        if (sub && sub.parentNode) {
+          pill = document.createElement('div');
+          pill.id = 'calendarCountdownPill';
+          pill.className = 'staged-doc-pill';
+          pill.style.borderColor = 'var(--holo-amber)';
+          pill.style.color = 'var(--holo-amber)';
+          pill.style.marginTop = '6px';
+          sub.parentNode.insertBefore(pill, sub.nextSibling);
+        }
+      }
+      if (pill) {
+        pill.style.display = 'inline-flex';
+        pill.innerHTML = `<span>📅</span> <span>UPCOMING: ${escapeHtml(data.title)} in ${data.minutes_remaining}m</span>`;
+      }
+    }
+
+    function showErgonomicPill(data) {
+      let pill = document.getElementById('ergonomicPill');
+      if (!pill) {
+        const sub = document.getElementById('subStatus');
+        if (sub && sub.parentNode) {
+          pill = document.createElement('div');
+          pill.id = 'ergonomicPill';
+          pill.className = 'staged-doc-pill';
+          pill.style.borderColor = 'var(--holo-emerald)';
+          pill.style.color = 'var(--holo-emerald)';
+          pill.style.marginTop = '6px';
+          sub.parentNode.insertBefore(pill, sub.nextSibling);
+        }
+      }
+      if (pill) {
+        pill.style.display = 'inline-flex';
+        pill.innerHTML = `<span>☕</span> <span>ERGONOMIC NOTICE: ${data.continuous_active_minutes}m active work. Take a brief stretch.</span>`;
+        setTimeout(() => { if (pill) pill.style.display = 'none'; }, 20000);
+      }
     }
 
     function escapeHtml(string) {

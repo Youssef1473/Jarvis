@@ -95,6 +95,24 @@ def check_visual_privacy(window_title: str, process_name: str = "") -> Optional[
     return None
 
 
+def _broadcast_screenshot_event():
+    """Notifies the Holographic HUD that a new screen capture is available."""
+    try:
+        from jarvis.core.task_manager import BackgroundTaskManager
+        mgr = BackgroundTaskManager.get_instance()
+        if mgr.orchestrator and hasattr(mgr.orchestrator, "ui_service"):
+            ui = mgr.orchestrator.ui_service
+            if ui:
+                import time
+                ui.broadcast({
+                    "type": "screen_snapshot",
+                    "url": f"/api/screenshot/latest?t={int(time.time() * 1000)}",
+                    "timestamp": time.strftime("%H:%M:%S"),
+                })
+    except Exception as e:
+        logger.debug("Failed to broadcast screenshot event: %s", e)
+
+
 def _save_latest_screenshot(image_bytes: bytes) -> Optional[Path]:
     """Caches the captured screen frame to data/screenshots/latest_screen.jpg."""
     try:
@@ -102,6 +120,7 @@ def _save_latest_screenshot(image_bytes: bytes) -> Optional[Path]:
         save_dir.mkdir(parents=True, exist_ok=True)
         target = save_dir / "latest_screen.jpg"
         target.write_bytes(image_bytes)
+        _broadcast_screenshot_event()
         return target
     except Exception as e:
         logger.debug("Could not cache latest screenshot: %s", e)

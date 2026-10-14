@@ -72,6 +72,8 @@ class JarvisOrchestrator:
         self.brain = JarvisBrain(config, self.memory, self.safety, service_manager=self.service_manager)
         self.hud = JarvisHUD()
         self.heartbeat = JarvisHeartbeat(self, config)
+        from jarvis.core.task_manager import BackgroundTaskManager
+        self.task_manager = BackgroundTaskManager.get_instance(self)
 
         # Web-Powered Holographic HUD Server
         ui_cfg = config.get("ui", {})
@@ -625,6 +627,7 @@ class JarvisOrchestrator:
             ("speech-to-text", self.stt),
             ("desktop HUD", self.hud),
             ("brain", getattr(self, "brain", None)),
+            ("background tasks", getattr(self, "task_manager", None)),
         ]
         for name, component in cleanup_steps:
             if component is None:
