@@ -860,87 +860,84 @@ def open_browser_tab(url: str = "", browser: str = "brave", new_tab: bool = True
         except Exception as e:
             logger.debug(f"CDP fast path bypass: {e}")
 
-    # 1. Fast Path: If an active browser window is already open, focus it and navigate
+    # 1. UIA-first browser window probe: iterate candidates, no keystrokes.
+    #    If the browser is already open, dispatch URL via Chromium single-instance IPC
+    #    (brave.exe <url> routes through its native Named Pipe IPC to the running instance).
+    _candidates = [browser_clean]
+    if browser_clean in ("brave", "browser"):
+        _candidates.extend(["chrome", "msedge", "edge", "firefox"])
+
+    _active_browser: Optional[str] = None
     try:
-        import win32gui
-        import win32con
-        _ensure_desktop_access()
-        matched_hwnds = []
-
-        def _enum_win(hwnd, _):
-            try:
-                if win32gui.IsWindowVisible(hwnd):
-                    w_title = win32gui.GetWindowText(hwnd).strip()
-                    if w_title and browser_clean in w_title.lower():
-                        matched_hwnds.append((hwnd, w_title))
-            except Exception:
-                pass
-            return True
-
-        win32gui.EnumWindows(_enum_win, None)
-
-        if not matched_hwnds and browser_clean in ("brave", "browser"):
-            for alt_browser in ("chrome", "msedge", "edge", "firefox"):
-                alt_hwnds = []
-                def _enum_alt_open(h, _):
-                    try:
-                        if win32gui.IsWindowVisible(h):
-                            wt = win32gui.GetWindowText(h).strip()
-                            if wt and alt_browser in wt.lower():
-                                alt_hwnds.append((h, wt))
-                    except Exception:
-                        pass
-                    return True
-                win32gui.EnumWindows(_enum_alt_open, None)
-                if alt_hwnds:
-                    matched_hwnds = alt_hwnds
-                    browser_clean = alt_browser
-                    break
-
-        if matched_hwnds:
-            hwnd, found_title = matched_hwnds[0]
-            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-            win32gui.SetForegroundWindow(hwnd)
-            time.sleep(0.06)
-            pyautogui.FAILSAFE = False
-
-            # Check if current tab is an empty New Tab / blank page
-            is_blank_tab = any(
-                k in found_title.lower()
-                for k in ("new tab", "about:blank", "speed dial", "start page")
-            )
-
-            if target_url:
-                # If sitting on a blank tab or new_tab is False, reuse the active tab directly via address bar!
-                if not is_blank_tab and new_tab:
-                    pyautogui.hotkey("ctrl", "t")
-                    time.sleep(0.05)
-                else:
-                    pyautogui.hotkey("ctrl", "l")
-                    time.sleep(0.04)
-
-                old_clip = pyperclip.paste()
-                pyperclip.copy(target_url)
-                pyautogui.hotkey("ctrl", "v")
-                time.sleep(0.04)
-                pyautogui.press("enter")
-
-                def _restore():
-                    time.sleep(0.3)
-                    try:
-                        pyperclip.copy(old_clip)
-                    except Exception:
-                        pass
-
-                threading.Thread(target=_restore, daemon=True).start()
-                return f"Opened '{target_url}' in your active {browser_clean.title()} window, Sir."
-            else:
-                # Blank tab requested
-                if not is_blank_tab or new_tab:
-                    pyautogui.hotkey("ctrl", "t")
-                return f"Opened a new tab in your active {browser_clean.title()} window, Sir."
+        from jarvis.skills.windows_uia import focus_window_uia
+        for _cand in _candidates:
+            _found = focus_window_uia(_cand)
+            if _found:
+                _active_browser = _cand
+                break
     except Exception as e:
-        logger.debug(f"Active window tab notice: {e}")
+        logger.debug(f"UIA browser probe notice: {e}")
+
+    # Lightweight Win32 fallback probe if UIA missed (no sleep, no keystrokes)
+    if not _active_browser:
+        try:
+            import win32gui
+            _matched_hwnds = []
+
+            def _enum_win_ipc(hwnd, _):
+                try:
+                    if win32gui.IsWindowVisible(hwnd):
+                        wt = win32gui.GetWindowText(hwnd).strip()
+                        for _cand in _candidates:
+                            if wt and _cand in wt.lower():
+                                _matched_hwnds.append((_cand, wt))
+                                return True
+                except Exception:
+                    pass
+                return True
+
+            win32gui.EnumWindows(_enum_win_ipc, None)
+            if _matched_hwnds:
+                _active_browser = _matched_hwnds[0][0]
+        except Exception as e:
+            logger.debug(f"Win32 browser HWND probe notice: {e}")
+
+    if _active_browser:
+        # Resolve browser executable for Chromium single-instance IPC dispatch
+        _apps = _build_app_index()
+        _browser_exe = None
+        for _k, _p in _apps.items():
+            if _active_browser in _k or f"{_active_browser}.exe" in _k:
+                _browser_exe = _p
+                break
+        if not _browser_exe:
+            _browser_exe = shutil.which(f"{_active_browser}.exe") or shutil.which(_active_browser)
+
+        if target_url and _browser_exe and not _browser_exe.lower().endswith(".lnk"):
+            # Chromium IPC: launching with a URL argument while the browser is running
+            # routes through Chromium's native Named Pipe / mutex single-instance channel.
+            # The OS opens the tab in the existing window — zero keystrokes, zero clipboard.
+            try:
+                subprocess.Popen(
+                    [_browser_exe, target_url],
+                    creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+                    close_fds=True,
+                )
+                return f"Opened '{target_url}' in your active {_active_browser.title()} window, Sir."
+            except Exception as e:
+                logger.debug(f"Chromium IPC dispatch notice: {e}")
+        elif not target_url:
+            # Blank new tab — IPC dispatch with --new-tab
+            if _browser_exe and not _browser_exe.lower().endswith(".lnk"):
+                try:
+                    subprocess.Popen(
+                        [_browser_exe, "--new-tab"],
+                        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+                        close_fds=True,
+                    )
+                    return f"Opened a new tab in your active {_active_browser.title()} window, Sir."
+                except Exception as e:
+                    logger.debug(f"Chromium IPC new-tab dispatch notice: {e}")
 
     apps = _build_app_index()
     browser_exe = None
@@ -1034,15 +1031,21 @@ def close_browser_tab(browser: str = "brave", tab_title: str = "") -> str:
         except Exception as e:
             logger.debug(f"CDP close tab bypass: {e}")
 
-    # 1. Desktop Window Fallback via UIA / Win32 + Ctrl+W
+    # 1. Desktop Window Fallback via UIA / Win32 + Ctrl+W (last resort)
     try:
-        # First attempt UIA semantic focus to bypass Windows SetForegroundWindow lock
+        # Iterate browser candidates so UIA can locate Chrome/Edge if Brave is absent.
         focused_via_uia = False
         try:
             from jarvis.skills.windows_uia import focus_window_uia
-            focused_title = focus_window_uia(browser_clean)
-            if focused_title:
-                focused_via_uia = True
+            _close_candidates = [browser_clean]
+            if browser_clean in ("brave", "browser"):
+                _close_candidates.extend(["chrome", "msedge", "edge", "firefox"])
+            for _cand in _close_candidates:
+                focused_title = focus_window_uia(_cand)
+                if focused_title:
+                    focused_via_uia = True
+                    browser_clean = _cand
+                    break
         except Exception as e:
             logger.debug(f"UIA focus bypass in close_browser_tab: {e}")
 
@@ -1110,11 +1113,18 @@ def close_browser_tab(browser: str = "brave", tab_title: str = "") -> str:
             else:
                 return f"No open {browser_clean.title()} window was found to close a tab, Sir."
 
-        time.sleep(0.06)
-        pyautogui.FAILSAFE = False
-        pyautogui.hotkey("ctrl", "w")
-        time.sleep(0.04)
-        return f"Closed active tab in your {browser_clean.title()} window, Sir."
+        # Send native virtual key Ctrl+W via Win32 keybd_event without stealing mouse / clipboard
+        try:
+            import win32api
+            import win32con
+            win32api.keybd_event(win32con.VK_CONTROL, 0, 0, 0)
+            win32api.keybd_event(ord('W'), 0, 0, 0)
+            win32api.keybd_event(ord('W'), 0, win32con.KEYEVENTF_KEYUP, 0)
+            win32api.keybd_event(win32con.VK_CONTROL, 0, win32con.KEYEVENTF_KEYUP, 0)
+            return f"Closed active tab in your {browser_clean.title()} window, Sir."
+        except Exception:
+            _send_vk(0x57)  # Virtual key 'W' fallback
+            return f"Closed active tab in your {browser_clean.title()} window, Sir."
     except Exception as e:
         return f"Failed to close browser tab: {e}"
 

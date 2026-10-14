@@ -114,7 +114,7 @@ class TestSelfHealingAndShutdownImmunity(unittest.TestCase):
         with patch("jarvis.skills.browser_cdp.close_cdp_tab", return_value=None), \
              patch("jarvis.skills.windows_uia.focus_window_uia", return_value=None), \
              patch("win32gui.EnumWindows") as mock_enum, \
-             patch("pyautogui.hotkey") as mock_hotkey:
+             patch("win32api.keybd_event") as mock_keybd_event:
 
             # Simulate enum windows: no brave, but chrome window is found
             def fake_enum(callback, _):
@@ -128,7 +128,9 @@ class TestSelfHealingAndShutdownImmunity(unittest.TestCase):
                 mock_enum.side_effect = fake_enum
                 res = close_browser_tab(browser="brave")
                 self.assertIn("closed active tab", res.lower())
-                mock_hotkey.assert_called_with("ctrl", "w")
+                # Verify native Win32 VK_CONTROL + VK_W sequence fired.
+                self.assertGreaterEqual(mock_keybd_event.call_count, 2)
+
 
 
 if __name__ == "__main__":

@@ -17,9 +17,73 @@ from typing import Dict, Any, List, Optional, Tuple
 from jarvis.skills.base import SkillRegistry
 
 logger = logging.getLogger("Jarvis.BrowserCDP")
+import re as _re
 
 _CDP_PROBE_CACHE: Dict[Tuple[str, int], Tuple[bool, float]] = {}
 _CDP_CACHE_TTL_SEC: float = 3.0
+
+# Safe internal new-tab pages that may be navigated via CDP.
+_SAFE_INTERNAL_PAGES: frozenset = frozenset({
+    "about:blank", "about:newtab",
+    "chrome://newtab", "chrome://newtab/",
+    "brave://newtab", "brave://newtab/",
+    "edge://newtab", "edge://newtab/",
+})
+
+# Destructive browser management URLs that must never be navigated via CDP.
+_DESTRUCTIVE_CDP_URLS: tuple = (
+    "chrome://restart", "chrome://quit", "chrome://kill", "chrome://crash",
+    "chrome://settings/clearbrowserdata",
+    "brave://restart", "brave://quit", "brave://kill", "brave://crash",
+    "edge://restart", "edge://quit",
+)
+
+
+def sanitize_browser_url(url: str) -> str:
+    """Sanitizes and strictly whitelists URL schemes for secure CDP browser navigation.
+
+    Blocks CRLF injection, javascript: execution, file:// local disclosure,
+    vbscript:, data: URIs, and destructive internal chrome:// management pages.
+    Returns 'about:blank' for any rejected input.
+    """
+    if not url:
+        return "about:blank"
+
+    # Strip CRLF, null bytes, and surrounding whitespace to prevent header injection.
+    # Truncate at first newline or null byte to reject split headers cleanly
+    truncated = _re.split(r"[\r\n\x00]", url.strip())[0]
+    cleaned = _re.sub(r"[\t]", "", truncated).strip()
+    cleaned_lower = cleaned.lower()
+
+    # Block dangerous execution and disclosure URI schemes outright.
+    _BLOCKED_SCHEMES = (
+        "javascript:", "data:", "file:", "vbscript:",
+        "ms-msdt:", "search-ms:", "mhtml:", "mk:",
+    )
+    if any(cleaned_lower.startswith(s) for s in _BLOCKED_SCHEMES):
+        logger.warning(f"Blocked dangerous URL scheme from CDP navigation: {cleaned[:60]}")
+        return "about:blank"
+
+    # Permit a curated set of safe internal new-tab pages.
+    if cleaned_lower in _SAFE_INTERNAL_PAGES:
+        return cleaned
+
+    # Block destructive internal browser management URLs.
+    if any(cleaned_lower.startswith(d) for d in _DESTRUCTIVE_CDP_URLS):
+        logger.warning(f"Blocked destructive internal browser URL from CDP navigation: {cleaned[:60]}")
+        return "about:blank"
+
+    # Block all other non-permitted internal browser schemes.
+    _INTERNAL_SCHEMES = ("chrome:", "brave:", "edge:", "opera:", "vivaldi:")
+    if any(cleaned_lower.startswith(s) for s in _INTERNAL_SCHEMES):
+        logger.warning(f"Blocked unpermitted internal browser URL: {cleaned[:60]}")
+        return "about:blank"
+
+    # Normalise bare hostnames to https://.
+    if cleaned and not cleaned_lower.startswith(("http://", "https://", "about:")):
+        cleaned = "https://" + cleaned
+
+    return cleaned
 
 
 def is_cdp_available(host: str = "127.0.0.1", port: int = 9222, timeout_sec: float = 0.025) -> bool:
@@ -86,9 +150,7 @@ def open_or_navigate_tab_cdp(
     if not is_cdp_available(host, port):
         return None
 
-    clean_url = url.strip()
-    if clean_url and not clean_url.startswith(("http://", "https://", "about:", "chrome:", "brave:")):
-        clean_url = "https://" + clean_url
+    clean_url = sanitize_browser_url(url)
 
     try:
         tabs = list_cdp_tabs(host, port)
@@ -326,7 +388,11 @@ def bootstrap_cdp_browser(
     exe_name = Path(browser_path).name.lower()
     is_running = any(p.name().lower() == exe_name for p in psutil.process_iter(['name']))
 
-    cmd = [browser_path, f"--remote-debugging-port={port}"]
+    cmd = [
+        browser_path,
+        f"--remote-debugging-port={port}",
+        "--remote-debugging-address=127.0.0.1",
+    ]
     if is_running or dedicated_profile:
         profile_dir = Path("data/browser_debug_profile").resolve()
         profile_dir.mkdir(parents=True, exist_ok=True)

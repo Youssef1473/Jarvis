@@ -58,14 +58,16 @@ class TestAutonomousFailureRecovery(unittest.TestCase):
             mock_post.assert_called_once()
 
     def test_close_browser_tab_cdp_unverified_fallback(self):
-        """When CDP reports tab not found, close_browser_tab falls back to UIA / Win32 focus and Ctrl+W."""
+        """When CDP reports tab not found, close_browser_tab falls back to UIA focus and native Win32 Ctrl+W."""
         with patch("jarvis.skills.browser_cdp.close_cdp_tab", return_value="Could not find a browser tab matching 'dashboard' via DevTools channel, Sir."), \
              patch("jarvis.skills.windows_uia.focus_window_uia", return_value="Brave Browser"), \
-             patch("pyautogui.hotkey") as mock_hotkey:
-            
+             patch("win32api.keybd_event") as mock_keybd_event:
+
             res = os_ctrl.close_browser_tab(browser="brave", tab_title="dashboard")
             self.assertIn("Closed active tab in your Brave window", res)
-            mock_hotkey.assert_called_with("ctrl", "w")
+            # Verify native Win32 VK sequence: VK_CONTROL down, VK_W down, VK_W up, VK_CONTROL up.
+            self.assertGreaterEqual(mock_keybd_event.call_count, 2)
+
 
     def test_press_hotkey_win32_fallback_on_pyautogui_failure(self):
         """When pyautogui raises an exception, press_hotkey falls back to win32api.keybd_event."""

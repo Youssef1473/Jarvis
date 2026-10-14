@@ -247,7 +247,38 @@ class TestBrowserCDPSuite(unittest.TestCase):
             mock_popen.assert_called_once()
             args = mock_popen.call_args[0][0]
             self.assertIn("--remote-debugging-port=9222", args)
+            self.assertIn("--remote-debugging-address=127.0.0.1", args)
             self.assertTrue(any("--user-data-dir=" in a for a in args))
+
+    def test_url_scheme_security_validation(self):
+        """Verifies dangerous schemes like javascript: and chrome:// management pages are blocked by sanitize_browser_url."""
+        # Test sanitize_browser_url directly — it is the authoritative URL security boundary.
+        from jarvis.skills.browser_cdp import sanitize_browser_url
+
+        # Dangerous execution schemes must be sanitized to about:blank.
+        self.assertEqual(sanitize_browser_url("javascript:alert(1)"), "about:blank")
+        self.assertEqual(sanitize_browser_url("data:text/html,<h1>xss</h1>"), "about:blank")
+        self.assertEqual(sanitize_browser_url("vbscript:msgbox(1)"), "about:blank")
+        self.assertEqual(sanitize_browser_url("file:///C:/sensitive.txt"), "about:blank")
+
+        # Destructive internal browser management URLs must be blocked.
+        self.assertEqual(sanitize_browser_url("chrome://restart"), "about:blank")
+        self.assertEqual(sanitize_browser_url("chrome://crash"), "about:blank")
+        self.assertEqual(sanitize_browser_url("brave://quit"), "about:blank")
+        self.assertEqual(sanitize_browser_url("chrome://settings/clearBrowserData"), "about:blank")
+
+        # Unpermitted internal schemes must be blocked.
+        self.assertEqual(sanitize_browser_url("chrome://flags"), "about:blank")
+        self.assertEqual(sanitize_browser_url("brave://flags"), "about:blank")
+
+        # Safe navigation targets must pass through unmolested.
+        self.assertEqual(sanitize_browser_url("https://github.com"), "https://github.com")
+        self.assertEqual(sanitize_browser_url("http://localhost:8080"), "http://localhost:8080")
+        self.assertEqual(sanitize_browser_url("about:blank"), "about:blank")
+        self.assertEqual(sanitize_browser_url("youtube.com"), "https://youtube.com")
+
+        # CRLF injection must be stripped.
+        self.assertEqual(sanitize_browser_url("https://safe.com\r\nX-Injected: header"), "https://safe.com")
 
 
 if __name__ == "__main__":

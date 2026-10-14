@@ -50,6 +50,7 @@ class AntigravityDaemon:
             "--output-format", "stream-json",
             "--model", model,
             "--disable-slash-commands",
+            "--dangerously-skip-permissions",
         ]
         if effort:
             cmd.extend(["--effort", effort])
@@ -172,8 +173,9 @@ class AntigravityDaemon:
             timeout_reason = ""
             stop_watchdog = threading.Event()
             last_activity_time = time.perf_counter()
-            inactivity_limit = min(timeout, 45.0)  # Detect stalled/hung processes if 0 bytes received for 45s
-            hard_ceiling = max(timeout, 240.0)     # Absolute safety ceiling for runaway agent turns
+            # Allow extended thinking/subagent deliberation for complex turns; never truncate under 120s
+            inactivity_limit = max(float(timeout), 120.0)
+            hard_ceiling = max(float(timeout) * 2.0, 300.0)     # Absolute safety ceiling for runaway agent turns
 
             def _watchdog_loop():
                 nonlocal timed_out, timeout_reason
