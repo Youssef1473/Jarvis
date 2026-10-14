@@ -426,50 +426,70 @@ class AntigravityBridge:
                     return True
         return False
 
-    def classify_prompt_tier(self, prompt: str) -> str:
-        """Determines optimal Google AI Pro model tier based on task complexity and latency constraints.
+    def classify_prompt_tier(self, prompt: str, task_mode: Optional[str] = None) -> str:
+        """Determines optimal Google AI Pro model tier based on semantic intent, structural context,
+        and latency constraints.
 
-        Tiering Guidelines:
-        - Claude Sonnet 4.6: Software engineering, code editing, AST/syntax bugs, script generation.
-        - Gemini 3.8 Flash High: Deep reasoning, architectural evaluation, algorithms, complex timetables, self-evolution.
-        - Gemini 3.8 Flash Low: Sub-50ms latency voice turns, device reflexes, weather/time/battery lookups, short banter.
-        - Gemini 3.8 Flash Medium: Default general intelligence, email drafting, document summaries, everyday QA.
+        Tiering Architecture:
+        - Fast Voice & Reflexes -> Gemini 3.8 Flash Low (sub-second speech turns, device vitals, greetings).
+        - Software Engineering & Code -> Claude Sonnet 4.6 (structural code syntax, AST/git/regex, active code tasks).
+        - Deep Reasoning & Math -> Gemini 3.8 Flash High (mathematics, proofs, architectural analysis, complex planning).
+        - Butler Workhorse & General QA -> Gemini 3.8 Flash Medium (default warm daemon, email drafting, notes, summaries).
         """
         p = prompt.lower().strip()
-        words = p.split()
-        word_count = len(words)
 
-        # 1. Code & Technical Engineering -> Claude Sonnet 4.6
-        code_words = [
-            "def ", "class ", "function", "refactor", "bug", "traceback", "git",
-            "compile", "script", "syntax", "patch", "pytest", "unittest", "repo",
-            "import ", "powershell", "regex"
+        # 1. Fast Voice, Quick Device Reflexes, Weather/Time/Vitals, Greetings -> Gemini 3.8 Flash Low
+        # Handled first to ensure sub-50ms conversational reflex latency even during coding or planning.
+        reflex_patterns = [
+            r"\b(weather|temperature|forecast)\b",
+            r"\b(what('s|\s+is)?\s+the\s+time|what\s+time\s+is\s+it|current\s+time|^time\??$)\b",
+            r"\b(what('s|\s+is)?\s+(the\s+|today'?s\s+)?date|current\s+date|^date\??$)\b",
+            r"\b(battery|charging\s+status|cpu\s+usage|ram\s+usage|gpu\s+usage|system\s+vitals)\b",
+            r"\b(volume|mute|unmute|pause\s+(music|playback)|resume\s+(music|playback)|skip\s+song|next\s+track)\b",
+            r"\b(hello|hi|hey|good\s+morning|good\s+afternoon|good\s+evening|how\s+are\s+you|who\s+are\s+you|thank\s+you|thanks)\b",
         ]
-        if self._matches_any_keyword(p, code_words):
+        if any(re.search(pat, p) for pat in reflex_patterns):
+            return "gemini-3.8-flash-low"
+
+        # 2. Inherited Task Momentum: If Sir is in an active code session and this is a follow-up turn
+        if task_mode == "code":
+            cancel_triggers = ("stop", "cancel", "never mind", "nevermind", "exit", "reset", "switch to general")
+            if not any(trigger in p for trigger in cancel_triggers):
+                return "claude-sonnet-4-6"
+
+        # 3. Structural Code & Technical Engineering -> Claude Sonnet 4.6
+        # Uses structural syntax, token boundaries, and developer tools to eliminate false-positive
+        # collisions on words like 'script', 'patch', or 'syntax' in casual conversation.
+        code_structural_patterns = [
+            r"```",                                                                        # Markdown code block
+            r"\b(def|class|async\s+def)\s+[a-zA-Z_]\w*\s*(\(|:)",                          # Python definition
+            r"\bfrom\s+[a-zA-Z_][\w.]*\s+import\s+[a-zA-Z_*]\w*",                          # From ... import ... (supports dotted paths)
+            r"(^\s*import\s+[a-zA-Z_][\w.]*|;\s*import\s+[a-zA-Z_][\w.]*|\bimport\s+(sys|os|re|json|math|time|datetime|subprocess|unittest|pytest|numpy|pandas|torch|requests|typing)\b)", # Import statement
+            r"\b(elif\s+.*:|except\s+[a-zA-Z_]\w*(\s+as\s+\w+)?\s*:|except\s*:|finally\s*:|try\s*:|raise\s+[a-zA-Z_]\w*error|return\s+(true|false|none|self\b|[0-9]+))", # Control flow & exceptions
+            r"\bgit\s+(status|diff|commit|push|pull|branch|checkout|log|merge|rebase|stash|fetch|reset)\b", # Git CLI
+            r"\b(pytest|unittest|mock\.patch|mock\.mock|magicmock|assert[a-z]\w*|assertequal|asserttrue|assertfalse)\b", # Testing suites
+            r"\b(traceback|stack\s*trace|nullpointerexception|syntaxerror|typeerror|attributeerror|keyerror|nameerror|indexerror|zerodivisionerror)\b", # Traceback/errors
+            r"\b(powershell|pip\s+install|npm\s+install|pip\s+list|pip\s+uninstall|npm\s+run)\b", # Shell / Package managers
+            r"\b(regex|regular\s+expression|ast\b|refactor\s+code|refactor\s+this|debug\s+this|debug\s+the|write\s+a\s+function|write\s+code|write\s+a\s+script|python\s+script|bash\s+script|shell\s+script|fix\s+the\s+bug|fix\s+this\s+bug|unit\s+tests?)\b",
+        ]
+        if any(re.search(pat, p) for pat in code_structural_patterns):
             return "claude-sonnet-4-6"
 
-        # 2. Hard Reasoning, Math, Logic, Planning, Dynamic Evolution -> Gemini 3.8 Flash High
+        # 4. Hard Reasoning, Math, Logic, Planning, Dynamic Evolution -> Gemini 3.8 Flash High
+        # Semantic intent based on problem complexity, mathematical rigor, and architectural trade-offs.
+        # Arbitrary word-count thresholds (>30 words) are strictly eliminated to avoid wasting 12s on mundane questions.
         high_reasoning_words = [
             "analyze", "analysis", "strategy", "why does", "math", "calculate",
             "solve", "syllabus", "timetable", "essay", "architecture", "compare",
-            "proof", "algorithm", "benchmark", "evaluate", "custom skill",
-            "create skill", "self build", "evolve", "conflict resolution"
+            "proof", "prove", "algorithm", "benchmark", "evaluate", "custom skill",
+            "create skill", "self build", "evolve", "conflict resolution", "derivation",
+            "derive", "equation", "logic puzzle", "trade-offs", "curriculum"
         ]
-        if self._matches_any_keyword(p, high_reasoning_words) or word_count > 30:
+        if self._matches_any_keyword(p, high_reasoning_words):
             return "gemini-3.8-flash-high"
 
-        # 3. Fast Voice, Quick Device Reflexes, Weather/Time/Vitals, Greetings -> Gemini 3.8 Flash Low
-        low_latency_words = [
-            "weather", "temperature", "forecast", "time", "date", "clock",
-            "battery", "charging", "volume", "mute", "unmute", "play", "pause",
-            "skip", "vitals", "cpu", "ram", "gpu", "hello", "hi", "hey", "good morning",
-            "good afternoon", "good evening", "how are you", "who are you",
-            "thank you", "thanks"
-        ]
-        if self._matches_any_keyword(p, low_latency_words) or word_count <= 8:
-            return "gemini-3.8-flash-low"
-
-        # 4. Standard Everyday Agent Tasks, Drafting, Summaries, General QA -> Gemini 3.8 Flash Medium
+        # 5. Standard Everyday Butler Tasks, Drafting, Summaries, General QA -> Gemini 3.8 Flash Medium
+        # Default workhorse engine. Maintains sticky daemon affinity and Google AI Pro's 30,000+ token KV prompt cache.
         return "gemini-3.8-flash-medium"
 
     def generate_response(

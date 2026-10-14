@@ -1258,11 +1258,11 @@ Autonomous Self-Building & Dynamic Feature Creation:
                         sentence_callback(spoken)
             return result
 
-        self.active_task_mode = (
-            "code"
-            if self._is_code_task(user_text) and not self.should_capture_screen(user_text)
-            else "general"
+        is_code = (
+            (self._is_code_task(user_text) or self._is_code_followup(user_text))
+            and not self.should_capture_screen(user_text)
         )
+        self.active_task_mode = "code" if is_code else "general"
         self.active_tool_names = self._select_tools_for_query(user_text)
 
         # Smart Tri-Tier Hybrid Dispatch & Model Execution
@@ -1510,6 +1510,12 @@ Autonomous Self-Building & Dynamic Feature Creation:
     def _is_code_task(query: str) -> bool:
         """Routes repository and software engineering requests through the focused code workflow."""
         q = query.lower()
+        cancel_triggers = (
+            "stop coding", "stop code", "exit coding", "switch to general",
+            "cancel coding", "stop writing code", "done coding", "enough coding"
+        )
+        if any(c in q for c in cancel_triggers):
+            return False
         indicators = (
             "code", "coding", "codebase", "repository", "repo", "source file", "multiple files",
             "read files", "implement", "debug", "bug", "refactor", "function", "class", "module",
@@ -1519,6 +1525,48 @@ Autonomous Self-Building & Dynamic Feature Creation:
             "application code", "app crashes", "app is crashing", "won't start", "won't compile",
         )
         return any(indicator in q for indicator in indicators)
+
+    def _is_code_followup(self, user_text: str) -> bool:
+        """Determines if a user turn is a conversational follow-up to an ongoing coding task."""
+        if getattr(self, "active_task_mode", "general") != "code":
+            return False
+
+        norm = user_text.lower().strip()
+        words = norm.split()
+
+        # Explicit topic termination or reset
+        cancel_triggers = (
+            "stop", "cancel", "never mind", "nevermind", "forget it", "exit",
+            "reset", "switch to general", "enough coding", "change topic"
+        )
+        if any(c in norm for c in cancel_triggers):
+            return False
+
+        # Fast reflexes or device inquiries are not code follow-ups
+        reflex_triggers = (
+            "weather", "temperature", "forecast", "time is it", "what time",
+            "battery", "charging", "volume", "mute", "unmute", "hello", "hi", "hey"
+        )
+        if any(r in norm for r in reflex_triggers):
+            return False
+
+        # Common follow-up directives during interactive coding / co-engineering
+        followup_phrases = (
+            "yes", "yeah", "yep", "sure", "ok", "okay", "agreed", "sounds good",
+            "proceed", "continue", "go ahead", "do it", "do that", "apply",
+            "option a", "option b", "option c", "option 1", "option 2", "option 3",
+            "first option", "second option", "fix that", "fix this", "try that",
+            "try this", "run tests", "run the tests", "check tests", "retest",
+            "commit", "push", "what about", "why did", "show diff", "diff"
+        )
+        if any(p in norm for p in followup_phrases):
+            return True
+
+        # Short turns (<= 8 words) in an active code session are considered follow-ups
+        if len(words) <= 8 and not self.should_capture_screen(user_text):
+            return True
+
+        return False
 
     @staticmethod
     def _clean_speech_clause(text: str) -> str:
@@ -2316,7 +2364,7 @@ Autonomous Self-Building & Dynamic Feature Creation:
             if any(t in user_text.lower() for t in self_build_triggers):
                 target_model = self.antigravity_model
             else:
-                target_model = self.antigravity_bridge.classify_prompt_tier(user_text)
+                target_model = self.antigravity_bridge.classify_prompt_tier(user_text, task_mode=self.active_task_mode)
 
         # Multi-turn tool execution loop
         max_tool_iterations = 12 if self.active_task_mode == "code" else 4

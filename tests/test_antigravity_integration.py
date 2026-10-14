@@ -3,6 +3,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -122,12 +123,69 @@ class TestAntigravityIntegration(unittest.TestCase):
         self.assertIn("gemini-3.8-flash-low", flash_med_cascade)
 
     def test_prompt_complexity_auto_tiering(self):
-        """Verifies prompt classification routes correctly to Flash Low, Flash Medium, Flash High, and Claude."""
+        """Verifies semantic intent model classification, structural code detection, and task momentum."""
+        # 1. Structural code syntax -> Claude Sonnet 4.6
         self.assertEqual(self.bridge.classify_prompt_tier("def refactor_code(): return True"), "claude-sonnet-4-6")
+        self.assertEqual(self.bridge.classify_prompt_tier("git commit -m 'feat: update tests'"), "claude-sonnet-4-6")
+        self.assertEqual(self.bridge.classify_prompt_tier("from jarvis.core.brain import JarvisBrain"), "claude-sonnet-4-6")
+        self.assertEqual(self.bridge.classify_prompt_tier("can you write a function to parse JSON logs?"), "claude-sonnet-4-6")
+
+        # 2. Deep reasoning, math, logic, architecture -> Gemini 3.8 Flash High
         self.assertEqual(self.bridge.classify_prompt_tier("analyze the strategy and architecture of the codebase"), "gemini-3.8-flash-high")
+        self.assertEqual(self.bridge.classify_prompt_tier("calculate 2 to the power of 64"), "gemini-3.8-flash-high")
+        self.assertEqual(self.bridge.classify_prompt_tier("prove the riemann hypothesis"), "gemini-3.8-flash-high")
+        self.assertEqual(self.bridge.classify_prompt_tier("can you solve this logic puzzle: three gods A, B, and C..."), "gemini-3.8-flash-high")
+
+        # 3. Fast voice reflexes, clock, weather, vitals -> Gemini 3.8 Flash Low
         self.assertEqual(self.bridge.classify_prompt_tier("hello jarvis what time is it"), "gemini-3.8-flash-low")
         self.assertEqual(self.bridge.classify_prompt_tier("what's the weather today"), "gemini-3.8-flash-low")
+        self.assertEqual(self.bridge.classify_prompt_tier("volume up please"), "gemini-3.8-flash-low")
+        self.assertEqual(self.bridge.classify_prompt_tier("who are you"), "gemini-3.8-flash-low")
+
+        # 4. Long conversational prompts and everyday butler workhorse -> Gemini 3.8 Flash Medium
         self.assertEqual(self.bridge.classify_prompt_tier("can you draft a polite response to this client email and summarize our progress"), "gemini-3.8-flash-medium")
+        self.assertEqual(
+            self.bridge.classify_prompt_tier(
+                "Jarvis, when you get a chance later, could you please remind me what time my mother said she was arriving tomorrow, assuming she takes the afternoon train from the airport?"
+            ),
+            "gemini-3.8-flash-medium",
+        )
+        # Avoid false positives on casual words like 'script' or 'patch'
+        self.assertEqual(
+            self.bridge.classify_prompt_tier(
+                "I loved the script of the film we discussed yesterday and would like to patch up our notes about it"
+            ),
+            "gemini-3.8-flash-medium",
+        )
+
+        # 5. Inherited task momentum in active code sessions
+        self.assertEqual(self.bridge.classify_prompt_tier("go with option B", task_mode="code"), "claude-sonnet-4-6")
+        self.assertEqual(self.bridge.classify_prompt_tier("yes, proceed with that fix", task_mode="code"), "claude-sonnet-4-6")
+        self.assertEqual(self.bridge.classify_prompt_tier("stop, switch to general", task_mode="code"), "gemini-3.8-flash-medium")
+        self.assertEqual(self.bridge.classify_prompt_tier("what time is it", task_mode="code"), "gemini-3.8-flash-low")
+
+    def test_code_task_momentum_multi_turn(self):
+        """Verifies JarvisBrain maintains active_task_mode and Claude Sonnet momentum across conversational turns."""
+        brain = JarvisBrain(self.config, self.memory, self.safety)
+
+        # Mock out low-level provider execution to test state machine transitions
+        with patch.object(brain, "_dispatch_llm_query", return_value="Certainly, Sir."):
+            # Turn 1: Initial coding task
+            brain.process_query("can you debug this function in server.py?")
+            self.assertEqual(brain.active_task_mode, "code")
+
+            # Turn 2: Follow-up directive inherits coding momentum
+            brain.process_query("go with option B")
+            self.assertEqual(brain.active_task_mode, "code")
+
+            # Turn 3: Short affirmation maintains momentum
+            brain.process_query("yes, proceed with that")
+            self.assertEqual(brain.active_task_mode, "code")
+
+            # Turn 4: Explicit termination resets to general mode
+            brain.process_query("stop coding, switch to general")
+            self.assertEqual(brain.active_task_mode, "general")
+
 
     def test_voice_model_switching_commands(self):
         """Verifies voice commands dynamically switch models and auto-tiering with punctuation resilience."""
