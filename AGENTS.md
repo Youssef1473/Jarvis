@@ -17,6 +17,10 @@ These rules are loaded automatically on every interaction turn. All operations w
   * For risk gating & command sandboxing: Always route through `SafetyGate` in `jarvis.core.safety`.
   * For LLM inference & streaming: Always route through `AntigravityBridge` or `JarvisBrain` in `jarvis.core.brain`.
   * For voice persona & speech control: Always use `jarvis.skills.voice_control` (`set_voice_profile`, `set_speech_rate`, `get_voice_settings`, `set_audio_output_device`).
+  * For Core User Memory & Self-Editing Preferences: Always use `update_user_preference` and `get_user_preferences` in `MemoryManager` / `jarvis.skills.productivity`.
+  * For Document Ingestion & Atomic Fact Distillation: Always route through `process_staged_document` in `jarvis.skills.document_ingest`.
+  * For Document Search & Vault Inspection: Always use `search_archived_documents`, `read_archived_document`, or `semantic_search_memory(..., search_type="documents")`.
+  * For Reference Text Formatting & Chunk Sandwiching: Always use `MemoryManager.format_document_reference_block`.
   * For browser control: Always prefer silent Chrome DevTools Protocol in `jarvis.skills.browser_cdp` (`open_browser_tab`, `close_browser_tab`, `close_cdp_tab`) before falling back to Win32 UIA.
   * For desktop & window control: Always prefer semantic `pywinauto` UIA in `jarvis.skills.windows_uia` and idempotent `launch_or_focus_application` in `jarvis.skills.os_control`.
 * **Zero-Assumption Pre-Read:** Never modify or write a function without first grepping and viewing its existing call-sites, imports, and definitions. Ground every change in actual codebase AST and signatures.
@@ -64,15 +68,25 @@ These rules are loaded automatically on every interaction turn. All operations w
 * **Adaptive Silence Scaling & Hesitation Damping:** Speech capture must scale pause tolerance dynamically ($\text{dynamic\_silence\_s} = \min(\text{thinking\_pause\_s}, \text{base\_silence\_s} + (\text{spoken\_duration\_s} \times 0.35))$) up to 3.2s, and decay silence counter by 2 on intermediate acoustic energy ($0.12 \le \text{VAD} < 0.30$ or RMS $\ge 0.0038$) to prevent premature speech cutoffs.
 * **Kokoro Latent Style Blending:** Custom personas (`jarvis_classic`, `jarvis_authoritative`, `jarvis_crisp`, `friday`) must utilize normalized linear combinations of $510 \times 1 \times 256$ float style tensors ($\mathbf{v}_{\text{blend}} = \sum w_i \mathbf{v}_i$) with instant caching for sub-1ms timbre switches.
 
-### Desktop & Browser Control Invariant: Zero Focus Stealing & Zero Duplicate Tabs
+### Desktop & Browser Control Invariant: Closed-Loop Verification (See -> Act -> Check)
 * **Browser Automation:** All browser actions (tab opening, querying, navigation, termination) must target Chrome DevTools Protocol (`127.0.0.1:9222`) first via silent JSON-RPC frames (`open_browser_tab`, `close_browser_tab`, `close_cdp_tab`) without window thrashing. Win32 keystrokes (`Ctrl+L`, `Ctrl+T`, `Ctrl+W`) are fallback-only.
 * **Duplicate Tab Elimination Heuristics:** Before sending `Ctrl+T`, always inspect the active window title. If the active tab is already empty (`"about:blank"`, `"New Tab"`), reuse it directly via address bar navigation (`Ctrl+L`) to prevent redundant duplicate tabs.
 * **Window & Application Automation:** Always prefer idempotent activation via `launch_or_focus_application`: probe semantic UI Automation (`pywinauto` UIA backend) to bring existing windows to focus first before launching new processes. Bypasses Windows `SetForegroundWindow` lock and prevents redundant application spawns. Avoid blind `pyautogui` keypresses with arbitrary `time.sleep()`.
+* **Closed-Loop Physical Verification:** Every desktop and OS mutation must verify physical post-conditions before reporting completion to Sir:
+  * Audio Volume: verify master hardware endpoint readout (`adjust_volume`).
+  * Window Activation: verify foreground window HWND and title via Win32 `GetForegroundWindow` / UIA (`focus_window`, `launch_or_focus_application`).
+  * Tab Termination: verify target removal via CDP target lists before reporting closed (`close_browser_tab`).
 
-### Memory & Persistence Invariant: WAL Mode + sqlite-vec Hybrid RRF
-* All SQLite connections must use WAL journal mode, `synchronous=NORMAL`, and `mmap_size=268435456` (256MB).
-* Connections must be opened via the `@contextlib.contextmanager` `_get_connection()` pattern and closed deterministically.
-* Semantic similarity must utilize native `sqlite-vec` KNN virtual tables (`facts_vec`, `documents_vec`, `lessons_vec USING vec0`) with L2-normalized 64-dim float vectors and real-time SQL triggers, fused with FTS5 BM25 via Hybrid Reciprocal Rank Fusion (RRF).
+### Memory & Persistence Invariant: The 4-Tier Data Pyramid & Chunk Sandwiching
+* **Strict Prohibition on Raw Text Dumping:** Never dump raw, bulk external text or entire multi-page documents directly into LLM prompts. Dumping causes **Context Pollution**, latency blowups (TTFT exploding to 3s+), and triggers the Stanford/UC Berkeley **"Lost in the Middle"** U-shaped attention degradation (30–50% accuracy drop on middle tokens).
+* **The 4-Tier Hierarchy:**
+  1. **Tier 1: Core User Profile (`<1KB`)** &mdash; Stored in `user_preferences`; injected into working memory on **every turn** under `<core_user_preferences>`. Jarvis dynamically self-edits this via `update_user_preference`.
+  2. **Tier 2: Atomic Facts (`facts`)** &mdash; Standalone, single-predicate assertions indexed via `facts_vec` + FTS5 BM25. Recalled in `<5ms`. During document intake via `process_staged_document`, always distill core parameters, deadlines, and specs into atomic facts.
+  3. **Tier 3: Just-In-Time (JIT) Document Vaults (`documents`)** &mdash; Ingested PDFs, manuals, and notes. Strictly **JIT-gated**: never queried during routine commands; queried only when user intent demands deep analytical recall via `search_archived_documents` or `semantic_search_memory`.
+  4. **Tier 4: Episodic Lessons (`lessons_vec`)** &mdash; Distilled failure post-mortems via Reflexion heuristics to prevent recurring errors.
+* **Chunk Sandwiching & Inert Demarcation:** All retrieved reference text must be formatted via `MemoryManager.format_document_reference_block`: placing the highest-relevance chunks at the attention boundaries, prepending metadata headers (`[Document #<id>: <title> | Category: <cat> | Archived: <date>]`), and enclosing text inside inert `<reference_data>...</reference_data>` XML tags.
+* **Working Memory Context Bounding:** `get_context_summary` must strictly bound items per category (max 4 per category when context-biased, max 8 ambient) to guarantee prompt working memory remains `<1.5KB`.
+* **WAL Mode & Vector Fusion:** All SQLite connections must use WAL journal mode, `synchronous=NORMAL`, and `mmap_size=268435456` (256MB). Connections must be opened via `@contextlib.contextmanager` `_get_connection()`. Semantic similarity must utilize native `sqlite-vec` KNN virtual tables (`facts_vec`, `documents_vec`, `lessons_vec USING vec0`) with L2-normalized 64-dim float vectors and real-time SQL triggers, fused with FTS5 BM25 via Hybrid Reciprocal Rank Fusion (RRF).
 
 ### Proactive Presence Invariant: Silent HUD First, Zero Interruption Fatigue
 * Ambient desktop presence operates on the Wake-Decide-Sleep model via sub-0.01ms Win32 `GetLastInputInfo` (idle threshold 300s) and sub-0.05ms `GetForegroundWindow`.
@@ -105,4 +119,5 @@ These rules are loaded automatically on every interaction turn. All operations w
   * Fast Reflexes (Speech & OS): `< 15ms`
   * SQLite Vector Recall: `< 5ms`
   * Browser Tab Switching / Closing: `< 25ms` (CDP) / `< 100ms` (Win32)
+  * Working Memory Prompt Overhead: `< 1.5KB`
 * **Host & Shell Awareness:** This workspace runs on **Windows (PowerShell)** with a local virtual environment at `.venv`. All scripts, paths, and commands must use Windows-appropriate syntax and backslashes or forward slashes handled via `pathlib.Path`.
