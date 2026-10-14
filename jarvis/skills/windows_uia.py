@@ -22,18 +22,19 @@ def is_uia_supported() -> bool:
 def focus_window_uia(title_query: str) -> Optional[str]:
     """Focuses a desktop window using pywinauto UI Automation backend.
     Bypasses standard Windows SetForegroundWindow lock by restoring and focusing the UIA element.
+    Falls back to pywinauto win32 backend if UIA enumeration misses the target.
     """
     if not is_uia_supported() or not title_query:
         return None
 
+    clean_target = title_query.strip().lower()
+
+    # 1. Primary UIA backend
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             from pywinauto import Desktop
             d = Desktop(backend="uia")
-        clean_target = title_query.strip().lower()
-
-        # Find matching window elements
         windows = d.windows()
         for win in windows:
             try:
@@ -47,7 +48,26 @@ def focus_window_uia(title_query: str) -> Optional[str]:
             except Exception:
                 continue
     except Exception as e:
-        logger.debug(f"pywinauto UIA focus fallback triggered: {e}")
+        logger.debug(f"pywinauto UIA focus notice: {e}")
+
+    # 2. Deterministic Fallback: pywinauto win32 backend
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            from pywinauto import Desktop
+            d_win32 = Desktop(backend="win32")
+        for win in d_win32.windows():
+            try:
+                text = win.window_text().strip()
+                if text and clean_target in text.lower():
+                    if win.is_minimized():
+                        win.restore()
+                    win.set_focus()
+                    return text
+            except Exception:
+                continue
+    except Exception as e:
+        logger.debug(f"pywinauto win32 focus fallback notice: {e}")
 
     return None
 

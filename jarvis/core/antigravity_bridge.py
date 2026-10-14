@@ -59,7 +59,7 @@ class AntigravityDaemon:
                 cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
                 text=True,
                 encoding="utf-8",
                 cwd=str(self.runtime_workspace),

@@ -571,9 +571,16 @@ def close_application(app_name: str) -> str:
     if f"{base_target}.exe" in CRITICAL_PROCESS_DENYLIST or base_target in ("explorer", "python", "pythonw", "system"):
         return f"Cannot terminate system-critical process '{app_name}' for security and system stability reasons, Sir."
 
+    # 0. Alias resolution to cover common names (e.g. calculator -> calc, vscode -> code, terminal -> wt)
+    alias_target = COMMON_APP_ALIASES.get(base_target, base_target)
+    candidate_targets = {base_target, alias_target}
+    if alias_target.endswith(".exe"):
+        candidate_targets.add(alias_target[:-4])
+
     closed_count = 0
     closed_names = []
 
+    # 1. Process termination via psutil
     for proc in psutil.process_iter(['pid', 'name']):
         try:
             p_name = (proc.info['name'] or "").lower()
@@ -584,8 +591,13 @@ def close_application(app_name: str) -> str:
             if p_name in CRITICAL_PROCESS_DENYLIST:
                 continue
 
-            # Match target
-            if base_target == p_name or f"{base_target}.exe" == p_name or (len(base_target) >= 4 and base_target in p_name):
+            # Match target or alias
+            p_base = p_name[:-4] if p_name.endswith(".exe") else p_name
+            is_match = any(
+                cand == p_name or cand == p_base or (len(cand) >= 4 and (cand in p_name or cand in p_base))
+                for cand in candidate_targets
+            )
+            if is_match:
                 proc.terminate()
                 try:
                     proc.wait(timeout=1.0)
@@ -600,6 +612,41 @@ def close_application(app_name: str) -> str:
     if closed_count > 0:
         names_str = ", ".join(closed_names)
         return f"Closed {closed_count} process(es) matching '{app_name}' ({names_str}), Sir."
+
+    # 2. Deterministic Fallback Cascade: If no process was found by name, attempt graceful window close via Win32 WM_CLOSE
+    try:
+        import win32gui
+        import win32con
+        import win32process
+        _ensure_desktop_access()
+        matched_hwnds = []
+
+        def _enum_win_close(hwnd, _):
+            if win32gui.IsWindowVisible(hwnd):
+                w_title = win32gui.GetWindowText(hwnd).strip()
+                if w_title and any(cand in w_title.lower() for cand in candidate_targets):
+                    matched_hwnds.append((hwnd, w_title))
+
+        win32gui.EnumWindows(_enum_win_close, None)
+
+        if matched_hwnds:
+            for hwnd, w_title in matched_hwnds:
+                try:
+                    _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                    p = psutil.Process(pid)
+                    if p.name().lower() in CRITICAL_PROCESS_DENYLIST:
+                        continue
+                    win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+                    closed_count += 1
+                    closed_names.append(w_title)
+                except Exception:
+                    pass
+            if closed_count > 0:
+                names_str = ", ".join(closed_names)
+                return f"Closed {closed_count} window(s) matching '{app_name}' ({names_str}) via graceful window termination, Sir."
+    except Exception as e:
+        logger.debug(f"Window close fallback notice: {e}")
+
     return f"No active process matching '{app_name}' was found to close, Sir."
 
 
@@ -955,7 +1002,7 @@ def close_browser_tab(browser: str = "brave", tab_title: str = "") -> str:
         try:
             from jarvis.skills.browser_cdp import close_cdp_tab
             cdp_res = close_cdp_tab(title_or_url=tab_title)
-            if cdp_res:
+            if cdp_res and "verified" in cdp_res.lower():
                 return cdp_res
         except Exception as e:
             logger.debug(f"CDP close tab bypass: {e}")
@@ -1047,6 +1094,21 @@ def focus_window(title: str) -> str:
         win32gui.EnumWindows(_enum_win, None)
 
         if not matched_hwnds:
+            # Fallback Cascade: Check if application exists in Start Menu/Registry/Aliases and launch it
+            alias = COMMON_APP_ALIASES.get(target, target)
+            apps = _build_app_index()
+            if target in COMMON_APP_ALIASES or alias in apps or any(target in k for k in apps):
+                launch_res = launch_application(target)
+                if "launched" in launch_res.lower() or "opened" in launch_res.lower():
+                    time.sleep(0.06)
+                    try:
+                        from jarvis.skills.windows_uia import focus_window_uia
+                        verified_title = focus_window_uia(target)
+                        if verified_title:
+                            return f"Window '{title}' was not open; launched and focused '{verified_title}' for you, Sir."
+                    except Exception:
+                        pass
+                    return f"Window '{title}' was not open; launched it for you, Sir."
             return f"No open window matching '{title}' was found, Sir."
 
         hwnd, found_title = matched_hwnds[0]
@@ -1096,6 +1158,44 @@ def press_hotkey(keys: str) -> str:
             pyautogui.hotkey(*parts)
         return f"Executed hotkey '{'+'.join(parts)}', Sir."
     except Exception as e:
+        logger.warning(f"pyautogui hotkey error: {e}. Attempting native Win32 virtual key fallback.")
+        try:
+            import win32api
+            import win32con
+            VK_MAP = {
+                "ctrl": win32con.VK_CONTROL,
+                "control": win32con.VK_CONTROL,
+                "alt": win32con.VK_MENU,
+                "shift": win32con.VK_SHIFT,
+                "win": win32con.VK_LWIN,
+                "windows": win32con.VK_LWIN,
+                "enter": win32con.VK_RETURN,
+                "return": win32con.VK_RETURN,
+                "esc": win32con.VK_ESCAPE,
+                "escape": win32con.VK_ESCAPE,
+                "tab": win32con.VK_TAB,
+                "space": win32con.VK_SPACE,
+                "backspace": win32con.VK_BACK,
+                "delete": win32con.VK_DELETE,
+                "up": win32con.VK_UP,
+                "down": win32con.VK_DOWN,
+                "left": win32con.VK_LEFT,
+                "right": win32con.VK_RIGHT,
+            }
+            vk_seq = []
+            for p in parts:
+                if p in VK_MAP:
+                    vk_seq.append(VK_MAP[p])
+                elif len(p) == 1 and p.isalnum():
+                    vk_seq.append(ord(p.upper()))
+            if vk_seq:
+                for vk in vk_seq:
+                    win32api.keybd_event(vk, 0, 0, 0)
+                for vk in reversed(vk_seq):
+                    win32api.keybd_event(vk, 0, win32con.KEYEVENTF_KEYUP, 0)
+                return f"Executed hotkey '{'+'.join(parts)}' via native Win32 fallback, Sir."
+        except Exception:
+            pass
         return f"Failed to press hotkey '{keys}': {e}"
 
 
@@ -1125,5 +1225,10 @@ def type_text(text: str) -> str:
         threading.Thread(target=_restore, daemon=True).start()
         return f"Typed {len(text)} characters into active window, Sir."
     except Exception as e:
-        return f"Failed to type text: {e}"
+        logger.warning(f"Clipboard paste typing failed: {e}. Falling back to direct keystroke injection.")
+        try:
+            pyautogui.write(text, interval=0.005)
+            return f"Typed {len(text)} characters into active window via direct keystroke injection, Sir."
+        except Exception:
+            return f"Failed to type text: {e}"
 
