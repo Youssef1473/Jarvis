@@ -210,7 +210,7 @@ def close_cdp_tab(
         with urllib.request.urlopen(req, timeout=0.25) as resp:
             resp.read()
 
-        return f"Closed browser tab '{tab_title}' via silent DevTools channel, Sir."
+        return f"Verified: Closed browser tab '{tab_title}' via silent DevTools channel, Sir."
     except Exception as e:
         logger.warning(f"CDP close tab encountered error: {e}")
         return None

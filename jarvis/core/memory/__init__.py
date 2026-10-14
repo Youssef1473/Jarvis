@@ -553,6 +553,35 @@ class MemoryManager:
             row = cursor.fetchone()
             return row["value"] if row else None
 
+    def update_user_preference(self, key: str, value: str) -> str:
+        """Stores or updates a core user preference or behavioral calibration."""
+        clean_key = str(key or "").lower().strip().replace(" ", "_")
+        clean_val = str(value or "").strip()
+        if not clean_key or not clean_val:
+            return "Preference key and value cannot be empty, Sir."
+
+        self.remember_fact(clean_key, clean_val, category="user_preference")
+        return f"Core preference updated: '{clean_key}' is now set to '{clean_val}', Sir."
+
+    def get_user_preferences(self) -> Dict[str, str]:
+        """Retrieves all core user preferences as a key-value dictionary."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT key, value FROM facts
+                WHERE category IN ('user_preference', 'preference', 'core_preference')
+                ORDER BY updated_at DESC
+            """)
+            return {row["key"]: row["value"] for row in cursor.fetchall()}
+
+    def format_core_preferences_block(self) -> str:
+        """Formats active core user preferences into a structured block for working memory."""
+        prefs = self.get_user_preferences()
+        if not prefs:
+            return ""
+        lines = [f"- {k}: {v}" for k, v in sorted(prefs.items())]
+        return "Core User Profile & Preferences (Always adhere to these directives):\n" + "\n".join(lines)
+
     def search_facts(self, query: str) -> List[Dict[str, str]]:
         """Searches remembered facts matching a query keyword using FTS5 BM25 with LIKE fallback."""
         sanitized = sanitize_fts5_query(query)

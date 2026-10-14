@@ -98,6 +98,38 @@ def recall_fact(key: str) -> str:
 
 
 @SkillRegistry.register(
+    name="update_user_preference",
+    description="Updates or sets a permanent personal preference, habit, or behavioral directive for Sir in Core Memory (e.g. 'preferred_browser: brave', 'voice_speed: 1.15', 'call_me: Boss', 'primary_project: Jarvis')."
+)
+def update_user_preference(key: str, value: str) -> str:
+    """Updates a core user preference in SQLite Memory."""
+    mem = _get_memory()
+    if hasattr(mem, "update_user_preference"):
+        return mem.update_user_preference(key, value)
+    return mem.remember_fact(key, value, category="user_preference")
+
+
+@SkillRegistry.register(
+    name="get_user_preferences",
+    description="Inspects all stored core user preferences, behavioral rules, and personal habits recorded in Sir's Core Memory profile."
+)
+def get_user_preferences() -> str:
+    """Retrieves all core user preferences."""
+    mem = _get_memory()
+    if hasattr(mem, "get_user_preferences"):
+        prefs = mem.get_user_preferences()
+        if not prefs:
+            return "No core user preferences are currently registered in your profile, Sir."
+        lines = [f"• {k}: {v}" for k, v in sorted(prefs.items())]
+        return "Sir's Active Core Preferences:\n" + "\n".join(lines)
+
+    matches = mem.get_facts_by_category("user_preference") if hasattr(mem, "get_facts_by_category") else {}
+    if matches:
+        return "Sir's Core Preferences:\n" + "\n".join(f"• {k}: {v}" for k, v in matches.items())
+    return "No core user preferences are currently registered in your profile, Sir."
+
+
+@SkillRegistry.register(
     name="recall_past_conversation",
     description="Searches previous conversation logs and dialogues with Sir by topic, question, or keyword. Use this whenever Sir asks what you previously discussed, past decisions, earlier commands, or past topics."
 )

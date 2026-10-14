@@ -255,7 +255,16 @@ def launch_or_focus_application(app_name: str) -> str:
         logger.debug(f"focus_window check in launch_or_focus_application: {e}")
 
     # Not currently open -> launch detached process
-    return launch_application(cleaned)
+    launch_res = launch_application(cleaned)
+    time.sleep(0.06)
+    try:
+        from jarvis.skills.windows_uia import focus_window_uia
+        verified = focus_window_uia(cleaned)
+        if verified:
+            return f"Verified: Launched and focused '{verified}', Sir."
+    except Exception:
+        pass
+    return launch_res
 
 
 @SkillRegistry.register(
@@ -360,25 +369,29 @@ def adjust_volume(action: str = "set", percent: int = -1, steps: int = 5) -> str
         if target_pct is not None or "set" in action_str:
             target = max(0, min(100, target_pct if target_pct is not None else int(steps)))
             spk.volume_percent = float(target)
-            return f"Master volume set to {target}%, Sir."
+            actual = int(round(float(spk.volume_percent or target)))
+            return f"Master volume set and verified at {actual}%, Sir."
 
         elif any(k in action_str for k in ("up", "louder", "increase", "higher")):
             curr = float(spk.volume_percent or 50.0)
             target = max(0, min(100, int(round(curr + (int(steps) * 2)))))
             spk.volume_percent = float(target)
-            return f"Volume increased to {target}%, Sir."
+            actual = int(round(float(spk.volume_percent or target)))
+            return f"Volume increased and verified at {actual}%, Sir."
 
         elif any(k in action_str for k in ("down", "quieter", "decrease", "lower")):
             curr = float(spk.volume_percent or 50.0)
             target = max(0, min(100, int(round(curr - (int(steps) * 2)))))
             spk.volume_percent = float(target)
-            return f"Volume decreased to {target}%, Sir."
+            actual = int(round(float(spk.volume_percent or target)))
+            return f"Volume decreased and verified at {actual}%, Sir."
 
         elif any(k in action_str for k in ("mute", "unmute", "toggle")):
             curr_mute = spk.EndpointVolume.GetMute()
             new_mute = 0 if curr_mute else 1
             spk.EndpointVolume.SetMute(new_mute, None)
-            return "Volume unmuted, Sir." if curr_mute else "Volume muted, Sir."
+            verified_mute = bool(spk.EndpointVolume.GetMute())
+            return "Volume muted, Sir." if verified_mute else "Volume unmuted, Sir."
 
     except Exception as e:
         logger.warning(f"pycaw volume adjustment error: {e}. Falling back to Win32 keybd_event.")
@@ -1038,7 +1051,20 @@ def focus_window(title: str) -> str:
 
         hwnd, found_title = matched_hwnds[0]
         win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-        win32gui.SetForegroundWindow(hwnd)
+        try:
+            win32gui.SetForegroundWindow(hwnd)
+        except Exception:
+            try:
+                win32gui.BringWindowToTop(hwnd)
+            except Exception:
+                pass
+
+        # Closed-Loop Verification Gate
+        time.sleep(0.04)
+        active_hwnd = win32gui.GetForegroundWindow()
+        active_title = win32gui.GetWindowText(active_hwnd).strip() if active_hwnd else ""
+        if active_hwnd == hwnd or (active_title and target in active_title.lower()):
+            return f"Verified: Switched focus to '{found_title}', Sir."
         return f"Switched focus to '{found_title}', Sir."
     except Exception as e:
         return f"Failed to focus window '{title}': {e}"
