@@ -497,7 +497,7 @@ class AntigravityBridge:
             r"\b(pytest|unittest|mock\.patch|mock\.mock|magicmock|assert[a-z]\w*|assertequal|asserttrue|assertfalse)\b", # Testing suites
             r"\b(traceback|stack\s*trace|nullpointerexception|syntaxerror|typeerror|attributeerror|keyerror|nameerror|indexerror|zerodivisionerror)\b", # Traceback/errors
             r"\b(powershell|pip\s+install|npm\s+install|pip\s+list|pip\s+uninstall|npm\s+run)\b", # Shell / Package managers
-            r"\b(regex|regular\s+expression|ast\b|refactor\s+code|refactor\s+this|debug\s+this|debug\s+the|write\s+a\s+function|write\s+code|write\s+a\s+script|python\s+script|bash\s+script|shell\s+script|fix\s+the\s+bug|fix\s+this\s+bug|unit\s+tests?)\b",
+            r"\b(regex|regular\s+expression|ast\b|refactor\s+code|refactor\s+this|debug\s+this|debug\s+the|write\s+a\s+function|write\s+code|write\s+a\s+script|python\s+script|bash\s+script|shell\s+script|fix\s+the\s+bug|fix\s+this\s+bug|unit\s+tests?|edit\s+yourself|enhance\s+yourself|optimize\s+yourself|modify\s+yourself|self-build|self-evolution|jarvis_2\.0)\b",
         ]
         if any(re.search(pat, p) for pat in code_structural_patterns):
             return "claude-sonnet-4-6"

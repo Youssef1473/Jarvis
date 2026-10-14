@@ -277,6 +277,15 @@ def search_desktop_files_fast(query: str, max_results: int = 10) -> str:
     if not q_clean:
         return "Please specify a file name or search term, Sir."
 
+    # Fast-path: Delegate to Voidtools Everything (<15ms instant multi-drive index)
+    try:
+        from jarvis.skills.everything_search import search_everything
+        everything_res = search_everything(query, max_results=max_results, files_only=True)
+        if "Voidtools Everything" in everything_res:
+            return everything_res
+    except Exception:
+        pass
+
     user_home = Path.home()
     search_roots = [
         user_home / "Projects",

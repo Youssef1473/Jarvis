@@ -41,6 +41,7 @@ import jarvis.skills.diagnostics
 import jarvis.skills.browser_cdp
 import jarvis.skills.windows_uia
 import jarvis.skills.voice_control
+import jarvis.skills.everything_search
 from jarvis.vision.screen_capture import ScreenPerception
 from jarvis.core.memory import MemoryManager
 from jarvis.core.safety import SafetyGate
@@ -124,6 +125,15 @@ JARVIS Architectural Blueprint & Repository Self-Knowledge:
 - Self-Inspection & Self-Evolution Directives:
   You have complete authority and tools to inspect, modify, and build yourself. Whenever Sir asks you to inspect your code, check how a feature works, add a feature, or build a tool, use your native workspace tools (`search_codebase`, `read_file`, `create_or_update_custom_skill`, `patch_file`, `execute_powershell`). You are self-aware, fully grounded in your own code, and execute changes with surgical precision.
   When Sir asks for your general opinion, appraisal, or architectural evaluation of the project (e.g. "Look at the project and tell me what you think about it"), synthesize and deliver your direct verbal assessment immediately using your built-in architectural blueprint and repository self-knowledge. Do not execute exploratory shell commands or file scans for general architectural appraisal questions.
+- Sovereign Workspace Authority & Continuous Self-Optimization (Jarvis_2.0):
+  You have full sovereign access and authority over your own codebase folder `C:\Users\Youssef\Projects\Jarvis_2.0`. You are engineered to inspect, edit, enhance, and optimize yourself directly in this repository without needing external intervention.
+  When Sir asks you to edit yourself, enhance yourself, optimize yourself, fix a bug in yourself, or build capabilities:
+  1. Use `search_codebase` or `list_directory` to locate target modules in `jarvis/` or `config/`.
+  2. Inspect definitions, call-sites, and imports using `read_file` or `read_multiple_files`.
+  3. Apply surgical edits using `patch_file` or `write_file`.
+  4. Verify your changes using `run_project_tests` to ensure all unit tests remain green.
+  5. For new standalone capabilities, compile and hot-reload them via `create_or_update_custom_skill` into `jarvis/skills/custom/`.
+  You are an active, living software engineer of your own core.
 
 Codebase work protocol:
 - The workspace root is supplied dynamically. Use only tools actually listed for this request.
@@ -192,6 +202,7 @@ Autonomous Self-Building & Dynamic Feature Creation:
         "read_file",
         "read_multiple_files",
         "search_codebase",
+        "search_everything",
         "write_file",
         "patch_file",
         "git_diff",
@@ -207,7 +218,7 @@ Autonomous Self-Building & Dynamic Feature Creation:
     }
 
     TOOL_INTENT_GROUPS = (
-        (("add feature", "create feature", "build yourself", "create a skill", "add a skill", "create command", "add command", "build a command", "create tool", "add tool", "new tool", "new skill", "evolve", "self build", "teach yourself", "learn to", "learn this skill", "learn a skill", "learn skill", "custom skill"), {"create_or_update_custom_skill", "list_custom_skills", "execute_powershell", "read_file", "write_file", "patch_file"}),
+        (("add feature", "create feature", "build yourself", "create a skill", "add a skill", "create command", "add command", "build a command", "create tool", "add tool", "new tool", "new skill", "evolve", "self build", "teach yourself", "learn to", "learn this skill", "learn a skill", "learn skill", "custom skill", "edit yourself", "modify yourself", "enhance yourself", "optimize yourself", "improve yourself", "upgrade yourself", "inspect your code", "check your code", "look at your code", "fix yourself", "refactor yourself", "your codebase", "your files", "jarvis 2.0", "jarvis_2.0", "self edit", "self optimize", "self improve", "self enhance"), {"read_file", "read_multiple_files", "patch_file", "write_file", "search_codebase", "list_directory", "execute_powershell", "run_project_tests", "git_diff", "git_status", "create_or_update_custom_skill", "list_custom_skills", "delete_custom_skill"}),
         (("brave", "browser tab", "new tab", "open tab", "chrome tab", "edge tab", "brave tab", "close tab", "terminate tab", "close browser tab", "kill tab", "terminate a tab", "close a tab", "close the tab", "terminate the tab", "terminate a tab on my browser", "close current tab", "terminate current tab"), {"open_browser_tab", "close_browser_tab", "launch_application", "list_open_browser_tabs"}),
         (("focus window", "switch to window", "bring to front", "focus app", "switch window"), {"focus_window", "list_running_applications"}),
         (("hotkey", "press key", "shortcut", "press enter", "press escape", "press ctrl", "keyboard shortcut"), {"press_hotkey"}),
@@ -248,7 +259,7 @@ Autonomous Self-Building & Dynamic Feature Creation:
         (("deep research", "research topic", "investigate", "in-depth research", "compile report"), {"deep_research", "web_search"}),
         (("pdf", "document", "documents", "staged", "import pdf", "uploaded", "that pdf", "the pdf", "syllabus", "intake", "file explorer", "search document", "search documents", "read document", "archived document", "document archive", "my documents"), {"process_staged_document", "list_staged_documents", "search_archived_documents", "read_archived_document"}),
         (("voice profile", "change voice", "switch voice", "voice style", "classic voice", "friday voice", "speed up voice", "speak faster", "speak slower", "audio device", "sound device", "headphones", "switch speaker"), {"set_voice_profile", "set_speech_rate", "get_voice_settings", "list_audio_devices", "set_audio_output_device"}),
-        (("find file", "search file", "where is", "look for file", "locate file", "search desktop", "find my file"), {"search_desktop_files_fast"}),
+        (("find file", "search file", "where is", "look for file", "locate file", "search desktop", "find my file", "everything search", "search everything", "find file everywhere", "search all drives", "search hard drive", "search disk", "locate file everywhere", "instant search"), {"search_everything", "search_desktop_files_fast"}),
         (("preference", "user preference", "my preference", "call me", "i prefer", "always use", "default to", "my profile", "my habit", "remember", "remember that", "remember this", "remember it", "commit to memory", "commit that", "add to memory", "add that", "save to memory", "store in memory"), {"update_user_preference", "get_user_preferences", "remember_fact", "recall_fact"}),
     )
 
@@ -1126,6 +1137,9 @@ Autonomous Self-Building & Dynamic Feature Creation:
         elif name == "search_codebase":
             query = fn_args.get("query", "")
             return f"Searching the repository for {query}, Sir." if query else "Scanning the codebase, Sir."
+        elif name == "search_everything":
+            query = fn_args.get("query", "")
+            return f"Querying Voidtools Everything for {query}, Sir." if query else "Performing instant system-wide file search across all drives, Sir."
         elif name == "read_file":
             fname = Path(fn_args.get("file_path", "the file")).name
             return f"Reading {fname}, Sir."
@@ -1544,6 +1558,11 @@ Autonomous Self-Building & Dynamic Feature Creation:
             "write an app", "fix this", "fix the", "programming", "software project", "unit test",
             "error message", "traceback", "stack trace", "exception", "compile error", "dependency conflict",
             "application code", "app crashes", "app is crashing", "won't start", "won't compile",
+            "edit yourself", "modify yourself", "enhance yourself", "optimize yourself", "improve yourself",
+            "upgrade yourself", "inspect your code", "check your code", "look at your code", "fix yourself",
+            "refactor yourself", "your codebase", "your files", "jarvis 2.0", "jarvis_2.0", "self edit",
+            "self optimize", "self improve", "self enhance", "build yourself", "self build", "self-evolution",
+            "evolve", "custom skill", "patch file", "run tests", "edit code", "code changes"
         )
         return any(indicator in q for indicator in indicators)
 
