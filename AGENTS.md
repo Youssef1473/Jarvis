@@ -112,9 +112,12 @@ These rules are loaded automatically on every interaction turn. All operations w
 * **Local Snapshot Auditing:** All captured frames must be cached to `data/screenshots/latest_screen.jpg` for telemetry, debugging, and UI HUD display.
 
 ### Cognitive Model Reasoning & Intent Routing Invariant: Semantic Intent Over Syllables
+* **Cognitive Model Reasoning & Intent Routing Invariant: Semantic Intent Over Syllables**
 * **Strict Prohibition on Word-Count Routing:** Model selection must never rely on naive word or syllable count thresholds ($\le 8$ vs $> 30$). All routing in `classify_prompt_tier` must evaluate structural AST syntax, developer tooling tokens, mathematical intent, or conversational task momentum.
 * **Sticky Session Warm Daemon Affinity:** General butler QA, everyday conversation, drafting, and summaries must route to `gemini-3.8-flash-medium` as the default workhorse to maintain sticky daemon affinity and maximize Google AI Pro's 30,000+ token server-side KV prompt cache.
 * **Contextual Task Momentum Inheritance:** Interactive coding turns within an active coding session (`active_task_mode == "code"`) must retain `claude-sonnet-4-6` across follow-up directives (*"option b"*, *"yes"*, *"proceed"*, *"fix that"*), until explicit cancellation or topic termination resets the session.
+* **Zero Time Restrictions on LLM Deliberation:** The model must never be terminated by inactivity limits or hard ceilings. Extended multi-file refactoring, deep research, and Council deliberations must run unhindered to natural completion while streaming sentence deltas to TTS.
+* **Sub-Second Token & Quota Exhaustion Failover:** When Claude Sonnet/Opus triggers 429 quota exhaustion or CLI exit code 3, Jarvis instantly applies a 900s cooldown and routes to Gemini 3.8 Flash High (for complex engineering) or Flash Medium in `<10ms`.
 
 ---
 
@@ -124,7 +127,7 @@ These rules are loaded automatically on every interaction turn. All operations w
 2. **PROHIBITED:** Hardcoded blind sleeps (`time.sleep(1.0)` or higher) in production paths. Use condition variables, event loops, or non-blocking socket probes with tight timeouts.
 3. **PROHIBITED:** `subprocess.run(shell=True)` or raw string formatting in shell commands. Use argument lists with `close_fds=True` and pass through `SafetyGate`.
 4. **PROHIBITED:** Storing secrets, API keys, or raw user tokens in plaintext logs or database records.
-5. **PROHIBITED:** Breaking test compatibility. All 211 existing tests in `tests/` must remain green on every single commit.
+5. **PROHIBITED:** Breaking test compatibility. All 234 existing tests in `tests/` must remain green on every single commit.
 
 ---
 
@@ -142,5 +145,5 @@ These rules are loaded automatically on every interaction turn. All operations w
   * Cloud Vision Response: `< 12s` (typical 3.8s on `gemini-3-flash-preview`)
   * Browser Tab Switching / Closing: `< 25ms` (CDP) / `< 100ms` (Win32)
   * Working Memory Prompt Overhead: `< 1.5KB`
-  * Full Test Suite Baseline: **211 unit tests** (all 100% green).
+  * Full Test Suite Baseline: **234 unit tests** (all 100% green).
 * **Host & Shell Awareness:** This workspace runs on **Windows (PowerShell)** with a local virtual environment at `.venv`. All scripts, paths, and commands must use Windows-appropriate syntax and backslashes or forward slashes handled via `pathlib.Path`.
