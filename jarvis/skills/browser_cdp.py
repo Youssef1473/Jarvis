@@ -86,11 +86,11 @@ def sanitize_browser_url(url: str) -> str:
     return cleaned
 
 
-def is_cdp_available(host: str = "127.0.0.1", port: int = 9222, timeout_sec: float = 0.025) -> bool:
+def is_cdp_available(host: str = "127.0.0.1", port: int = 9222, timeout_sec: float = 0.05, force_refresh: bool = False) -> bool:
     """Non-blocking probe checking if Chrome DevTools Protocol port is listening on localhost."""
     now = time.time()
     cache_key = (host, port)
-    if cache_key in _CDP_PROBE_CACHE:
+    if not force_refresh and cache_key in _CDP_PROBE_CACHE:
         val, ts = _CDP_PROBE_CACHE[cache_key]
         if now - ts < _CDP_CACHE_TTL_SEC:
             return val
@@ -192,7 +192,7 @@ def open_or_navigate_tab_cdp(
                         activate_url = f"http://{host}:{port}/json/activate/{t_id}"
                         urllib.request.urlopen(activate_url, timeout=0.1)
 
-                    return f"Navigated existing tab '{target_to_reuse.get('title') or 'New Tab'}' to '{clean_url}' via silent DevTools channel, Sir."
+                    return f"Navigated existing tab '{target_to_reuse.get('title') or 'New Tab'}' in browser to '{clean_url}' via silent DevTools channel, Sir."
                 except Exception as ws_err:
                     logger.debug(f"CDP WebSocket navigate failed, trying HTTP fallback: {ws_err}")
 
@@ -206,7 +206,7 @@ def open_or_navigate_tab_cdp(
             if tab_id:
                 # Activate new tab
                 urllib.request.urlopen(f"http://{host}:{port}/json/activate/{tab_id}", timeout=0.1)
-            return f"Opened '{clean_url or 'about:blank'}' via silent DevTools channel, Sir."
+            return f"Opened browser tab '{clean_url or 'about:blank'}' via silent DevTools channel, Sir."
 
     except Exception as e:
         logger.warning(f"CDP navigation encountered error: {e}")
@@ -392,6 +392,7 @@ def bootstrap_cdp_browser(
         browser_path,
         f"--remote-debugging-port={port}",
         "--remote-debugging-address=127.0.0.1",
+        "--remote-allow-origins=*",
     ]
     if is_running or dedicated_profile:
         profile_dir = Path("data/browser_debug_profile").resolve()
@@ -405,9 +406,10 @@ def bootstrap_cdp_browser(
             close_fds=True,
         )
 
-        for _ in range(25):
+        _CDP_PROBE_CACHE.clear()
+        for _ in range(40):
             time.sleep(0.1)
-            if is_cdp_available("127.0.0.1", port):
+            if is_cdp_available("127.0.0.1", port, force_refresh=True):
                 return True, f"Attached browser '{browser_name.title()}' with remote debugging port {port} enabled, Sir."
 
         return False, f"Browser launched, but port {port} did not respond within timeout, Sir."

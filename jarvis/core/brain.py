@@ -973,6 +973,8 @@ Autonomous Self-Building & Dynamic Feature Creation:
             return SkillRegistry.execute("audit_memory_heap")
         if re.search(r"^(?:list\s+)?(?:open browser tabs|browser tabs|open tabs|what tabs are open)$", clean):
             return SkillRegistry.execute("list_open_browser_tabs")
+        if re.search(r"^(?:launch|start|open|run)?\s*(?:the\s+)?(?:isolated\s+)?(?:debug\s+browser(?:\s+session)?|browser\s+debug\s+session|cdp\s+browser)(?:\s+for\s+me|\s+please)?$", clean):
+            return SkillRegistry.execute("launch_debug_browser")
 
         # 4. Browser Tabs & URL Navigation (<15ms)
         services_map = {

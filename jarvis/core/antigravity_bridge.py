@@ -172,22 +172,7 @@ class AntigravityDaemon:
             timed_out = False
             timeout_reason = ""
             stop_watchdog = threading.Event()
-            # Only enforce hard turn ceiling for runaway processes; no inactivity timeout so deep reasoning/subagents run unhindered
-            hard_ceiling = max(float(timeout) * 2.0, 600.0)
-
-            def _watchdog_loop():
-                nonlocal timed_out, timeout_reason
-                while not stop_watchdog.wait(timeout=1.0):
-                    now = time.perf_counter()
-                    if now - t_start > hard_ceiling:
-                        timed_out = True
-                        timeout_reason = f"hard turn ceiling exceeding {hard_ceiling:.1f}s"
-                        logger.warning("Antigravity daemon query timed out due to %s; killing worker.", timeout_reason)
-                        self.stop()
-                        break
-
-            watchdog_thread = threading.Thread(target=_watchdog_loop, daemon=True, name="AntigravityDaemonWatchdog")
-            watchdog_thread.start()
+            # Sir directive: zero time restrictions on LLM reasoning and tasks. Run to natural completion.
 
             try:
                 for line in iter(self.proc.stdout.readline, ""):
@@ -231,12 +216,6 @@ class AntigravityDaemon:
             except Exception as stream_err:
                 logger.warning("Antigravity daemon streaming read error: %s", stream_err)
                 self.stop()
-                return None
-            finally:
-                stop_watchdog.set()
-                watchdog_thread.join(timeout=1.0)
-
-            if timed_out:
                 return None
 
             # Flush any remaining speech clause
@@ -914,35 +893,10 @@ class AntigravityBridge:
             proc.stdin.write(prompt)
             proc.stdin.close()
 
-            timed_out = False
-            timeout_reason = ""
-            stop_watchdog = threading.Event()
-            # Only enforce hard turn ceiling for runaway processes; no inactivity timeout
-            hard_ceiling = max(float(timeout) * 2.0, 600.0)
-
-            def _stream_watchdog_loop():
-                nonlocal timed_out, timeout_reason
-                while not stop_watchdog.wait(timeout=1.0):
-                    now = time.perf_counter()
-                    if now - t_start > hard_ceiling:
-                        timed_out = True
-                        timeout_reason = f"hard turn ceiling exceeding {hard_ceiling:.1f}s"
-                        logger.warning("Antigravity one-shot stream timed out due to %s; terminating worker.", timeout_reason)
-                        try:
-                            proc.terminate()
-                            proc.wait(timeout=1.0)
-                        except Exception:
-                            proc.kill()
-                        break
-
-            watchdog_thread = threading.Thread(target=_stream_watchdog_loop, daemon=True, name="AntigravityOneShotWatchdog")
-            watchdog_thread.start()
-
+            # Sir directive: zero time restrictions on LLM reasoning and tasks. Run to natural completion.
             try:
                 # Read NDJSON lines in real time
                 for line in iter(proc.stdout.readline, ""):
-                    if timed_out:
-                        break
                     last_activity_time = time.perf_counter()
                     line_str = line.strip()
                     if not line_str:
@@ -973,19 +927,7 @@ class AntigravityBridge:
                         logger.debug("Non-critical stream JSON parse error on line: %s (%s)", line_str[:60], parse_err)
 
             except (ValueError, OSError) as pipe_err:
-                if not timed_out:
-                    logger.warning("Antigravity stream pipe error: %s", pipe_err)
-            finally:
-                stop_watchdog.set()
-                watchdog_thread.join(timeout=1.0)
-
-            if timed_out:
-                return {
-                    "status": "ERROR",
-                    "response": f"Antigravity stream timed out ({timeout_reason}).",
-                    "duration_seconds": time.perf_counter() - t_start,
-                    "usage": {},
-                }
+                logger.warning("Antigravity stream pipe error: %s", pipe_err)
 
             proc.stdout.close()
             stderr_out = ""
